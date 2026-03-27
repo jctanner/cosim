@@ -4,6 +4,59 @@ import re
 import unicodedata
 
 
+# Folder definitions: name -> {type, description}
+DEFAULT_FOLDERS = {
+    "shared":      {"type": "shared",     "description": "Shared team documents"},
+    "public":      {"type": "public",     "description": "Customer-visible documents"},
+    "engineering": {"type": "department", "description": "Engineering department"},
+    "sales":       {"type": "department", "description": "Sales department"},
+    "support":     {"type": "department", "description": "Support department"},
+    "leadership":  {"type": "department", "description": "Leadership team"},
+    "sarah":       {"type": "personal",  "description": "Sarah's private folder"},
+    "marcus":      {"type": "personal",  "description": "Marcus's private folder"},
+    "priya":       {"type": "personal",  "description": "Priya's private folder"},
+    "alex":        {"type": "personal",  "description": "Alex's private folder"},
+    "jordan":      {"type": "personal",  "description": "Jordan's private folder"},
+    "taylor":      {"type": "personal",  "description": "Taylor's private folder"},
+    "dana":        {"type": "personal",  "description": "Dana's private folder"},
+    "morgan":      {"type": "personal",  "description": "Morgan's private folder"},
+    "marketing":   {"type": "department", "description": "Marketing department"},
+    "devops":      {"type": "department", "description": "DevOps department"},
+    "riley":       {"type": "personal",  "description": "Riley's private folder"},
+    "casey":       {"type": "personal",  "description": "Casey's private folder"},
+}
+
+# Folder access: folder_name -> set of persona keys allowed
+DEFAULT_FOLDER_ACCESS = {
+    "shared":      {"pm", "engmgr", "architect", "senior", "support", "sales", "ceo", "cfo", "marketing", "devops"},
+    "public":      {"pm", "engmgr", "architect", "senior", "support", "sales", "ceo", "cfo", "marketing", "devops"},
+    "engineering": {"pm", "engmgr", "architect", "senior", "devops"},
+    "sales":       {"pm", "sales", "ceo", "cfo"},
+    "support":     {"pm", "engmgr", "support", "devops"},
+    "leadership":  {"pm", "ceo", "cfo"},
+    "sarah":       {"pm"},
+    "marcus":      {"engmgr"},
+    "priya":       {"architect"},
+    "alex":        {"senior"},
+    "jordan":      {"support"},
+    "taylor":      {"sales"},
+    "dana":        {"ceo"},
+    "morgan":      {"cfo"},
+    "marketing":   {"pm", "marketing", "sales", "ceo"},
+    "devops":      {"pm", "engmgr", "devops"},
+    "riley":       {"marketing"},
+    "casey":       {"devops"},
+}
+
+
+def get_accessible_folders(persona_key: str) -> set[str]:
+    """Return the set of folder names a persona can access."""
+    return {
+        folder for folder, members in DEFAULT_FOLDER_ACCESS.items()
+        if persona_key in members
+    }
+
+
 def slugify(title: str, max_length: int = 80) -> str:
     """Convert a title to a filesystem-safe slug.
 

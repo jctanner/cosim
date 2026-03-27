@@ -4,6 +4,8 @@ import re
 from datetime import datetime
 from pathlib import Path
 
+from lib.docs import get_accessible_folders, DEFAULT_FOLDERS
+
 
 SKILLS_DIR = Path(__file__).parent.parent / ".claude" / "skills"
 
@@ -49,6 +51,16 @@ PERSONAS = {
         "skill": "cfo",
         "display_name": "Morgan (CFO)",
     },
+    "marketing": {
+        "name": "marketing",
+        "skill": "marketing",
+        "display_name": "Riley (Marketing)",
+    },
+    "devops": {
+        "name": "devops",
+        "skill": "devops-engineer",
+        "display_name": "Casey (DevOps)",
+    },
 }
 
 # Channel definitions
@@ -58,28 +70,32 @@ DEFAULT_CHANNELS = {
     "#sales":            {"description": "Sales team", "is_external": False},
     "#support":          {"description": "Support team", "is_external": False},
     "#leadership":       {"description": "Executive leadership", "is_external": False},
+    "#marketing":        {"description": "Marketing team", "is_external": False},
+    "#devops":           {"description": "DevOps & infrastructure", "is_external": False},
     "#sales-external":   {"description": "Customer-facing sales channel", "is_external": True},
     "#support-external": {"description": "Customer-facing support channel", "is_external": True},
 }
 
 # Default channel memberships per persona
 DEFAULT_MEMBERSHIPS = {
-    "pm":        {"#general", "#engineering", "#sales", "#support", "#leadership"},
-    "engmgr":    {"#general", "#engineering", "#support"},
+    "pm":        {"#general", "#engineering", "#sales", "#support", "#leadership", "#marketing", "#devops"},
+    "engmgr":    {"#general", "#engineering", "#support", "#devops"},
     "architect": {"#general", "#engineering"},
     "senior":    {"#general", "#engineering"},
     "support":   {"#general", "#engineering", "#support", "#support-external"},
-    "sales":     {"#general", "#sales", "#sales-external"},
-    "ceo":       {"#general", "#leadership", "#sales"},
+    "sales":     {"#general", "#sales", "#sales-external", "#marketing"},
+    "ceo":       {"#general", "#leadership", "#sales", "#marketing"},
     "cfo":       {"#general", "#leadership", "#sales"},
+    "marketing": {"#general", "#marketing", "#sales", "#sales-external"},
+    "devops":    {"#general", "#devops", "#engineering", "#support"},
 }
 
 # Response tiers: lower tiers respond first, higher tiers see previous responses
 # before deciding whether to weigh in. Within a tier, agents run in parallel.
 RESPONSE_TIERS = {
-    1: ["senior", "support", "sales"],       # ICs — closest to the work
-    2: ["engmgr", "architect", "pm"],        # Managers/leads — synthesize
-    3: ["ceo", "cfo"],                       # Executives — strategic only
+    1: ["senior", "support", "sales", "devops"],  # ICs — closest to the work
+    2: ["engmgr", "architect", "pm", "marketing"], # Managers/leads — synthesize
+    3: ["ceo", "cfo"],                             # Executives — strategic only
 }
 
 # Reverse lookup: persona_key -> tier number
@@ -127,23 +143,64 @@ def _build_history_sections(messages: list[dict], visible_channels: set[str]) ->
     return "\n\n".join(parts)
 
 
-def build_docs_index(docs: list[dict]) -> str:
+def build_docs_index(docs: list[dict], persona_key: str | None = None) -> str:
     """Format document metadata list as a "Team Documents" section for prompts.
 
-    Returns empty string if no docs exist.
+    If persona_key is provided, only shows docs in folders the persona can access.
+    Groups docs by folder with folder headers.
+    Returns empty string if no accessible docs exist.
     """
     if not docs:
+        return ""
+
+    accessible = get_accessible_folders(persona_key) if persona_key else None
+
+    # Group by folder, filtering by access
+    by_folder: dict[str, list[dict]] = {}
+    for doc in docs:
+        folder = doc.get("folder", "shared")
+        if accessible is not None and folder not in accessible:
+            continue
+        by_folder.setdefault(folder, []).append(doc)
+
+    if not by_folder:
         return ""
 
     lines = ["## Team Documents", ""]
     lines.append("The following documents exist. Use `<<<DOC:SEARCH query=\"...\"/>>>` to read their contents.")
     lines.append("")
-    for doc in docs:
-        title = doc.get("title", doc.get("slug", "?"))
-        slug = doc.get("slug", "?")
-        lines.append(f"- **{title}** (slug: `{slug}`)")
 
+    for folder in sorted(by_folder.keys()):
+        folder_info = DEFAULT_FOLDERS.get(folder, {})
+        folder_desc = folder_info.get("description", folder)
+        lines.append(f"### {folder}/ — {folder_desc}")
+        for doc in by_folder[folder]:
+            title = doc.get("title", doc.get("slug", "?"))
+            slug = doc.get("slug", "?")
+            lines.append(f"- **{title}** (slug: `{slug}`, folder: `{folder}`)")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+def build_gitlab_index(repos: list[dict]) -> str:
+    """Format GitLab repository metadata as a prompt section.
+
+    Returns a "## GitLab Repositories" section or empty string if no repos.
+    """
+    if not repos:
+        return ""
+
+    lines = ["## GitLab Repositories", ""]
+    lines.append("The following git repositories exist. Use `<<<GITLAB:TREE .../>>>` or `<<<GITLAB:LOG .../>>>` to browse them.")
     lines.append("")
+    for repo in repos:
+        name = repo.get("name", "?")
+        desc = repo.get("description", "")
+        desc_str = f" — {desc}" if desc else ""
+        lines.append(f"- **{name}**{desc_str}")
+    lines.append("")
+
     return "\n".join(lines)
 
 
@@ -182,6 +239,16 @@ def build_initial_prompt(persona_key: str, channels: dict[str, dict] | None = No
     channel_listing += "\n".join(external_lines)
 
     my_channels_str = ", ".join(sorted(my_channels))
+
+    # Build folders listing
+    my_folders = get_accessible_folders(persona_key)
+    folder_lines = []
+    for folder_name in sorted(my_folders):
+        info = DEFAULT_FOLDERS.get(folder_name, {})
+        ftype = info.get("type", "unknown")
+        desc = info.get("description", folder_name)
+        folder_lines.append(f"  - **{folder_name}/** ({ftype}) — {desc}")
+    folders_listing = "\n".join(folder_lines)
 
     return f"""{instructions}
 
@@ -228,6 +295,8 @@ Everyone on this list is an active participant. You do NOT need to escalate to a
 - **Alex (Senior Eng)** — implementation details, edge cases, testing
 - **Jordan (Support Eng)** — customer experience, documentation, support model
 - **Taylor (Sales Eng)** — customer-facing, competitive positioning, deal qualification
+- **Riley (Marketing)** — brand positioning, content strategy, demand generation
+- **Casey (DevOps)** — CI/CD pipelines, infrastructure, deployment automation, reliability
 
 All authority needed to make decisions is present in this team. Do not suggest "escalating to leadership" or "getting executive approval" — Dana and Morgan ARE leadership and they are right here.
 
@@ -237,31 +306,68 @@ All authority needed to make decisions is present in this team. Do not suggest "
 
 When you need to deliver something to the customer, do it directly in an external channel or create a shared document. Do not defer work to offline channels that don't exist.
 
-## Shared Documents Workspace
+## Document Workspace with Folders
 
-Your team has a shared "Google Docs"-style workspace for persisting artifacts like qualification criteria, referral lists, ICP documentation, and other reference material. Documents can be shared with the customer — agents in external channels can reference or deliver any document. You can create and manage documents by embedding the following commands in your responses. These commands are automatically processed and stripped from the chat.
+Your team has a "Google Docs"-style workspace organized into folders with access controls. Documents are stored in folders, and you can only see/create docs in folders you have access to.
+
+### Your Accessible Folders
+
+{folders_listing}
 
 ### Document Commands
 
-**Create a new document:**
-<<<DOC:CREATE title="Document Title Here">>>
+**Create a new document** (default folder is "shared"):
+<<<DOC:CREATE folder="shared" title="Document Title Here">>>
 Content goes here, can be multiple lines.
 <<<END_DOC>>>
 
 **Replace a document's content:**
-<<<DOC:UPDATE slug="document-slug">>>
+<<<DOC:UPDATE folder="shared" slug="document-slug">>>
 Full replacement content.
 <<<END_DOC>>>
 
 **Append to an existing document:**
-<<<DOC:APPEND slug="document-slug">>>
+<<<DOC:APPEND folder="shared" slug="document-slug">>>
 Additional content appended to the end.
 <<<END_DOC>>>
 
-**Search documents:**
+**Search documents** (optionally scoped to specific folders):
 <<<DOC:SEARCH query="search terms"/>>>
+<<<DOC:SEARCH query="search terms" folders="shared,engineering"/>>>
 
-Use documents when you want to persist information that should survive across conversation turns — criteria, checklists, plans, reference data, etc. You will see a "Team Documents" section in each turn showing what documents currently exist.
+The `folder` parameter is optional and defaults to `"shared"`. Use it to organize documents into the appropriate folder.
+
+Use documents when you want to persist information that should survive across conversation turns — criteria, checklists, plans, reference data, etc. You will see a "Team Documents" section in each turn showing what documents currently exist in your accessible folders.
+
+## GitLab Repositories (Code Hosting)
+
+Your team has a simplified GitLab-style code hosting system. You can create repos, commit files, browse file trees, read files, and view commit history.
+
+### GitLab Commands
+
+**Create a repository:**
+<<<GITLAB:REPO_CREATE name="api-service" description="Main API service"/>>>
+
+**Commit files to a repository:**
+<<<GITLAB:COMMIT project="api-service" message="Add config">>>
+FILE: config/rate-limit.yaml
+limits:
+  default: 100/min
+FILE: src/app.py
+from flask import Flask
+<<<END_GITLAB>>>
+
+**Browse a file tree:**
+<<<GITLAB:TREE project="api-service"/>>>
+<<<GITLAB:TREE project="api-service" path="src"/>>>
+
+**Read a file:**
+<<<GITLAB:FILE_READ project="api-service" path="config/rate-limit.yaml"/>>>
+
+**View commit history:**
+<<<GITLAB:LOG project="api-service"/>>>
+
+You will see a "GitLab Repositories" section in each turn showing what repos currently exist.
 
 ---
 
@@ -278,6 +384,7 @@ def build_turn_prompt(
     trigger_channel: str = "#general",
     channels: set[str] | None = None,
     docs: list[dict] | None = None,
+    repos: list[dict] | None = None,
 ) -> str:
     """Build a lean per-turn prompt for a persistent session.
 
@@ -287,13 +394,15 @@ def build_turn_prompt(
         trigger_channel: The channel with new activity.
         channels: Set of channel names this agent belongs to.
         docs: List of document metadata dicts.
+        repos: List of GitLab repository metadata dicts.
     """
     persona = PERSONAS[persona_key]
     if channels is None:
         channels = DEFAULT_MEMBERSHIPS.get(persona_key, {"#general"})
 
     history = _build_history_sections(messages, channels)
-    docs_section = build_docs_index(docs) if docs else ""
+    docs_section = build_docs_index(docs, persona_key) if docs else ""
+    repos_section = build_gitlab_index(repos) if repos else ""
 
     # Determine if trigger channel is external
     ch_info = DEFAULT_CHANNELS.get(trigger_channel, {})
@@ -341,6 +450,8 @@ Rules:
     parts = [f"## Chat History\n\n{history}"]
     if docs_section:
         parts.append(docs_section)
+    if repos_section:
+        parts.append(repos_section)
     parts.append(action)
 
     return "\n\n---\n\n".join(parts)
