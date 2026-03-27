@@ -307,6 +307,14 @@ WEB_UI = """<!DOCTYPE html>
   .msg .ts { font-size: 11px; color: #888; margin-top: 4px; }
   .msg-customer { align-self: flex-end; background: #0f3460; border-bottom-right-radius: 4px; }
   .msg-customer .sender { color: #4fc3f7; }
+  .msg-board .sender { color: #ffd700; }
+  .msg-hacker .sender { color: #00ff41; }
+  .msg-god .sender { color: #ff6ff2; }
+  .msg-intern .sender { color: #a8e6cf; }
+  .msg-competitor .sender { color: #ff4444; }
+  .msg-regulator .sender { color: #ff9800; }
+  .msg-investor .sender { color: #7c4dff; }
+  .msg-press .sender { color: #ffab40; }
   .msg-agent { align-self: flex-start; background: #1a1a3e; border: 1px solid #333; border-bottom-left-radius: 4px; }
   .msg-pm .sender { color: #e94560; }
   .msg-engmgr .sender { color: #f39c12; }
@@ -551,9 +559,19 @@ const PERSONA_DISPLAY = {
   'marketing': 'Riley', 'devops': 'Casey',
 };
 
+const HUMAN_CLASS_MAP = {
+  'Customer': 'msg-customer', 'Consultant': 'msg-customer',
+  'Board Member': 'msg-board', 'Hacker': 'msg-hacker', 'God': 'msg-god',
+  'Intern': 'msg-intern', 'Competitor': 'msg-competitor',
+  'Regulator': 'msg-regulator', 'Investor': 'msg-investor', 'The Press': 'msg-press',
+};
+
 function senderClass(sender) {
-  if (sender === 'Customer' || sender === 'Consultant') return 'msg-customer';
-  return SENDER_CLASS_MAP[sender] || 'msg-default';
+  return HUMAN_CLASS_MAP[sender] || SENDER_CLASS_MAP[sender] || 'msg-default';
+}
+
+function isHumanSender(sender) {
+  return sender in HUMAN_CLASS_MAP;
 }
 
 function renderMarkdown(text) {
@@ -647,10 +665,25 @@ function updateSenderDropdown() {
   const ch = channelsData[currentChannel];
   senderSelect.innerHTML = '';
   if (ch && ch.is_external) {
-    senderSelect.innerHTML = '<option value="Customer" selected>Customer</option>'
-                           + '<option value="Consultant">Consultant</option>';
+    senderSelect.innerHTML =
+        '<option value="Customer" selected>Customer</option>'
+      + '<option value="Consultant">Consultant</option>'
+      + '<option value="Investor">Investor</option>'
+      + '<option value="Competitor">Competitor</option>'
+      + '<option value="The Press">The Press</option>'
+      + '<option value="Regulator">Regulator</option>'
+      + '<option value="Hacker">Hacker</option>';
   } else {
-    senderSelect.innerHTML = '<option value="Consultant" selected>Consultant</option>';
+    senderSelect.innerHTML =
+        '<option value="Consultant" selected>Consultant</option>'
+      + '<option value="Board Member">Board Member</option>'
+      + '<option value="Investor">Investor</option>'
+      + '<option value="Intern">Intern</option>'
+      + '<option value="God">God</option>'
+      + '<option value="Hacker">Hacker</option>'
+      + '<option value="Regulator">Regulator</option>'
+      + '<option value="The Press">The Press</option>'
+      + '<option value="Competitor">Competitor</option>';
   }
 }
 
@@ -674,7 +707,7 @@ function addMessage(msg) {
 function appendMessageEl(msg) {
   const div = document.createElement('div');
   const cls = senderClass(msg.sender);
-  div.className = 'msg ' + (msg.sender === 'Customer' || msg.sender === 'Consultant' ? 'msg-customer' : 'msg-agent') + ' ' + cls;
+  div.className = 'msg ' + (isHumanSender(msg.sender) ? 'msg-customer' : 'msg-agent') + ' ' + cls;
   const ts = new Date(msg.timestamp * 1000).toLocaleTimeString();
   div.innerHTML = '<div class="sender">' + escapeHtml(msg.sender) + '</div>'
     + '<div class="content">' + renderMarkdown(msg.content) + '</div>'
