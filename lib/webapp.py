@@ -157,15 +157,16 @@ WEB_UI = """<!DOCTYPE html>
   body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
          background: #1a1a2e; color: #e0e0e0; height: 100vh; display: flex; flex-direction: column; }
 
-  #header { background: #16213e; padding: 12px 20px; border-bottom: 1px solid #0f3460;
-            display: flex; align-items: center; gap: 12px; }
-  #header h1 { font-size: 18px; color: #e94560; }
-  #header span { font-size: 13px; color: #888; }
-  #docs-toggle { padding: 5px 12px; border-radius: 6px; font-size: 13px; cursor: pointer;
-                 border: 1px solid #333; background: #1a1a2e; color: #888;
-                 font-weight: 600; margin-left: auto; transition: all 0.15s ease; }
-  #docs-toggle:hover { border-color: #e94560; color: #e94560; }
-  #docs-toggle.active { border-color: #e94560; color: #e94560; background: #2a0f18; }
+  /* -- Header with tabs -- */
+  #header { background: #16213e; padding: 0 20px; border-bottom: 1px solid #0f3460;
+            display: flex; align-items: stretch; gap: 0; }
+  #header h1 { font-size: 18px; color: #e94560; display: flex; align-items: center; padding: 12px 16px 12px 0;
+               border-right: 1px solid #0f3460; margin-right: 0; }
+  .header-tab { padding: 12px 20px; font-size: 13px; font-weight: 600; cursor: pointer;
+                background: transparent; border: none; color: #888;
+                border-bottom: 2px solid transparent; transition: all 0.15s ease; }
+  .header-tab:hover { color: #e0e0e0; }
+  .header-tab.active { color: #e94560; border-bottom-color: #e94560; }
 
   #main-layout { flex: 1; display: flex; overflow: hidden; }
 
@@ -185,8 +186,14 @@ WEB_UI = """<!DOCTYPE html>
   .channel-btn .unread-badge.visible { display: inline; }
   .sidebar-divider { border: none; border-top: 1px solid #0f3460; margin: 6px 14px; }
 
-  /* -- Chat panel -- */
+  /* -- Tab panes -- */
+  .tab-pane { display: none; flex: 1; overflow: hidden; }
+  .tab-pane.active { display: flex; }
+  #chat-pane { flex-direction: row; }
+  #docs-pane { flex-direction: column; }
   #chat-area { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
+
+  /* -- Chat tab -- */
   #channel-header { background: #16213e; padding: 8px 20px; border-bottom: 1px solid #0f3460;
                     font-size: 15px; font-weight: 700; color: #e0e0e0; }
   #channel-header .ch-desc { font-size: 12px; color: #888; font-weight: 400; margin-left: 10px; }
@@ -238,82 +245,82 @@ WEB_UI = """<!DOCTYPE html>
                border-radius: 8px; font-size: 14px; cursor: pointer; }
   #clear-btn:hover { border-color: #e94560; color: #e94560; }
 
-  /* -- Docs panel -- */
-  #docs-panel { width: 320px; min-width: 320px; background: #121a30; border-left: 1px solid #0f3460;
-                display: none; flex-direction: column; overflow: hidden; }
-  #docs-panel.open { display: flex; }
-  #docs-panel-header { padding: 12px 16px; border-bottom: 1px solid #0f3460; }
-  #docs-panel-header h3 { font-size: 14px; color: #e94560; margin-bottom: 8px; }
-  #docs-search { width: 100%; background: #1a1a2e; color: #e0e0e0; border: 1px solid #333;
-                 padding: 6px 10px; border-radius: 6px; font-size: 13px; outline: none; }
+  /* -- Docs tab -- */
+  #docs-pane { padding: 0; }
+  #docs-toolbar { padding: 12px 20px; border-bottom: 1px solid #0f3460; background: #16213e; }
+  #docs-search { width: 100%; max-width: 400px; background: #1a1a2e; color: #e0e0e0; border: 1px solid #333;
+                 padding: 8px 12px; border-radius: 8px; font-size: 14px; outline: none; }
   #docs-search:focus { border-color: #e94560; }
-  #docs-list { flex: 1; overflow-y: auto; padding: 8px; }
-  .doc-card { background: #1a1a2e; border: 1px solid #333; border-radius: 8px; padding: 10px 12px;
-              margin-bottom: 6px; cursor: pointer; transition: border-color 0.15s ease; }
+  #docs-list { flex: 1; overflow-y: auto; padding: 16px 20px; }
+  .doc-card { background: #1a1a2e; border: 1px solid #333; border-radius: 8px; padding: 12px 16px;
+              margin-bottom: 8px; cursor: pointer; transition: border-color 0.15s ease; }
   .doc-card:hover { border-color: #e94560; }
-  .doc-card-title { font-size: 13px; font-weight: 700; color: #4fc3f7; margin-bottom: 4px; }
-  .doc-card-preview { font-size: 12px; color: #888; overflow: hidden; text-overflow: ellipsis;
+  .doc-card-title { font-size: 14px; font-weight: 700; color: #4fc3f7; margin-bottom: 4px; }
+  .doc-card-preview { font-size: 13px; color: #888; overflow: hidden; text-overflow: ellipsis;
                       white-space: nowrap; }
+  #docs-empty { color: #555; font-size: 14px; text-align: center; padding: 40px 20px; }
   #doc-viewer { display: none; flex-direction: column; flex: 1; overflow: hidden; }
   #doc-viewer.open { display: flex; }
-  #doc-viewer-header { padding: 10px 16px; border-bottom: 1px solid #0f3460;
-                       display: flex; align-items: center; gap: 8px; }
-  #doc-back-btn { background: transparent; border: 1px solid #333; color: #888; padding: 4px 10px;
-                  border-radius: 6px; cursor: pointer; font-size: 12px; }
+  #doc-viewer-header { padding: 12px 20px; border-bottom: 1px solid #0f3460; background: #16213e;
+                       display: flex; align-items: center; gap: 10px; }
+  #doc-back-btn { background: transparent; border: 1px solid #333; color: #888; padding: 6px 12px;
+                  border-radius: 6px; cursor: pointer; font-size: 13px; }
   #doc-back-btn:hover { border-color: #e94560; color: #e94560; }
-  #doc-viewer-title { font-size: 14px; font-weight: 700; color: #4fc3f7; }
-  #doc-viewer-content { flex: 1; overflow-y: auto; padding: 12px 16px; font-size: 13px;
-                        color: #e0e0e0; line-height: 1.6; }
-  #doc-viewer-content h1 { font-size: 17px; margin: 10px 0 6px; }
-  #doc-viewer-content h2 { font-size: 15px; margin: 8px 0 4px; }
-  #doc-viewer-content h3 { font-size: 14px; margin: 6px 0 3px; }
-  #doc-viewer-content p { margin: 4px 0; }
-  #doc-viewer-content ul, #doc-viewer-content ol { margin: 4px 0 4px 20px; }
-  #doc-viewer-content li { margin: 2px 0; }
+  #doc-viewer-title { font-size: 16px; font-weight: 700; color: #4fc3f7; }
+  #doc-viewer-content { flex: 1; overflow-y: auto; padding: 20px; font-size: 14px;
+                        color: #e0e0e0; line-height: 1.7; }
+  #doc-viewer-content h1 { font-size: 20px; margin: 12px 0 8px; }
+  #doc-viewer-content h2 { font-size: 17px; margin: 10px 0 6px; }
+  #doc-viewer-content h3 { font-size: 15px; margin: 8px 0 4px; }
+  #doc-viewer-content p { margin: 6px 0; }
+  #doc-viewer-content ul, #doc-viewer-content ol { margin: 6px 0 6px 24px; }
+  #doc-viewer-content li { margin: 3px 0; }
   #doc-viewer-content strong { color: #fff; }
-  #doc-viewer-content code { background: rgba(255,255,255,0.1); padding: 1px 4px; border-radius: 3px; }
-  #doc-viewer-content pre { background: rgba(0,0,0,0.3); padding: 8px; border-radius: 6px; margin: 4px 0;
+  #doc-viewer-content code { background: rgba(255,255,255,0.1); padding: 2px 5px; border-radius: 3px; }
+  #doc-viewer-content pre { background: rgba(0,0,0,0.3); padding: 12px; border-radius: 6px; margin: 6px 0;
                             overflow-x: auto; white-space: pre-wrap; word-break: break-word; }
   #doc-viewer-content pre code { background: none; padding: 0; }
-  #doc-viewer-content hr { border: none; border-top: 1px solid #444; margin: 8px 0; }
+  #doc-viewer-content hr { border: none; border-top: 1px solid #444; margin: 10px 0; }
   #doc-viewer-content input[type="checkbox"] { margin-right: 4px; }
-  #docs-empty { color: #555; font-size: 13px; text-align: center; padding: 24px 16px; }
 </style>
 </head>
 <body>
 <div id="header">
   <h1>Organization Chat</h1>
-  <span>Multi-channel agent collaboration</span>
-  <button id="docs-toggle">Docs</button>
+  <button class="header-tab active" data-tab="chat">Chat</button>
+  <button class="header-tab" data-tab="docs">Docs</button>
 </div>
 <div id="main-layout">
-  <div id="sidebar">
-    <div class="sidebar-section">Internal</div>
-    <div id="internal-channels"></div>
-    <hr class="sidebar-divider">
-    <div class="sidebar-section">External</div>
-    <div id="external-channels"></div>
-  </div>
-  <div id="chat-area">
-    <div id="channel-header">
-      <span id="channel-title">#general</span>
-      <span class="ch-desc" id="channel-desc"></span>
-      <div id="channel-members"></div>
+  <!-- Chat tab: sidebar + chat area -->
+  <div id="chat-pane" class="tab-pane active">
+    <div id="sidebar">
+      <div class="sidebar-section">Internal</div>
+      <div id="internal-channels"></div>
+      <hr class="sidebar-divider">
+      <div class="sidebar-section">External</div>
+      <div id="external-channels"></div>
     </div>
-    <div id="messages-panel"></div>
-    <div id="input-area">
-      <select id="sender-select">
-        <option value="Consultant" selected>Consultant</option>
-        <option value="Customer">Customer</option>
-      </select>
-      <input id="msg-input" type="text" placeholder="Type a message..." autocomplete="off" />
-      <button id="send-btn">Send</button>
-      <button id="clear-btn" title="Clear chat">Clear</button>
+    <div id="chat-area">
+      <div id="channel-header">
+        <span id="channel-title">#general</span>
+        <span class="ch-desc" id="channel-desc"></span>
+        <div id="channel-members"></div>
+      </div>
+      <div id="messages-panel"></div>
+      <div id="input-area">
+        <select id="sender-select">
+          <option value="Consultant" selected>Consultant</option>
+          <option value="Customer">Customer</option>
+        </select>
+        <input id="msg-input" type="text" placeholder="Type a message..." autocomplete="off" />
+        <button id="send-btn">Send</button>
+        <button id="clear-btn" title="Clear chat">Clear</button>
+      </div>
     </div>
   </div>
-  <div id="docs-panel">
-    <div id="docs-panel-header">
-      <h3>Shared Documents</h3>
+  <!-- Docs tab -->
+  <div id="docs-pane" class="tab-pane">
+    <div id="docs-toolbar">
       <input id="docs-search" type="text" placeholder="Search documents..." autocomplete="off" />
     </div>
     <div id="docs-list">
@@ -331,16 +338,17 @@ WEB_UI = """<!DOCTYPE html>
 <script>
 const messagesPanel = document.getElementById('messages-panel');
 const input = document.getElementById('msg-input');
-const btn = document.getElementById('send-btn');
+const sendBtn = document.getElementById('send-btn');
 const senderSelect = document.getElementById('sender-select');
 const channelTitle = document.getElementById('channel-title');
 const channelDesc = document.getElementById('channel-desc');
 const channelMembersEl = document.getElementById('channel-members');
 
+let currentTab = 'chat';
 let currentChannel = '#general';
-let channelsData = {};         // name -> {description, is_external, members}
-let messagesByChannel = {};    // channel -> [msg, ...]
-let unreadByChannel = {};      // channel -> count
+let channelsData = {};
+let messagesByChannel = {};
+let unreadByChannel = {};
 let seenIds = new Set();
 
 const SENDER_CLASS_MAP = {
@@ -375,6 +383,21 @@ function escapeHtml(s) {
   d.textContent = s;
   return d.innerHTML;
 }
+
+// -- Tabs --
+
+document.querySelectorAll('.header-tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    const target = tab.dataset.tab;
+    if (target === currentTab) return;
+    currentTab = target;
+    document.querySelectorAll('.header-tab').forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+    document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
+    document.getElementById(target + '-pane').classList.add('active');
+    if (target === 'docs') loadDocs();
+  });
+});
 
 // -- Channel sidebar --
 
@@ -456,7 +479,7 @@ function addMessage(msg) {
   if (!messagesByChannel[ch]) messagesByChannel[ch] = [];
   messagesByChannel[ch].push(msg);
 
-  if (ch === currentChannel) {
+  if (ch === currentChannel && currentTab === 'chat') {
     appendMessageEl(msg);
   } else {
     unreadByChannel[ch] = (unreadByChannel[ch] || 0) + 1;
@@ -498,7 +521,7 @@ function connectSSE() {
         if (data.channel === currentChannel) updateChannelHeader();
       }
     } else if (data.type === 'doc_event') {
-      if (docsPanel.classList.contains('open')) loadDocs();
+      if (currentTab === 'docs') loadDocs();
     } else {
       addMessage(data);
     }
@@ -529,13 +552,11 @@ async function clearChat() {
   renderMessages();
 }
 
-btn.addEventListener('click', send);
+sendBtn.addEventListener('click', send);
 document.getElementById('clear-btn').addEventListener('click', clearChat);
 input.addEventListener('keydown', (e) => { if (e.key === 'Enter') send(); });
 
-// -- Docs panel --
-const docsToggle = document.getElementById('docs-toggle');
-const docsPanel = document.getElementById('docs-panel');
+// -- Docs tab --
 const docsList = document.getElementById('docs-list');
 const docsEmpty = document.getElementById('docs-empty');
 const docsSearch = document.getElementById('docs-search');
@@ -543,12 +564,6 @@ const docViewer = document.getElementById('doc-viewer');
 const docViewerTitle = document.getElementById('doc-viewer-title');
 const docViewerContent = document.getElementById('doc-viewer-content');
 const docBackBtn = document.getElementById('doc-back-btn');
-
-docsToggle.addEventListener('click', () => {
-  docsToggle.classList.toggle('active');
-  docsPanel.classList.toggle('open');
-  if (docsPanel.classList.contains('open')) loadDocs();
-});
 
 async function loadDocs(query) {
   let url = '/api/docs';
@@ -561,6 +576,9 @@ async function loadDocs(query) {
 function renderDocList(docs) {
   docsList.querySelectorAll('.doc-card').forEach(el => el.remove());
   docsEmpty.style.display = docs.length ? 'none' : 'block';
+  docViewer.classList.remove('open');
+  docsList.style.display = '';
+  document.getElementById('docs-toolbar').style.display = '';
   docs.forEach(doc => {
     const card = document.createElement('div');
     card.className = 'doc-card';
@@ -579,13 +597,13 @@ async function viewDoc(slug) {
   docViewerContent.innerHTML = renderMarkdown(doc.content || '');
   docViewer.classList.add('open');
   docsList.style.display = 'none';
-  document.getElementById('docs-panel-header').style.display = 'none';
+  document.getElementById('docs-toolbar').style.display = 'none';
 }
 
 docBackBtn.addEventListener('click', () => {
   docViewer.classList.remove('open');
   docsList.style.display = '';
-  document.getElementById('docs-panel-header').style.display = '';
+  document.getElementById('docs-toolbar').style.display = '';
 });
 
 let docsSearchTimer = null;
