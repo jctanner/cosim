@@ -79,62 +79,136 @@ class ChatClient:
         resp.raise_for_status()
         return resp.json()
 
+    # -- Folder API --
+
+    def get_folders(self) -> list[dict]:
+        """Return list of folder dicts with name, type, description, access."""
+        resp = requests.get(f"{self.base_url}/api/folders", timeout=10)
+        resp.raise_for_status()
+        return resp.json()
+
     # -- Document API --
 
-    def list_docs(self) -> list[dict]:
-        """Return metadata for all shared documents."""
-        resp = requests.get(f"{self.base_url}/api/docs", timeout=10)
+    def list_docs(self, folder: str | None = None) -> list[dict]:
+        """Return metadata for documents, optionally filtered by folder."""
+        params = {}
+        if folder:
+            params["folder"] = folder
+        resp = requests.get(f"{self.base_url}/api/docs", params=params, timeout=10)
         resp.raise_for_status()
         return resp.json()
 
-    def create_doc(self, title: str, content: str, author: str = "unknown") -> dict:
-        """Create a new shared document. Returns metadata dict."""
+    def create_doc(self, title: str, content: str, author: str = "unknown", folder: str = "shared") -> dict:
+        """Create a new document in the specified folder. Returns metadata dict."""
         resp = requests.post(
             f"{self.base_url}/api/docs",
-            json={"title": title, "content": content, "author": author},
+            json={"title": title, "content": content, "author": author, "folder": folder},
             timeout=10,
         )
         resp.raise_for_status()
         return resp.json()
 
-    def get_doc(self, slug: str) -> dict:
+    def get_doc(self, folder: str, slug: str) -> dict:
         """Get a document's metadata and full content."""
-        resp = requests.get(f"{self.base_url}/api/docs/{slug}", timeout=10)
+        resp = requests.get(f"{self.base_url}/api/docs/{folder}/{slug}", timeout=10)
         resp.raise_for_status()
         return resp.json()
 
-    def update_doc(self, slug: str, content: str, author: str = "unknown") -> dict:
+    def update_doc(self, folder: str, slug: str, content: str, author: str = "unknown") -> dict:
         """Replace a document's content entirely."""
         resp = requests.put(
-            f"{self.base_url}/api/docs/{slug}",
+            f"{self.base_url}/api/docs/{folder}/{slug}",
             json={"content": content, "author": author},
             timeout=10,
         )
         resp.raise_for_status()
         return resp.json()
 
-    def append_doc(self, slug: str, content: str, author: str = "unknown") -> dict:
+    def append_doc(self, folder: str, slug: str, content: str, author: str = "unknown") -> dict:
         """Append content to an existing document."""
         resp = requests.post(
-            f"{self.base_url}/api/docs/{slug}/append",
+            f"{self.base_url}/api/docs/{folder}/{slug}/append",
             json={"content": content, "author": author},
             timeout=10,
         )
         resp.raise_for_status()
         return resp.json()
 
-    def search_docs(self, query: str) -> list[dict]:
+    def search_docs(self, query: str, folders: list[str] | None = None) -> list[dict]:
         """Search document titles and contents. Returns list of matching metadata."""
+        params = {"q": query}
+        if folders:
+            params["folders"] = ",".join(folders)
         resp = requests.get(
             f"{self.base_url}/api/docs/search",
-            params={"q": query},
+            params=params,
             timeout=10,
         )
         resp.raise_for_status()
         return resp.json()
 
-    def delete_doc(self, slug: str) -> dict:
-        """Delete a shared document."""
-        resp = requests.delete(f"{self.base_url}/api/docs/{slug}", timeout=10)
+    def delete_doc(self, folder: str, slug: str) -> dict:
+        """Delete a document from the specified folder."""
+        resp = requests.delete(f"{self.base_url}/api/docs/{folder}/{slug}", timeout=10)
+        resp.raise_for_status()
+        return resp.json()
+
+    # -- GitLab API --
+
+    def list_repos(self) -> list[dict]:
+        """Return list of GitLab repository metadata dicts."""
+        resp = requests.get(f"{self.base_url}/api/gitlab/repos", timeout=10)
+        resp.raise_for_status()
+        return resp.json()
+
+    def create_repo(self, name: str, description: str, author: str) -> dict:
+        """Create a new GitLab repository."""
+        resp = requests.post(
+            f"{self.base_url}/api/gitlab/repos",
+            json={"name": name, "description": description, "author": author},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def get_tree(self, project: str, path: str | None = None) -> list[dict]:
+        """Get file tree for a repository, optionally scoped to a subdirectory."""
+        params = {}
+        if path:
+            params["path"] = path
+        resp = requests.get(
+            f"{self.base_url}/api/gitlab/repos/{project}/tree",
+            params=params,
+            timeout=10,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def get_file(self, project: str, path: str) -> dict:
+        """Read a file from a repository."""
+        resp = requests.get(
+            f"{self.base_url}/api/gitlab/repos/{project}/file",
+            params={"path": path},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def commit_files(self, project: str, message: str, files: list[dict], author: str) -> dict:
+        """Commit files to a repository."""
+        resp = requests.post(
+            f"{self.base_url}/api/gitlab/repos/{project}/commit",
+            json={"message": message, "files": files, "author": author},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def get_log(self, project: str) -> list[dict]:
+        """Get commit history for a repository (newest first)."""
+        resp = requests.get(
+            f"{self.base_url}/api/gitlab/repos/{project}/log",
+            timeout=10,
+        )
         resp.raise_for_status()
         return resp.json()

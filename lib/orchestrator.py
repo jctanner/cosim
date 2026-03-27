@@ -25,6 +25,7 @@ _AGENT_DISPLAY_NAMES = {p["display_name"] for p in PERSONAS.values()}
 
 _DOC_BLOCK_RE = re.compile(
     r'<<<DOC:(CREATE|UPDATE|APPEND)\s+'
+    r'(?:folder="([^"]+)"\s+)?'
     r'(?:title|slug)="([^"]+)"'
     r'\s*>>>'
     r'(.*?)'
@@ -33,12 +34,46 @@ _DOC_BLOCK_RE = re.compile(
 )
 
 _DOC_SEARCH_RE = re.compile(
-    r'<<<DOC:SEARCH\s+query="([^"]+)"\s*/>>>',
+    r'<<<DOC:SEARCH\s+query="([^"]+)"'
+    r'(?:\s+folders="([^"]*)")?'
+    r'\s*/>>>',
 )
 
 # -- Channel command regex --
 
 _CHANNEL_JOIN_RE = re.compile(r'<<<CHANNEL:JOIN\s+(#[\w-]+)\s*>>>')
+
+# -- GitLab command regexes --
+
+_GITLAB_BLOCK_RE = re.compile(
+    r'<<<GITLAB:COMMIT\s+project="([^"]+)"\s+message="([^"]+)"'
+    r'\s*>>>'
+    r'(.*?)'
+    r'<<<END_GITLAB>>>',
+    re.DOTALL,
+)
+
+_GITLAB_REPO_CREATE_RE = re.compile(
+    r'<<<GITLAB:REPO_CREATE\s+name="([^"]+)"'
+    r'(?:\s+description="([^"]*)")?'
+    r'\s*/>>>',
+)
+
+_GITLAB_TREE_RE = re.compile(
+    r'<<<GITLAB:TREE\s+project="([^"]+)"'
+    r'(?:\s+path="([^"]*)")?'
+    r'\s*/>>>',
+)
+
+_GITLAB_FILE_READ_RE = re.compile(
+    r'<<<GITLAB:FILE_READ\s+project="([^"]+)"\s+path="([^"]+)"'
+    r'\s*/>>>',
+)
+
+_GITLAB_LOG_RE = re.compile(
+    r'<<<GITLAB:LOG\s+project="([^"]+)"'
+    r'\s*/>>>',
+)
 
 # -- Multi-channel response marker --
 
@@ -56,9 +91,10 @@ def _extract_doc_commands(text: str) -> tuple[str, list[dict]]:
 
     for match in _DOC_BLOCK_RE.finditer(text):
         action = match.group(1).upper()
-        identifier = match.group(2)
-        content = match.group(3).strip()
-        cmd = {"action": action, "content": content}
+        folder = match.group(2) or "shared"
+        identifier = match.group(3)
+        content = match.group(4).strip()
+        cmd = {"action": action, "content": content, "folder": folder}
         if action == "CREATE":
             cmd["title"] = identifier
         else:
@@ -66,7 +102,10 @@ def _extract_doc_commands(text: str) -> tuple[str, list[dict]]:
         commands.append(cmd)
 
     for match in _DOC_SEARCH_RE.finditer(text):
-        commands.append({"action": "SEARCH", "query": match.group(1)})
+        cmd = {"action": "SEARCH", "query": match.group(1)}
+        if match.group(2):
+            cmd["folders"] = [f.strip() for f in match.group(2).split(",") if f.strip()]
+        commands.append(cmd)
 
     cleaned = _DOC_BLOCK_RE.sub("", text)
     cleaned = _DOC_SEARCH_RE.sub("", cleaned)
@@ -84,18 +123,20 @@ def _execute_doc_commands(
     results = []
     for cmd in commands:
         action = cmd["action"]
+        folder = cmd.get("folder", "shared")
         try:
             if action == "CREATE":
-                result = client.create_doc(cmd["title"], cmd["content"], author)
+                result = client.create_doc(cmd["title"], cmd["content"], author, folder=folder)
                 results.append({"action": "created", "ok": True, **result})
             elif action == "UPDATE":
-                result = client.update_doc(cmd["slug"], cmd["content"], author)
+                result = client.update_doc(folder, cmd["slug"], cmd["content"], author)
                 results.append({"action": "updated", "ok": True, **result})
             elif action == "APPEND":
-                result = client.append_doc(cmd["slug"], cmd["content"], author)
+                result = client.append_doc(folder, cmd["slug"], cmd["content"], author)
                 results.append({"action": "appended", "ok": True, **result})
             elif action == "SEARCH":
-                result = client.search_docs(cmd["query"])
+                folders = cmd.get("folders")
+                result = client.search_docs(cmd["query"], folders=folders)
                 results.append({"action": "search", "ok": True, "query": cmd["query"], "results": result})
         except Exception as e:
             results.append({"action": action.lower(), "ok": False, "error": str(e)})
@@ -116,6 +157,144 @@ def _format_search_results(search_data: dict) -> str:
         snippet = hit.get("snippet", hit.get("preview", ""))
         lines.append(f"  - {title} (slug: {slug}): {snippet}")
     return "\n".join(lines)
+
+
+def _parse_commit_files(body: str) -> list[dict]:
+    """Parse COMMIT body into list of {path, content} dicts.
+
+    Body is delimited by `FILE: <path>` lines. Each FILE: starts a new file;
+    content until the next FILE: or end-of-block is that file's body.
+    """
+    files = []
+    current_path = None
+    current_lines: list[str] = []
+
+    for line in body.split("\n"):
+        if line.startswith("FILE: "):
+            if current_path is not None:
+                files.append({"path": current_path, "content": "\n".join(current_lines).strip()})
+            current_path = line[6:].strip()
+            current_lines = []
+        else:
+            current_lines.append(line)
+
+    if current_path is not None:
+        files.append({"path": current_path, "content": "\n".join(current_lines).strip()})
+
+    return files
+
+
+def _extract_gitlab_commands(text: str) -> tuple[str, list[dict]]:
+    """Parse GitLab commands from agent response text.
+
+    Returns (cleaned_text, commands_list).
+    """
+    commands = []
+
+    for match in _GITLAB_BLOCK_RE.finditer(text):
+        project = match.group(1)
+        message = match.group(2)
+        body = match.group(3)
+        files = _parse_commit_files(body)
+        commands.append({"action": "COMMIT", "project": project, "message": message, "files": files})
+
+    for match in _GITLAB_REPO_CREATE_RE.finditer(text):
+        cmd = {"action": "REPO_CREATE", "name": match.group(1)}
+        if match.group(2):
+            cmd["description"] = match.group(2)
+        else:
+            cmd["description"] = ""
+        commands.append(cmd)
+
+    for match in _GITLAB_TREE_RE.finditer(text):
+        cmd = {"action": "TREE", "project": match.group(1)}
+        if match.group(2):
+            cmd["path"] = match.group(2)
+        commands.append(cmd)
+
+    for match in _GITLAB_FILE_READ_RE.finditer(text):
+        commands.append({"action": "FILE_READ", "project": match.group(1), "path": match.group(2)})
+
+    for match in _GITLAB_LOG_RE.finditer(text):
+        commands.append({"action": "LOG", "project": match.group(1)})
+
+    cleaned = _GITLAB_BLOCK_RE.sub("", text)
+    cleaned = _GITLAB_REPO_CREATE_RE.sub("", cleaned)
+    cleaned = _GITLAB_TREE_RE.sub("", cleaned)
+    cleaned = _GITLAB_FILE_READ_RE.sub("", cleaned)
+    cleaned = _GITLAB_LOG_RE.sub("", cleaned)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
+
+    return cleaned, commands
+
+
+def _execute_gitlab_commands(
+    client: ChatClient,
+    commands: list[dict],
+    author: str,
+) -> list[dict]:
+    """Execute a list of parsed GitLab commands via ChatClient."""
+    results = []
+    for cmd in commands:
+        action = cmd["action"]
+        try:
+            if action == "REPO_CREATE":
+                result = client.create_repo(cmd["name"], cmd.get("description", ""), author)
+                results.append({"action": "repo_created", "ok": True, **result})
+            elif action == "COMMIT":
+                result = client.commit_files(cmd["project"], cmd["message"], cmd["files"], author)
+                results.append({"action": "committed", "ok": True, "project": cmd["project"], **result})
+            elif action == "TREE":
+                result = client.get_tree(cmd["project"], path=cmd.get("path"))
+                results.append({"action": "tree", "ok": True, "project": cmd["project"],
+                                "path": cmd.get("path", ""), "entries": result})
+            elif action == "FILE_READ":
+                result = client.get_file(cmd["project"], cmd["path"])
+                results.append({"action": "file_read", "ok": True, "project": cmd["project"], **result})
+            elif action == "LOG":
+                result = client.get_log(cmd["project"])
+                results.append({"action": "log", "ok": True, "project": cmd["project"], "commits": result})
+        except Exception as e:
+            results.append({"action": action.lower(), "ok": False, "error": str(e)})
+    return results
+
+
+def _format_gitlab_results(result: dict) -> str | None:
+    """Format a read-only GitLab result as a system message string.
+
+    Returns None for write operations (repo_created, committed).
+    """
+    action = result.get("action")
+
+    if action == "tree":
+        project = result.get("project", "?")
+        path = result.get("path", "") or "/"
+        entries = result.get("entries", [])
+        if not entries:
+            return f'[GitLab Tree] {project}:{path} — (empty)'
+        lines = [f'[GitLab Tree] {project}:{path}']
+        for e in entries:
+            icon = "dir" if e.get("type") == "dir" else "file"
+            lines.append(f"  [{icon}] {e.get('name', '?')}")
+        return "\n".join(lines)
+
+    if action == "file_read":
+        project = result.get("project", "?")
+        path = result.get("path", "?")
+        content = result.get("content", "")
+        return f'[GitLab File] {project}:{path}\n```\n{content}\n```'
+
+    if action == "log":
+        project = result.get("project", "?")
+        commits = result.get("commits", [])
+        if not commits:
+            return f'[GitLab Log] {project} — no commits yet'
+        lines = [f'[GitLab Log] {project} ({len(commits)} commits)']
+        for c in commits[:10]:
+            lines.append(f"  {c.get('id', '?')} {c.get('message', '')} — {c.get('author', '?')}")
+        return "\n".join(lines)
+
+    return None
 
 
 def _extract_channel_commands(text: str) -> tuple[str, list[str]]:
@@ -188,7 +367,24 @@ async def _process_agent_response(
             else:
                 print(f"  {persona['display_name']}: doc {r['action']} failed - {r.get('error', '?')}")
 
-    # 2. Extract channel join commands
+    # 2. Extract and execute GitLab commands
+    cleaned, gitlab_commands = _extract_gitlab_commands(cleaned)
+
+    if gitlab_commands:
+        author = persona["display_name"]
+        gl_results = _execute_gitlab_commands(client, gitlab_commands, author)
+        for r in gl_results:
+            formatted = _format_gitlab_results(r)
+            if formatted:
+                # Read-only results: post as System message
+                client.post_message("System", formatted, channel="#general")
+                print(f"  {persona['display_name']}: gitlab {r['action']} -> posted result")
+            elif r.get("ok"):
+                print(f"  {persona['display_name']}: gitlab {r['action']} -> {r.get('name', r.get('project', '?'))}")
+            else:
+                print(f"  {persona['display_name']}: gitlab {r['action']} failed - {r.get('error', '?')}")
+
+    # 3. Extract channel join commands
     cleaned, channels_to_join = _extract_channel_commands(cleaned)
 
     for ch in channels_to_join:
@@ -198,11 +394,11 @@ async def _process_agent_response(
         except Exception as e:
             print(f"  {persona['display_name']}: failed to join {ch} - {e}")
 
-    # 3. Check for PASS
+    # 4. Check for PASS
     if cleaned.upper() == "PASS" or not cleaned:
         return {}
 
-    # 4. Parse multi-channel response
+    # 5. Parse multi-channel response
     return _parse_multi_channel_response(cleaned, default_channel)
 
 
@@ -275,6 +471,7 @@ async def _run_loop(
             # Re-fetch history so this tier sees previous tiers' responses
             full_history = client.get_messages()
             docs = client.list_docs()
+            repos = client.list_repos()
 
             async def _run_agent(persona_key: str, triggered_by: set[str]):
                 persona = persona_map[persona_key]
@@ -291,6 +488,7 @@ async def _run_loop(
                     trigger_channel=trigger_ch,
                     channels=all_agent_channels,
                     docs=docs,
+                    repos=repos,
                 )
                 result = await pool.send(persona_key, prompt)
                 return persona, trigger_ch, result
