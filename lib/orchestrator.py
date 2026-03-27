@@ -1,0 +1,396 @@
+"""Orchestrator — event-driven multi-channel agent loop."""
+
+import re
+import asyncio
+from pathlib import Path
+
+from lib.chat_client import ChatClient
+from lib.personas import (
+    get_active_personas,
+    build_initial_prompt,
+    build_turn_prompt,
+    DEFAULT_CHANNELS,
+    PERSONAS,
+    RESPONSE_TIERS,
+    PERSONA_TIER,
+)
+from lib.agent_runner import AgentPool
+
+LOG_DIR = Path(__file__).parent.parent / "logs"
+
+# Senders that are agents (not human input)
+_AGENT_DISPLAY_NAMES = {p["display_name"] for p in PERSONAS.values()}
+
+# -- Document command regexes --
+
+_DOC_BLOCK_RE = re.compile(
+    r'<<<DOC:(CREATE|UPDATE|APPEND)\s+'
+    r'(?:title|slug)="([^"]+)"'
+    r'\s*>>>'
+    r'(.*?)'
+    r'<<<END_DOC>>>',
+    re.DOTALL,
+)
+
+_DOC_SEARCH_RE = re.compile(
+    r'<<<DOC:SEARCH\s+query="([^"]+)"\s*/>>>',
+)
+
+# -- Channel command regex --
+
+_CHANNEL_JOIN_RE = re.compile(r'<<<CHANNEL:JOIN\s+(#[\w-]+)\s*>>>')
+
+# -- Multi-channel response marker --
+
+_CHANNEL_MARKER_RE = re.compile(r'^\[#([\w-]+)\]\s*$', re.MULTILINE)
+
+
+def _extract_doc_commands(text: str) -> tuple[str, list[dict]]:
+    """Parse doc commands from agent response text.
+
+    Returns (cleaned_text, commands_list) where cleaned_text has all
+    command blocks stripped out, and commands_list is a list of dicts
+    describing each command found.
+    """
+    commands = []
+
+    for match in _DOC_BLOCK_RE.finditer(text):
+        action = match.group(1).upper()
+        identifier = match.group(2)
+        content = match.group(3).strip()
+        cmd = {"action": action, "content": content}
+        if action == "CREATE":
+            cmd["title"] = identifier
+        else:
+            cmd["slug"] = identifier
+        commands.append(cmd)
+
+    for match in _DOC_SEARCH_RE.finditer(text):
+        commands.append({"action": "SEARCH", "query": match.group(1)})
+
+    cleaned = _DOC_BLOCK_RE.sub("", text)
+    cleaned = _DOC_SEARCH_RE.sub("", cleaned)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
+
+    return cleaned, commands
+
+
+def _execute_doc_commands(
+    client: ChatClient,
+    commands: list[dict],
+    author: str,
+) -> list[dict]:
+    """Execute a list of parsed doc commands via ChatClient."""
+    results = []
+    for cmd in commands:
+        action = cmd["action"]
+        try:
+            if action == "CREATE":
+                result = client.create_doc(cmd["title"], cmd["content"], author)
+                results.append({"action": "created", "ok": True, **result})
+            elif action == "UPDATE":
+                result = client.update_doc(cmd["slug"], cmd["content"], author)
+                results.append({"action": "updated", "ok": True, **result})
+            elif action == "APPEND":
+                result = client.append_doc(cmd["slug"], cmd["content"], author)
+                results.append({"action": "appended", "ok": True, **result})
+            elif action == "SEARCH":
+                result = client.search_docs(cmd["query"])
+                results.append({"action": "search", "ok": True, "query": cmd["query"], "results": result})
+        except Exception as e:
+            results.append({"action": action.lower(), "ok": False, "error": str(e)})
+    return results
+
+
+def _format_search_results(search_data: dict) -> str:
+    """Format search results as readable text for a system message."""
+    query = search_data.get("query", "")
+    hits = search_data.get("results", [])
+    if not hits:
+        return f'[Doc Search] No documents found matching "{query}".'
+
+    lines = [f'[Doc Search] Results for "{query}":']
+    for hit in hits:
+        title = hit.get("title", hit.get("slug", "?"))
+        slug = hit.get("slug", "?")
+        snippet = hit.get("snippet", hit.get("preview", ""))
+        lines.append(f"  - {title} (slug: {slug}): {snippet}")
+    return "\n".join(lines)
+
+
+def _extract_channel_commands(text: str) -> tuple[str, list[str]]:
+    """Parse <<<CHANNEL:JOIN #name>>> commands from text.
+
+    Returns (cleaned_text, list_of_channel_names_to_join).
+    """
+    channels_to_join = []
+    for match in _CHANNEL_JOIN_RE.finditer(text):
+        channels_to_join.append(match.group(1))
+
+    cleaned = _CHANNEL_JOIN_RE.sub("", text)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
+    return cleaned, channels_to_join
+
+
+def _parse_multi_channel_response(text: str, default_channel: str) -> dict[str, str]:
+    """Split text by [#channel-name] markers into channel -> content mapping.
+
+    If no markers are found, the entire text maps to default_channel.
+    """
+    markers = list(_CHANNEL_MARKER_RE.finditer(text))
+    if not markers:
+        return {default_channel: text.strip()} if text.strip() else {}
+
+    result = {}
+
+    # Content before the first marker goes to default channel
+    before_first = text[:markers[0].start()].strip()
+    if before_first:
+        result[default_channel] = before_first
+
+    for i, marker in enumerate(markers):
+        ch_name = "#" + marker.group(1)
+        start = marker.end()
+        end = markers[i + 1].start() if i + 1 < len(markers) else len(text)
+        content = text[start:end].strip()
+        if content:
+            if ch_name in result:
+                result[ch_name] += "\n\n" + content
+            else:
+                result[ch_name] = content
+
+    return result
+
+
+async def _process_agent_response(
+    client: ChatClient,
+    response: str,
+    persona: dict,
+    default_channel: str,
+) -> dict[str, str]:
+    """Process a raw agent response: extract commands, parse multi-channel.
+
+    Returns dict[channel, cleaned_text]. Empty dict if PASS.
+    """
+    # 1. Extract and execute doc commands
+    cleaned, doc_commands = _extract_doc_commands(response)
+
+    if doc_commands:
+        author = persona["display_name"]
+        results = _execute_doc_commands(client, doc_commands, author)
+        for r in results:
+            if r.get("action") == "search":
+                msg_text = _format_search_results(r)
+                client.post_message("System", msg_text, channel="#general")
+                print(f"  {persona['display_name']}: doc search -> {len(r.get('results', []))} results")
+            elif r.get("ok"):
+                print(f"  {persona['display_name']}: doc {r['action']} -> {r.get('slug', r.get('title', '?'))}")
+            else:
+                print(f"  {persona['display_name']}: doc {r['action']} failed - {r.get('error', '?')}")
+
+    # 2. Extract channel join commands
+    cleaned, channels_to_join = _extract_channel_commands(cleaned)
+
+    for ch in channels_to_join:
+        try:
+            client.join_channel(ch, persona["name"])
+            print(f"  {persona['display_name']}: joined {ch}")
+        except Exception as e:
+            print(f"  {persona['display_name']}: failed to join {ch} - {e}")
+
+    # 3. Check for PASS
+    if cleaned.upper() == "PASS" or not cleaned:
+        return {}
+
+    # 4. Parse multi-channel response
+    return _parse_multi_channel_response(cleaned, default_channel)
+
+
+def _is_agent_message(msg: dict) -> bool:
+    """Return True if the message was posted by an agent."""
+    return msg["sender"] in _AGENT_DISPLAY_NAMES
+
+
+def _get_channel_memberships(client: ChatClient) -> dict[str, set[str]]:
+    """Fetch current channel memberships from the server.
+
+    Returns dict[channel_name, set_of_persona_keys].
+    """
+    channels = client.get_channels()
+    return {ch["name"]: set(ch["members"]) for ch in channels}
+
+
+async def _run_loop(
+    client: ChatClient,
+    pool: AgentPool,
+    personas: list[dict],
+    trigger_channels: set[str],
+    max_waves: int,
+) -> None:
+    """Run the event-driven response loop with tiered responses.
+
+    Within each wave, agents respond in tiers (ICs first, then managers,
+    then executives). Each tier sees the previous tier's responses before
+    deciding whether to weigh in. Between waves, channels that received
+    new messages become the next trigger set, up to max_waves.
+    """
+    persona_map = {p["name"]: p for p in personas}
+    wave = 0
+
+    while trigger_channels and wave < max_waves:
+        wave += 1
+        print(f"\n=== Wave {wave}/{max_waves} — triggered: {sorted(trigger_channels)} ===")
+
+        # Get current memberships from server
+        memberships = _get_channel_memberships(client)
+
+        # Collect unique agents to trigger, tracking which channel triggered them
+        agents_to_run: dict[str, set[str]] = {}  # persona_key -> set of trigger channels
+        for ch in trigger_channels:
+            members = memberships.get(ch, set())
+            for persona_key in members:
+                if persona_key in persona_map:
+                    agents_to_run.setdefault(persona_key, set()).add(ch)
+
+        if not agents_to_run:
+            print("  No agents to trigger in these channels")
+            break
+
+        # Group agents by tier
+        tiers: dict[int, dict[str, set[str]]] = {}  # tier -> {persona_key -> trigger channels}
+        for pk, triggers in agents_to_run.items():
+            tier = PERSONA_TIER.get(pk, 2)
+            tiers.setdefault(tier, {})[pk] = triggers
+
+        new_trigger_channels: set[str] = set()
+
+        # Run tiers sequentially (1, 2, 3), agents within a tier in parallel
+        for tier_num in sorted(tiers.keys()):
+            tier_agents = tiers[tier_num]
+            tier_names = ", ".join(
+                persona_map[pk]["display_name"] for pk in sorted(tier_agents)
+            )
+            print(f"\n--- Tier {tier_num}: {tier_names} ---")
+
+            # Re-fetch history so this tier sees previous tiers' responses
+            full_history = client.get_messages()
+            docs = client.list_docs()
+
+            async def _run_agent(persona_key: str, triggered_by: set[str]):
+                persona = persona_map[persona_key]
+                trigger_ch = sorted(triggered_by)[0]
+                # Collect all channels this agent is in
+                all_agent_channels = set()
+                for ch_name, ch_members in memberships.items():
+                    if persona_key in ch_members:
+                        all_agent_channels.add(ch_name)
+
+                prompt = build_turn_prompt(
+                    persona_key,
+                    full_history,
+                    trigger_channel=trigger_ch,
+                    channels=all_agent_channels,
+                    docs=docs,
+                )
+                result = await pool.send(persona_key, prompt)
+                return persona, trigger_ch, result
+
+            tasks = [
+                _run_agent(pk, triggers)
+                for pk, triggers in tier_agents.items()
+            ]
+            results = await asyncio.gather(*tasks)
+
+            # Process and post responses before moving to next tier
+            for persona, trigger_ch, result in results:
+                if not result["success"]:
+                    print(f"  {persona['display_name']}: failed, skipping")
+                    continue
+
+                response = result["response_text"].strip()
+                channel_posts = await _process_agent_response(
+                    client, response, persona, trigger_ch,
+                )
+
+                if not channel_posts:
+                    print(f"  {persona['display_name']}: PASS")
+                    continue
+
+                for ch, content in channel_posts.items():
+                    if ch not in memberships:
+                        print(f"  {persona['display_name']}: skipping unknown channel {ch}")
+                        continue
+                    client.post_message(persona["display_name"], content, channel=ch)
+                    print(f"  {persona['display_name']}: posted to {ch} ({len(content)} chars)")
+                    if ch not in trigger_channels:
+                        new_trigger_channels.add(ch)
+
+        trigger_channels = new_trigger_channels
+
+    if wave >= max_waves and trigger_channels:
+        print(f"\n  Ripple limit reached ({max_waves} waves)")
+
+
+async def run_orchestrator(args) -> None:
+    """Main orchestrator loop: poll for messages, run agents, post responses."""
+    client = ChatClient(base_url=args.server_url)
+    personas = get_active_personas(getattr(args, "personas", None))
+    model = getattr(args, "model", "sonnet")
+    max_waves = getattr(args, "max_rounds", 3)
+    poll_interval = getattr(args, "poll_interval", 5.0)
+
+    if not personas:
+        print("Error: no valid personas selected")
+        return
+
+    print(f"Orchestrator starting")
+    print(f"  Server: {args.server_url}")
+    print(f"  Model: {model}")
+    print(f"  Personas: {', '.join(p['display_name'] for p in personas)}")
+    print(f"  Max waves: {max_waves}")
+    print(f"  Poll interval: {poll_interval}s")
+
+    # Wait for server to be reachable
+    while not client.health_check():
+        print("Waiting for chat server...")
+        await asyncio.sleep(2)
+    print("Connected to chat server")
+
+    # Open persistent agent sessions
+    pool = AgentPool(personas, model, LOG_DIR)
+    await pool.start(build_initial_prompt)
+
+    # Skip any existing messages
+    existing = client.get_messages()
+    last_seen_id = existing[-1]["id"] if existing else 0
+    print(f"Skipping {len(existing)} existing messages (last_seen_id={last_seen_id})")
+
+    try:
+        while True:
+            new_messages = client.get_messages(since=last_seen_id)
+
+            # Only trigger on non-agent messages (human input)
+            human_messages = [m for m in new_messages if not _is_agent_message(m)]
+
+            if not human_messages:
+                await asyncio.sleep(poll_interval)
+                continue
+
+            # Update last_seen_id
+            if new_messages:
+                last_seen_id = new_messages[-1]["id"]
+
+            # Determine which channels have new human messages
+            trigger_channels = {m.get("channel", "#general") for m in human_messages}
+            print(f"\nNew human message(s) in {sorted(trigger_channels)}")
+
+            await _run_loop(client, pool, personas, trigger_channels, max_waves)
+
+            # Update last_seen_id to include any agent responses
+            latest = client.get_messages()
+            if latest:
+                last_seen_id = latest[-1]["id"]
+
+            print(f"\nWaiting for new messages (last_seen_id={last_seen_id})...")
+    finally:
+        await pool.close()
