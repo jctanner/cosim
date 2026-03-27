@@ -1,0 +1,14 @@
+[project]
+name = "multi-agent-organization"
+version = "0.1.0"
+description = "Simulated software organization with AI agent personas collaborating via chat"
+requires-python = ">=3.13"
+dependencies = [
+    "claude-agent-sdk==0.1.48",
+    "flask>=3.0",
+    "python-dotenv>=1.1",
+    "requests>=2.32",
+]
+
+[tool.setuptools.packages.find]
+include = ["lib*"]
