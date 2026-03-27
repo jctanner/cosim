@@ -460,7 +460,8 @@ async def _run_loop(
 
         new_trigger_channels: set[str] = set()
 
-        # Run tiers sequentially (1, 2, 3), agents within a tier in parallel
+        # Run tiers sequentially (1, 2, 3), agents within a tier sequentially
+        # so each agent sees the previous agent's response before deciding
         for tier_num in sorted(tiers.keys()):
             tier_agents = tiers[tier_num]
             tier_names = ", ".join(
@@ -468,14 +469,15 @@ async def _run_loop(
             )
             print(f"\n--- Tier {tier_num}: {tier_names} ---")
 
-            # Re-fetch history so this tier sees previous tiers' responses
-            full_history = client.get_messages()
-            docs = client.list_docs()
-            repos = client.list_repos()
-
-            async def _run_agent(persona_key: str, triggered_by: set[str]):
+            for persona_key, triggered_by in tier_agents.items():
                 persona = persona_map[persona_key]
                 trigger_ch = sorted(triggered_by)[0]
+
+                # Re-fetch history before each agent so it sees prior responses
+                full_history = client.get_messages()
+                docs = client.list_docs()
+                repos = client.list_repos()
+
                 # Collect all channels this agent is in
                 all_agent_channels = set()
                 for ch_name, ch_members in memberships.items():
@@ -491,16 +493,7 @@ async def _run_loop(
                     repos=repos,
                 )
                 result = await pool.send(persona_key, prompt)
-                return persona, trigger_ch, result
 
-            tasks = [
-                _run_agent(pk, triggers)
-                for pk, triggers in tier_agents.items()
-            ]
-            results = await asyncio.gather(*tasks)
-
-            # Process and post responses before moving to next tier
-            for persona, trigger_ch, result in results:
                 if not result["success"]:
                     print(f"  {persona['display_name']}: failed, skipping")
                     continue

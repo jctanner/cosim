@@ -222,12 +222,21 @@ def build_initial_prompt(persona_key: str, channels: dict[str, dict] | None = No
 
     my_channels = DEFAULT_MEMBERSHIPS.get(persona_key, {"#general"})
 
+    # Build reverse mapping: channel -> list of display names
+    channel_members: dict[str, list[str]] = {}
+    for pk, ch_set in DEFAULT_MEMBERSHIPS.items():
+        display = PERSONAS[pk]["display_name"].split(" (")[0] if pk in PERSONAS else pk
+        for ch in ch_set:
+            channel_members.setdefault(ch, []).append(display)
+
     # Build channel listing
     internal_lines = []
     external_lines = []
     for ch_name, ch_info in sorted(channels.items()):
         member_tag = " **(you are here)**" if ch_name in my_channels else ""
-        line = f"  - **{ch_name}** — {ch_info['description']}{member_tag}"
+        members = sorted(channel_members.get(ch_name, []))
+        members_str = f" — Members: {', '.join(members)}" if members else ""
+        line = f"  - **{ch_name}** — {ch_info['description']}{member_tag}{members_str}"
         if ch_info["is_external"]:
             external_lines.append(line)
         else:
@@ -378,6 +387,30 @@ Do NOT use any tools. Just reply with text.
 Confirm you understand by replying with exactly: READY"""
 
 
+def _build_channel_membership_section(visible_channels: set[str]) -> str:
+    """Build a compact channel membership reminder for the turn prompt.
+
+    Only includes channels the agent can see, so they know who can read
+    their messages and who they should (or shouldn't) address.
+    """
+    # Build reverse mapping: channel -> list of short display names
+    channel_members: dict[str, list[str]] = {}
+    for pk, ch_set in DEFAULT_MEMBERSHIPS.items():
+        display = PERSONAS[pk]["display_name"].split(" (")[0] if pk in PERSONAS else pk
+        for ch in ch_set:
+            channel_members.setdefault(ch, []).append(display)
+
+    lines = ["## Channel Membership",
+             "",
+             "Only people listed below can see messages in that channel. Do NOT address someone in a channel they are not in.",
+             ""]
+    for ch in sorted(visible_channels):
+        members = sorted(channel_members.get(ch, []))
+        lines.append(f"- **{ch}**: {', '.join(members)}")
+    lines.append("")
+    return "\n".join(lines)
+
+
 def build_turn_prompt(
     persona_key: str,
     messages: list[dict],
@@ -403,6 +436,7 @@ def build_turn_prompt(
     history = _build_history_sections(messages, channels)
     docs_section = build_docs_index(docs, persona_key) if docs else ""
     repos_section = build_gitlab_index(repos) if repos else ""
+    membership_section = _build_channel_membership_section(channels)
 
     # Determine if trigger channel is external
     ch_info = DEFAULT_CHANNELS.get(trigger_channel, {})
@@ -452,6 +486,7 @@ Rules:
         parts.append(docs_section)
     if repos_section:
         parts.append(repos_section)
+    parts.append(membership_section)
     parts.append(action)
 
     return "\n\n---\n\n".join(parts)
