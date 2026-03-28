@@ -7,108 +7,14 @@ from pathlib import Path
 from lib.docs import get_accessible_folders, DEFAULT_FOLDERS
 
 
-SKILLS_DIR = Path(__file__).parent.parent / ".claude" / "skills"
+# All config dicts below are populated at startup by
+# lib.scenario_loader.load_scenario(). They start empty.
 
-# Persona registry: shorthand key -> metadata
-PERSONAS = {
-    "pm": {
-        "name": "pm",
-        "skill": "product-manager",
-        "display_name": "Sarah (PM)",
-    },
-    "engmgr": {
-        "name": "engmgr",
-        "skill": "engineering-manager",
-        "display_name": "Marcus (Eng Manager)",
-    },
-    "architect": {
-        "name": "architect",
-        "skill": "software-architect",
-        "display_name": "Priya (Architect)",
-    },
-    "senior": {
-        "name": "senior",
-        "skill": "senior-engineer",
-        "display_name": "Alex (Senior Eng)",
-    },
-    "support": {
-        "name": "support",
-        "skill": "support-engineer",
-        "display_name": "Jordan (Support Eng)",
-    },
-    "sales": {
-        "name": "sales",
-        "skill": "sales-engineer",
-        "display_name": "Taylor (Sales Eng)",
-    },
-    "ceo": {
-        "name": "ceo",
-        "skill": "ceo",
-        "display_name": "Dana (CEO)",
-    },
-    "cfo": {
-        "name": "cfo",
-        "skill": "cfo",
-        "display_name": "Morgan (CFO)",
-    },
-    "marketing": {
-        "name": "marketing",
-        "skill": "marketing",
-        "display_name": "Riley (Marketing)",
-    },
-    "devops": {
-        "name": "devops",
-        "skill": "devops-engineer",
-        "display_name": "Casey (DevOps)",
-    },
-    "projmgr": {
-        "name": "projmgr",
-        "skill": "project-manager-ops",
-        "display_name": "Nadia (Project Mgr)",
-    },
-}
-
-# Channel definitions
-DEFAULT_CHANNELS = {
-    "#general":          {"description": "Company-wide discussion", "is_external": False},
-    "#engineering":      {"description": "Engineering team", "is_external": False},
-    "#sales":            {"description": "Sales team", "is_external": False},
-    "#support":          {"description": "Support team", "is_external": False},
-    "#leadership":       {"description": "Executive leadership", "is_external": False},
-    "#marketing":        {"description": "Marketing team", "is_external": False},
-    "#devops":           {"description": "DevOps & infrastructure", "is_external": False},
-    "#sales-external":   {"description": "Customer-facing sales channel", "is_external": True},
-    "#support-external": {"description": "Customer-facing support channel", "is_external": True},
-}
-
-# Default channel memberships per persona
-DEFAULT_MEMBERSHIPS = {
-    "pm":        {"#general", "#engineering", "#sales", "#support", "#leadership", "#marketing", "#devops"},
-    "engmgr":    {"#general", "#engineering", "#support", "#devops"},
-    "architect": {"#general", "#engineering"},
-    "senior":    {"#general", "#engineering"},
-    "support":   {"#general", "#engineering", "#support", "#support-external"},
-    "sales":     {"#general", "#sales", "#sales-external", "#marketing"},
-    "ceo":       {"#general", "#leadership", "#sales", "#marketing"},
-    "cfo":       {"#general", "#leadership", "#sales"},
-    "marketing": {"#general", "#marketing", "#sales", "#sales-external"},
-    "devops":    {"#general", "#devops", "#engineering", "#support"},
-    "projmgr":   {"#general", "#engineering", "#support", "#leadership", "#devops", "#sales", "#marketing"},
-}
-
-# Response tiers: lower tiers respond first, higher tiers see previous responses
-# before deciding whether to weigh in. Within a tier, agents run in parallel.
-RESPONSE_TIERS = {
-    1: ["senior", "support", "sales", "devops"],  # ICs — closest to the work
-    2: ["engmgr", "architect", "pm", "marketing", "projmgr"], # Managers/leads — synthesize
-    3: ["ceo", "cfo"],                             # Executives — strategic only
-}
-
-# Reverse lookup: persona_key -> tier number
-PERSONA_TIER = {}
-for _tier, _keys in RESPONSE_TIERS.items():
-    for _key in _keys:
-        PERSONA_TIER[_key] = _tier
+PERSONAS: dict[str, dict] = {}
+DEFAULT_CHANNELS: dict[str, dict] = {}
+DEFAULT_MEMBERSHIPS: dict[str, set[str]] = {}
+RESPONSE_TIERS: dict[int, list[str]] = {}
+PERSONA_TIER: dict[str, int] = {}
 
 # Maximum messages to include per channel in turn prompts.
 # Older messages are dropped with a truncation notice. This prevents
@@ -116,11 +22,12 @@ for _tier, _keys in RESPONSE_TIERS.items():
 MAX_HISTORY_MESSAGES_PER_CHANNEL = 10
 
 
-def load_persona_instructions(skill_name: str) -> str:
-    """Read a SKILL.md file and strip YAML frontmatter, returning the body."""
-    skill_path = SKILLS_DIR / skill_name / "SKILL.md"
-    text = skill_path.read_text()
-    # Strip YAML frontmatter (--- ... ---)
+def load_persona_instructions(persona_key: str) -> str:
+    """Read a character's markdown file, returning the body."""
+    persona = PERSONAS[persona_key]
+    char_path = Path(persona["character_file"])
+    text = char_path.read_text()
+    # Strip YAML frontmatter if present (--- ... ---)
     text = re.sub(r"^---\n.*?---\n", "", text, count=1, flags=re.DOTALL)
     return text.strip()
 
@@ -310,7 +217,7 @@ def build_initial_prompt(persona_key: str, channels: dict[str, dict] | None = No
                   Defaults to DEFAULT_CHANNELS if not provided.
     """
     persona = PERSONAS[persona_key]
-    instructions = load_persona_instructions(persona["skill"])
+    instructions = load_persona_instructions(persona_key)
     if channels is None:
         channels = DEFAULT_CHANNELS
 
@@ -343,6 +250,13 @@ def build_initial_prompt(persona_key: str, channels: dict[str, dict] | None = No
 
     my_channels_str = ", ".join(sorted(my_channels))
 
+    # Build team listing dynamically from loaded personas
+    team_lines = []
+    for pk, p in PERSONAS.items():
+        desc = p.get("team_description", pk)
+        team_lines.append(f"- **{p['display_name']}** — {desc}")
+    team_listing = "\n".join(team_lines)
+
     # Build folders listing
     my_folders = get_accessible_folders(persona_key)
     folder_lines = []
@@ -371,19 +285,9 @@ You can only see messages in channels you belong to. External channels are visib
 
 Everyone on this list is an active participant. You do NOT need to escalate to anyone outside this group — all decision-makers, including leadership, are already here:
 
-- **Dana (CEO)** — business strategy, revenue growth, deal-closing authority
-- **Morgan (CFO)** — financial strategy, deal economics, pricing, P&L
-- **Sarah (PM)** — product requirements, prioritization, scope
-- **Marcus (Eng Manager)** — capacity, staffing, delivery timelines
-- **Priya (Architect)** — system design, technical feasibility
-- **Alex (Senior Eng)** — implementation details, edge cases, testing
-- **Jordan (Support Eng)** — customer experience, documentation, support model
-- **Taylor (Sales Eng)** — customer-facing, competitive positioning, deal qualification
-- **Riley (Marketing)** — brand positioning, content strategy, demand generation
-- **Casey (DevOps)** — CI/CD pipelines, infrastructure, deployment automation, reliability
-- **Nadia (Project Mgr)** — ticket hygiene, standup enforcement, blocker resolution, execution tracking
+{team_listing}
 
-All authority needed to make decisions is present in this team. Do not suggest "escalating to leadership" or "getting executive approval" — Dana and Morgan ARE leadership and they are right here.
+All authority needed to make decisions is present in this team. Do not suggest "escalating to leadership" or "getting executive approval" — leadership is right here.
 
 ## External Participants
 

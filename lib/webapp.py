@@ -12,6 +12,11 @@ from lib.docs import slugify, DEFAULT_FOLDERS, DEFAULT_FOLDER_ACCESS
 from lib.personas import DEFAULT_CHANNELS, DEFAULT_MEMBERSHIPS, PERSONAS
 from lib.gitlab import GITLAB_DIR, init_gitlab_storage, load_repos_index, save_repos_index, generate_commit_id
 from lib.tickets import TICKETS_DIR, init_tickets_storage, load_tickets_index, save_tickets_index, generate_ticket_id
+from lib.session import (
+    save_session, load_session, new_session, list_sessions,
+    get_current_session, set_scenario, get_memberships_from_instance,
+)
+from lib.scenario_loader import list_scenarios
 
 
 CHAT_LOG = Path(__file__).parent.parent / "chat.log"
@@ -48,6 +53,20 @@ _gitlab_lock = threading.Lock()
 _tickets: dict[str, dict] = {}
 _tickets_lock = threading.Lock()
 
+# Orchestrator status (updated via heartbeat from orchestrator process)
+_orchestrator_status: dict = {
+    "state": "disconnected",  # disconnected, starting, ready, responding, restarting
+    "scenario": None,
+    "agents": {},             # persona_key -> {state, display_name}
+    "last_heartbeat": 0,
+    "message": "",
+}
+_orchestrator_lock = threading.Lock()
+
+# Control signal for orchestrator (checked on each poll)
+_orchestrator_command: dict = {"action": None}  # None, "restart", "shutdown"
+_command_lock = threading.Lock()
+
 
 def _init_channels():
     """Initialize channels and memberships from persona defaults."""
@@ -62,6 +81,14 @@ def _init_channels():
                 "created_at": now,
             }
             _channel_members[ch_name] = set()
+
+        # Always create #system channel for operator messages (no agent membership)
+        _channels["#system"] = {
+            "description": "System events and operator messages",
+            "is_external": False,
+            "created_at": now,
+        }
+        _channel_members["#system"] = set()
 
         for persona_key, ch_set in DEFAULT_MEMBERSHIPS.items():
             for ch_name in ch_set:
@@ -245,6 +272,35 @@ def _init_tickets():
         _tickets.update(index)
 
 
+def _load_chat_log():
+    """Load messages from chat.log into _messages."""
+    with _lock:
+        _messages.clear()
+    if not CHAT_LOG.exists():
+        return
+    with open(CHAT_LOG) as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                msg = json.loads(line)
+                with _lock:
+                    _messages.append(msg)
+            except json.JSONDecodeError:
+                pass
+
+
+def _reinitialize():
+    """Re-initialize all subsystems from disk state."""
+    _init_channels()
+    _init_folders()
+    _init_docs()
+    _init_gitlab()
+    _init_tickets()
+    _load_chat_log()
+
+
 def _broadcast_tickets_event(action: str, data: dict):
     """Send a tickets_event through the existing SSE subscribers."""
     payload = {"type": "tickets_event", "action": action}
@@ -285,6 +341,59 @@ WEB_UI = """<!DOCTYPE html>
                 border-bottom: 2px solid transparent; transition: all 0.15s ease; }
   .header-tab:hover { color: #e0e0e0; }
   .header-tab.active { color: #e94560; border-bottom-color: #e94560; }
+  #session-controls { margin-left: auto; display: flex; align-items: center; gap: 6px; padding: 8px 0; }
+  .session-btn { background: transparent; color: #888; border: 1px solid #333; padding: 6px 12px;
+                 border-radius: 6px; font-size: 12px; cursor: pointer; font-weight: 600; }
+  .session-btn:hover { border-color: #e94560; color: #e94560; }
+  #session-load-select { background: #1a1a2e; color: #888; border: 1px solid #333; padding: 6px 8px;
+                         border-radius: 6px; font-size: 12px; max-width: 200px; }
+  #orch-status { display: flex; align-items: center; gap: 5px; margin-right: 8px;
+                 padding: 4px 10px; border: 1px solid #333; border-radius: 6px; }
+  #orch-label { font-size: 11px; color: #888; }
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  .status-dot.disconnected { background: #666; }
+  .status-dot.connecting { background: #f39c12; animation: pulse 1s ease-in-out infinite; }
+  .status-dot.starting { background: #f39c12; animation: pulse 1s ease-in-out infinite; }
+  .status-dot.ready { background: #2ecc71; }
+  .status-dot.responding { background: #3498db; animation: pulse 0.5s ease-in-out infinite; }
+  .status-dot.restarting { background: #e94560; animation: pulse 0.8s ease-in-out infinite; }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+  /* -- Modal overlay -- */
+  .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7);
+                   z-index: 1000; align-items: center; justify-content: center; }
+  .modal-overlay.open { display: flex; }
+  .modal { background: #1a1a2e; border: 1px solid #333; border-radius: 12px;
+           padding: 24px; min-width: 380px; max-width: 500px; box-shadow: 0 8px 32px rgba(0,0,0,0.5); }
+  .modal h2 { margin: 0 0 16px; font-size: 16px; color: #e94560; }
+  .modal-field { margin-bottom: 14px; }
+  .modal-field label { display: block; font-size: 12px; color: #888; margin-bottom: 4px; font-weight: 600;
+                       text-transform: uppercase; letter-spacing: 0.5px; }
+  .modal-field input, .modal-field select, .modal-field textarea {
+    width: 100%; background: #111; color: #e0e0e0; border: 1px solid #333; padding: 8px 12px;
+    border-radius: 8px; font-size: 14px; outline: none; box-sizing: border-box; }
+  .modal-field input:focus, .modal-field select:focus, .modal-field textarea:focus { border-color: #e94560; }
+  .modal-field textarea { resize: vertical; min-height: 60px; font-family: inherit; }
+  .modal-field .field-hint { font-size: 11px; color: #555; margin-top: 4px; }
+  .modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 18px; }
+  .modal-btn-primary { background: #e94560; color: #fff; border: none; padding: 8px 20px;
+                       border-radius: 8px; cursor: pointer; font-size: 13px; font-weight: 600; }
+  .modal-btn-primary:hover { background: #c0392b; }
+  .modal-btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+  .modal-btn-cancel { background: transparent; color: #888; border: 1px solid #333; padding: 8px 20px;
+                      border-radius: 8px; cursor: pointer; font-size: 13px; }
+  .modal-btn-cancel:hover { border-color: #e94560; color: #e94560; }
+  .modal-status { font-size: 12px; color: #4fc3f7; margin-top: 10px; min-height: 16px; }
+
+  /* -- Loading overlay -- */
+  #loading-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.8);
+                     z-index: 2000; align-items: center; justify-content: center; flex-direction: column; gap: 12px; }
+  #loading-overlay.open { display: flex; }
+  #loading-overlay .spinner { width: 32px; height: 32px; border: 3px solid #333;
+                              border-top-color: #e94560; border-radius: 50%;
+                              animation: spin 0.8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  #loading-text { color: #e0e0e0; font-size: 14px; }
 
   #main-layout { flex: 1; display: flex; overflow: hidden; }
 
@@ -608,6 +717,17 @@ WEB_UI = """<!DOCTYPE html>
   <button class="header-tab" data-tab="docs">Docs</button>
   <button class="header-tab" data-tab="gitlab">GitLab</button>
   <button class="header-tab" data-tab="tickets">Tickets</button>
+  <div id="session-controls">
+    <span id="orch-status" title="Orchestrator status">
+      <span id="orch-dot" class="status-dot disconnected"></span>
+      <span id="orch-label">Disconnected</span>
+    </span>
+    <button id="session-new-btn" class="session-btn" title="New session">New</button>
+    <button id="session-save-btn" class="session-btn" title="Save session">Save</button>
+    <select id="session-load-select" title="Load session">
+      <option value="" disabled selected>Load...</option>
+    </select>
+  </div>
 </div>
 <div id="main-layout">
   <!-- Chat tab: sidebar + chat area -->
@@ -826,6 +946,69 @@ WEB_UI = """<!DOCTYPE html>
     </div>
   </div>
 </div>
+
+<!-- New Session Modal -->
+<div class="modal-overlay" id="new-session-modal">
+  <div class="modal">
+    <h2>New Session</h2>
+    <div class="modal-field">
+      <label>Scenario</label>
+      <select id="new-session-scenario"></select>
+      <div class="field-hint" id="new-session-scenario-desc"></div>
+    </div>
+    <div class="modal-field">
+      <label>Session Name (optional)</label>
+      <input id="new-session-name" type="text" placeholder="e.g. consulting-run" autocomplete="off" />
+      <div class="field-hint">Leave blank to auto-generate from scenario + date</div>
+    </div>
+    <div class="modal-status" id="new-session-status"></div>
+    <div class="modal-actions">
+      <button class="modal-btn-cancel" id="new-session-cancel">Cancel</button>
+      <button class="modal-btn-primary" id="new-session-confirm">Create</button>
+    </div>
+  </div>
+</div>
+
+<!-- Save Session Modal -->
+<div class="modal-overlay" id="save-session-modal">
+  <div class="modal">
+    <h2>Save Session</h2>
+    <div class="modal-field">
+      <label>Session Name (optional)</label>
+      <input id="save-session-name" type="text" placeholder="e.g. before-demo" autocomplete="off" />
+      <div class="field-hint">Leave blank to auto-generate from scenario + date</div>
+    </div>
+    <div class="modal-status" id="save-session-status"></div>
+    <div class="modal-actions">
+      <button class="modal-btn-cancel" id="save-session-cancel">Cancel</button>
+      <button class="modal-btn-primary" id="save-session-confirm">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- Load Session Modal -->
+<div class="modal-overlay" id="load-session-modal">
+  <div class="modal">
+    <h2>Load Session</h2>
+    <div class="modal-field">
+      <label>Saved Sessions</label>
+      <select id="load-session-select" size="6" style="height:auto"></select>
+    </div>
+    <div id="load-session-detail" style="font-size:12px;color:#888;min-height:30px;margin-bottom:8px"></div>
+    <div class="modal-status" id="load-session-status"></div>
+    <div class="modal-actions">
+      <button class="modal-btn-cancel" id="load-session-cancel">Cancel</button>
+      <button class="modal-btn-primary" id="load-session-confirm" disabled>Load</button>
+    </div>
+  </div>
+</div>
+
+<!-- Loading Overlay -->
+<div id="loading-overlay">
+  <div class="spinner"></div>
+  <div id="loading-text">Loading...</div>
+</div>
+
 <script>
 const messagesPanel = document.getElementById('messages-panel');
 const input = document.getElementById('msg-input');
@@ -892,29 +1075,47 @@ let messagesByChannel = {};
 let unreadByChannel = {};
 let seenIds = new Set();
 
-const SENDER_CLASS_MAP = {
-  'Sarah (PM)': 'msg-pm',
-  'Marcus (Eng Manager)': 'msg-engmgr',
-  'Priya (Architect)': 'msg-architect',
-  'Alex (Senior Eng)': 'msg-senior',
-  'Jordan (Support Eng)': 'msg-support',
-  'Taylor (Sales Eng)': 'msg-sales',
-  'Dana (CEO)': 'msg-ceo',
-  'Morgan (CFO)': 'msg-cfo',
-  'Riley (Marketing)': 'msg-marketing',
-  'Casey (DevOps)': 'msg-devops',
-  'Nadia (Project Mgr)': 'msg-projmgr',
-};
+// Agent persona maps — loaded dynamically from /api/personas
+let SENDER_CLASS_MAP = {};
+let PERSONA_DISPLAY = {};
+let AGENT_NAMES = new Set();
 
-const PERSONA_DISPLAY = {
-  'pm': 'Sarah (PM)', 'engmgr': 'Marcus (Eng Mgr)', 'architect': 'Priya',
-  'senior': 'Alex', 'support': 'Jordan', 'sales': 'Taylor',
-  'ceo': 'Dana', 'cfo': 'Morgan',
-  'marketing': 'Riley', 'devops': 'Casey',
-  'projmgr': 'Nadia',
-};
+// Color palette for agent personas (assigned round-robin on load)
+const AGENT_COLORS = [
+  '#e94560', '#f39c12', '#9b59b6', '#2ecc71', '#1abc9c',
+  '#e67e22', '#f1c40f', '#3498db', '#e056a0', '#00bcd4', '#ff6b6b',
+];
 
-// Known human persona CSS classes from upstream
+async function loadPersonas() {
+  const resp = await fetch('/api/personas');
+  const personas = await resp.json();
+  SENDER_CLASS_MAP = {};
+  PERSONA_DISPLAY = {};
+  const keys = Object.keys(personas);
+  keys.forEach((key, i) => {
+    const p = personas[key];
+    const cls = 'msg-agent-' + i;
+    SENDER_CLASS_MAP[p.display_name] = cls;
+    PERSONA_DISPLAY[key] = p.display_name;
+  });
+  AGENT_NAMES = new Set(Object.keys(SENDER_CLASS_MAP));
+
+  // Inject dynamic CSS for agent colors
+  let styleEl = document.getElementById('agent-colors-style');
+  if (!styleEl) {
+    styleEl = document.createElement('style');
+    styleEl.id = 'agent-colors-style';
+    document.head.appendChild(styleEl);
+  }
+  let css = '';
+  keys.forEach((key, i) => {
+    const color = AGENT_COLORS[i % AGENT_COLORS.length];
+    css += '.msg-agent-' + i + ' .sender { color: ' + color + '; } ';
+  });
+  styleEl.textContent = css;
+}
+
+// Known human persona CSS classes
 const HUMAN_CLASS_MAP = {
   'Customer': 'msg-customer', 'Consultant': 'msg-customer',
   'Board Member': 'msg-board', 'Hacker': 'msg-hacker', 'God': 'msg-god',
@@ -922,15 +1123,28 @@ const HUMAN_CLASS_MAP = {
   'Regulator': 'msg-regulator', 'Investor': 'msg-investor', 'The Press': 'msg-press',
 };
 
-const AGENT_NAMES = new Set(Object.keys(SENDER_CLASS_MAP));
-
 function isAgent(sender) {
-  return AGENT_NAMES.has(sender);
+  if (AGENT_NAMES.has(sender)) return true;
+  if (sender === 'System') return true;
+  // For messages from other scenarios — if sender isn't a known human role, treat as agent
+  if (HUMAN_CLASS_MAP[sender]) return false;
+  // Check if it looks like "Name (Role)" pattern used by agents vs "Name (Role)" used by humans
+  // Human senders come from getSenderLabel() and use roles from the role dropdown
+  // Agent senders come from persona display_name which is set in scenario config
+  // If it's not in AGENT_NAMES and not in HUMAN_CLASS_MAP, check the role dropdown values
+  const humanRoles = ['Consultant','Customer','New Hire','Board Member','Intern','Vendor',
+    'Investor','Auditor','Competitor','Regulator','The Press','Hacker','God'];
+  for (const role of humanRoles) {
+    if (sender.endsWith('(' + role + ')')) return false;
+  }
+  // If sender has parens and isn't a known human role, likely an agent from another scenario
+  if (sender.includes('(') && sender.includes(')')) return true;
+  // Bare name with no parens — human with no role selected
+  return false;
 }
 
 function senderClass(sender) {
-  // Check agent map first, then known human map, then default to customer
-  return SENDER_CLASS_MAP[sender] || HUMAN_CLASS_MAP[sender] || 'msg-customer';
+  return SENDER_CLASS_MAP[sender] || HUMAN_CLASS_MAP[sender] || (isAgent(sender) ? 'msg-agent' : 'msg-customer');
 }
 
 // Generate a consistent color from a string (for human users)
@@ -1072,7 +1286,51 @@ function renderMessages() {
   messagesPanel.innerHTML = '';
   const msgs = messagesByChannel[currentChannel] || [];
   msgs.forEach(appendMessageEl);
+  renderTypingIndicators();
 }
+
+// -- Typing indicators --
+const _typingState = {};  // channel -> {sender -> timestamp}
+
+function handleTypingIndicator(data) {
+  const ch = data.channel || '#general';
+  if (!_typingState[ch]) _typingState[ch] = {};
+  if (data.active) {
+    _typingState[ch][data.sender] = Date.now();
+  } else {
+    delete _typingState[ch][data.sender];
+  }
+  if (ch === currentChannel) renderTypingIndicators();
+}
+
+function renderTypingIndicators() {
+  let el = document.getElementById('typing-indicator');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'typing-indicator';
+    el.style.cssText = 'padding:4px 20px;font-size:12px;color:#888;font-style:italic;min-height:18px;';
+    messagesPanel.parentNode.insertBefore(el, messagesPanel.nextSibling);
+  }
+  const typers = _typingState[currentChannel] || {};
+  // Clean stale entries (older than 60s)
+  const now = Date.now();
+  for (const [sender, ts] of Object.entries(typers)) {
+    if (now - ts > 60000) delete typers[sender];
+  }
+  const names = Object.keys(typers);
+  if (names.length === 0) {
+    el.textContent = '';
+  } else if (names.length === 1) {
+    el.textContent = names[0] + ' is thinking...';
+  } else if (names.length === 2) {
+    el.textContent = names[0] + ' and ' + names[1] + ' are thinking...';
+  } else {
+    el.textContent = names.slice(0, -1).join(', ') + ', and ' + names[names.length-1] + ' are thinking...';
+  }
+}
+
+// Clean stale typing indicators every 10s
+setInterval(() => { if (currentTab === 'chat') renderTypingIndicators(); }, 10000);
 
 async function loadMessages(channel) {
   let url = '/api/messages';
@@ -1100,6 +1358,8 @@ function connectSSE() {
         loadTickets();
         if (tkCurrentViewId) viewTicket(tkCurrentViewId);
       }
+    } else if (data.type === 'typing') {
+      handleTypingIndicator(data);
     } else {
       addMessage(data);
     }
@@ -1690,15 +1950,283 @@ document.getElementById('ticket-back-btn').addEventListener('click', () => {
 });
 
 // -- Init --
-loadChannels().then(() => {
-  updateChannelHeader();
-  updateSenderDropdown();
-  loadMessages();
-  connectSSE();
+loadPersonas().then(() => {
+  loadChannels().then(() => {
+    updateChannelHeader();
+    updateSenderDropdown();
+    loadMessages();
+    connectSSE();
+  });
 });
 loadFolders();
 loadRepos();
 loadTickets();
+
+// -- Orchestrator status polling --
+
+const orchDot = document.getElementById('orch-dot');
+const orchLabel = document.getElementById('orch-label');
+const STATUS_LABELS = {
+  disconnected: 'Disconnected',
+  connecting: 'Connecting...',
+  starting: 'Starting agents...',
+  ready: 'Ready',
+  responding: 'Responding...',
+  restarting: 'Restarting...',
+};
+
+async function pollStatus() {
+  try {
+    const resp = await fetch('/api/status');
+    const status = await resp.json();
+    const state = status.orchestrator.state || 'disconnected';
+    orchDot.className = 'status-dot ' + state;
+    const msg = status.orchestrator.message;
+    orchLabel.textContent = msg || STATUS_LABELS[state] || state;
+  } catch(e) {
+    orchDot.className = 'status-dot disconnected';
+    orchLabel.textContent = 'Server error';
+  }
+}
+
+setInterval(pollStatus, 3000);
+pollStatus();
+
+// -- Session controls --
+
+function showLoading(text) {
+  document.getElementById('loading-text').textContent = text || 'Loading...';
+  document.getElementById('loading-overlay').classList.add('open');
+}
+function hideLoading() {
+  document.getElementById('loading-overlay').classList.remove('open');
+}
+function openModal(id) { document.getElementById(id).classList.add('open'); }
+function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+
+function showNotice(text) {
+  // Show a non-blocking notice bar at the top of the page
+  let bar = document.getElementById('notice-bar');
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.id = 'notice-bar';
+    bar.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:999;background:#e94560;color:#fff;padding:10px 20px;font-size:13px;display:flex;align-items:center;justify-content:space-between;';
+    const dismiss = document.createElement('button');
+    dismiss.textContent = 'Dismiss';
+    dismiss.style.cssText = 'background:rgba(0,0,0,0.3);color:#fff;border:none;padding:4px 12px;border-radius:4px;cursor:pointer;font-size:12px;margin-left:16px;';
+    dismiss.addEventListener('click', () => bar.remove());
+    bar.appendChild(document.createElement('span'));
+    bar.appendChild(dismiss);
+    document.body.prepend(bar);
+  }
+  bar.querySelector('span').textContent = text;
+}
+
+async function reloadAllState() {
+  messagesByChannel = {};
+  seenIds.clear();
+  unreadByChannel = {};
+  await loadPersonas();
+  await loadChannels();
+  await loadMessages();
+  renderSidebar();
+  renderMessages();
+  loadFolders();
+  loadDocs();
+  loadRepos();
+  loadTickets();
+}
+
+// -- New Session Modal --
+
+document.getElementById('session-new-btn').addEventListener('click', async () => {
+  const sel = document.getElementById('new-session-scenario');
+  sel.innerHTML = '';
+  document.getElementById('new-session-status').textContent = '';
+  document.getElementById('new-session-name').value = '';
+  const resp = await fetch('/api/session/scenarios');
+  const scenarios = await resp.json();
+  scenarios.forEach(s => {
+    const opt = document.createElement('option');
+    opt.value = s.key;
+    opt.textContent = s.name + ' (' + s.characters + ' characters)';
+    opt.dataset.desc = s.description || '';
+    sel.appendChild(opt);
+  });
+  // Show description for first scenario
+  const first = scenarios[0];
+  document.getElementById('new-session-scenario-desc').textContent = first ? first.description : '';
+  openModal('new-session-modal');
+});
+
+document.getElementById('new-session-scenario').addEventListener('change', (e) => {
+  const opt = e.target.selectedOptions[0];
+  document.getElementById('new-session-scenario-desc').textContent = opt ? opt.dataset.desc : '';
+});
+
+document.getElementById('new-session-cancel').addEventListener('click', () => closeModal('new-session-modal'));
+
+document.getElementById('new-session-confirm').addEventListener('click', async () => {
+  const scenario = document.getElementById('new-session-scenario').value;
+  if (!scenario) return;
+  const status = document.getElementById('new-session-status');
+  status.textContent = 'Creating session...';
+  document.getElementById('new-session-confirm').disabled = true;
+  closeModal('new-session-modal');
+  showLoading('Creating new session...');
+  try {
+    await fetch('/api/session/new', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({scenario}),
+    });
+    await reloadAllState();
+    pollStatus();
+  } finally {
+    hideLoading();
+    document.getElementById('new-session-confirm').disabled = false;
+  }
+});
+
+// -- Save Session Modal --
+
+document.getElementById('session-save-btn').addEventListener('click', () => {
+  document.getElementById('save-session-name').value = '';
+  document.getElementById('save-session-status').textContent = '';
+  openModal('save-session-modal');
+  document.getElementById('save-session-name').focus();
+});
+
+document.getElementById('save-session-cancel').addEventListener('click', () => closeModal('save-session-modal'));
+
+document.getElementById('save-session-confirm').addEventListener('click', async () => {
+  const name = document.getElementById('save-session-name').value.trim();
+  const status = document.getElementById('save-session-status');
+  status.textContent = 'Saving...';
+  document.getElementById('save-session-confirm').disabled = true;
+  try {
+    const resp = await fetch('/api/session/save', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({name: name || undefined}),
+    });
+    if (resp.ok) {
+      const meta = await resp.json();
+      status.textContent = 'Saved: ' + (meta.name || meta.instance_dir);
+      status.style.color = '#2ecc71';
+      setTimeout(() => {
+        closeModal('save-session-modal');
+        status.style.color = '';
+      }, 1500);
+    } else {
+      const err = await resp.json();
+      status.textContent = 'Error: ' + (err.error || 'unknown');
+      status.style.color = '#e94560';
+    }
+  } finally {
+    document.getElementById('save-session-confirm').disabled = false;
+  }
+});
+
+// -- Load Session Modal --
+
+let _sessionsCache = [];
+
+async function refreshSessionsList() {
+  const sel = document.getElementById('load-session-select');
+  sel.innerHTML = '';
+  const resp = await fetch('/api/session/list');
+  _sessionsCache = await resp.json();
+  if (_sessionsCache.length === 0) {
+    const opt = document.createElement('option');
+    opt.disabled = true;
+    opt.textContent = 'No saved sessions';
+    sel.appendChild(opt);
+    document.getElementById('load-session-confirm').disabled = true;
+    return;
+  }
+  _sessionsCache.forEach(s => {
+    const opt = document.createElement('option');
+    opt.value = s.instance_dir;
+    const date = new Date((s.saved_at || s.created_at) * 1000).toLocaleString();
+    opt.textContent = (s.name || s.instance_dir);
+    opt.dataset.date = date;
+    opt.dataset.scenario = s.scenario || '';
+    sel.appendChild(opt);
+  });
+}
+
+// Modal's session list selection
+document.getElementById('load-session-select').addEventListener('change', (e) => {
+  const val = e.target.value;
+  const s = _sessionsCache.find(x => x.instance_dir === val);
+  const detail = document.getElementById('load-session-detail');
+  if (s) {
+    const date = new Date((s.saved_at || s.created_at) * 1000).toLocaleString();
+    detail.textContent = 'Scenario: ' + (s.scenario || '?') + '  |  Saved: ' + date;
+    document.getElementById('load-session-confirm').disabled = false;
+  } else {
+    detail.textContent = '';
+    document.getElementById('load-session-confirm').disabled = true;
+  }
+});
+
+document.getElementById('load-session-select').addEventListener('dblclick', () => {
+  document.getElementById('load-session-confirm').click();
+});
+
+// Replace header load dropdown with a button
+{
+  const headerSelect = document.getElementById('session-load-select');
+  if (headerSelect) headerSelect.remove();
+  const loadBtn = document.createElement('button');
+  loadBtn.id = 'session-load-btn';
+  loadBtn.className = 'session-btn';
+  loadBtn.title = 'Load session';
+  loadBtn.textContent = 'Load';
+  document.getElementById('session-controls').appendChild(loadBtn);
+
+  loadBtn.addEventListener('click', async () => {
+    document.getElementById('load-session-status').textContent = '';
+    document.getElementById('load-session-detail').textContent = '';
+    document.getElementById('load-session-confirm').disabled = true;
+    await refreshSessionsList();
+    openModal('load-session-modal');
+  });
+}
+
+document.getElementById('load-session-cancel').addEventListener('click', () => closeModal('load-session-modal'));
+
+document.getElementById('load-session-confirm').addEventListener('click', async () => {
+  const sel = document.getElementById('load-session-select');
+  const instance = sel.value;
+  if (!instance) return;
+  const status = document.getElementById('load-session-status');
+  status.textContent = 'Loading session...';
+  document.getElementById('load-session-confirm').disabled = true;
+  closeModal('load-session-modal');
+  showLoading('Loading session...');
+  try {
+    const resp = await fetch('/api/session/load', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({instance}),
+    });
+    if (resp.ok) {
+      await reloadAllState();
+    } else {
+      const err = await resp.json();
+      hideLoading();
+      openModal('load-session-modal');
+      status.textContent = 'Error: ' + (err.error || 'unknown');
+      status.style.color = '#e94560';
+      return;
+    }
+  } finally {
+    hideLoading();
+    document.getElementById('load-session-confirm').disabled = false;
+  }
+});
 </script>
 </body>
 </html>"""
@@ -1707,12 +2235,6 @@ loadTickets();
 def create_app() -> Flask:
     """Create and configure the Flask chat application."""
     app = Flask(__name__)
-
-    # Load existing chat log on startup (if any)
-    if CHAT_LOG.exists():
-        print(f"Preserving existing chat log: {CHAT_LOG}")
-    else:
-        print("No existing chat log found, starting fresh")
 
     # Initialize channels, folders, and docs
     _init_channels()
@@ -1729,6 +2251,9 @@ def create_app() -> Flask:
 
     _init_tickets()
     print(f"Tickets storage ready: {TICKETS_DIR}  ({len(_tickets)} existing tickets)")
+
+    _load_chat_log()
+    print(f"Chat log: {len(_messages)} messages loaded")
 
     @app.route("/")
     def index():
@@ -2340,6 +2865,143 @@ def create_app() -> Flask:
 
         _broadcast_tickets_event("depends_updated", ticket)
         return jsonify(ticket)
+
+    # -- Status & Control API --
+
+    @app.route("/api/status", methods=["GET"])
+    def get_status():
+        with _orchestrator_lock:
+            orch = dict(_orchestrator_status)
+            # Mark as disconnected if no heartbeat in 15 seconds
+            if orch["last_heartbeat"] == 0 or time.time() - orch["last_heartbeat"] > 15:
+                orch["state"] = "disconnected"
+        return jsonify({
+            "server": "running",
+            "scenario": get_current_session().get("scenario"),
+            "messages": len(_messages),
+            "documents": len(_docs_index),
+            "repos": len(_gitlab_repos),
+            "tickets": len(_tickets),
+            "channels": len(_channels),
+            "orchestrator": orch,
+        })
+
+    @app.route("/api/orchestrator/heartbeat", methods=["POST"])
+    def orchestrator_heartbeat():
+        data = request.get_json(force=True)
+        with _orchestrator_lock:
+            _orchestrator_status["state"] = data.get("state", "ready")
+            _orchestrator_status["scenario"] = data.get("scenario")
+            _orchestrator_status["agents"] = data.get("agents", {})
+            _orchestrator_status["last_heartbeat"] = time.time()
+            _orchestrator_status["message"] = data.get("message", "")
+        # Return any pending command
+        with _command_lock:
+            cmd = dict(_orchestrator_command)
+            if cmd["action"]:
+                _orchestrator_command["action"] = None  # consume it
+            return jsonify(cmd)
+
+    @app.route("/api/orchestrator/command", methods=["POST"])
+    def orchestrator_command():
+        data = request.get_json(force=True)
+        action = data.get("action")
+        if action not in ("restart", "shutdown", None):
+            return jsonify({"error": "invalid action"}), 400
+        with _command_lock:
+            _orchestrator_command["action"] = action
+            _orchestrator_command.update({k: v for k, v in data.items() if k != "action"})
+        return jsonify({"queued": action})
+
+    # -- Typing indicators --
+
+    @app.route("/api/typing", methods=["POST"])
+    def typing_indicator():
+        data = request.get_json(force=True)
+        event = {
+            "type": "typing",
+            "sender": data.get("sender", ""),
+            "channel": data.get("channel", "#general"),
+            "active": data.get("active", True),
+        }
+        _broadcast(event)
+        return jsonify({"ok": True})
+
+    # -- Personas API --
+
+    @app.route("/api/personas", methods=["GET"])
+    def get_personas():
+        from lib.personas import PERSONAS
+        result = {}
+        for key, p in PERSONAS.items():
+            result[key] = {
+                "key": key,
+                "display_name": p["display_name"],
+                "team_description": p.get("team_description", ""),
+            }
+        return jsonify(result)
+
+    # -- Session API --
+
+    @app.route("/api/session/current", methods=["GET"])
+    def session_current():
+        return jsonify(get_current_session())
+
+    @app.route("/api/session/list", methods=["GET"])
+    def session_list():
+        return jsonify(list_sessions())
+
+    @app.route("/api/session/scenarios", methods=["GET"])
+    def session_scenarios():
+        return jsonify(list_scenarios())
+
+    @app.route("/api/session/save", methods=["POST"])
+    def session_save():
+        data = request.get_json(force=True) if request.data else {}
+        name = data.get("name")
+        try:
+            meta = save_session(name)
+            return jsonify(meta), 201
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/session/load", methods=["POST"])
+    def session_load():
+        data = request.get_json(force=True)
+        instance_name = data.get("instance")
+        if not instance_name:
+            return jsonify({"error": "instance required"}), 400
+        try:
+            meta = load_session(instance_name)
+            # Apply saved memberships on top of defaults
+            memberships = get_memberships_from_instance(instance_name)
+            if memberships:
+                with _channel_lock:
+                    for ch, members in memberships.items():
+                        if ch in _channel_members:
+                            _channel_members[ch] = set(members)
+            _reinitialize()
+            return jsonify(meta)
+        except FileNotFoundError as e:
+            return jsonify({"error": str(e)}), 404
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/session/new", methods=["POST"])
+    def session_new():
+        data = request.get_json(force=True) if request.data else {}
+        scenario = data.get("scenario")
+        try:
+            meta = new_session(scenario)
+            _reinitialize()
+            # Signal orchestrator to restart with the new scenario
+            with _command_lock:
+                _orchestrator_command["action"] = "restart"
+                _orchestrator_command["scenario"] = scenario or get_current_session().get("scenario")
+            meta["restarting_agents"] = True
+            return jsonify(meta)
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
 
     return app
 

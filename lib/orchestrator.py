@@ -19,8 +19,9 @@ from lib.agent_runner import AgentPool
 
 LOG_DIR = Path(__file__).parent.parent / "logs"
 
-# Senders that are agents (not human input)
-_AGENT_DISPLAY_NAMES = {p["display_name"] for p in PERSONAS.values()}
+def _get_agent_display_names() -> set[str]:
+    """Get agent display names dynamically (PERSONAS populated after scenario load)."""
+    return {p["display_name"] for p in PERSONAS.values()}
 
 # -- Document command regexes --
 
@@ -539,17 +540,23 @@ def _parse_multi_channel_response(text: str, default_channel: str) -> dict[str, 
     return result
 
 
+def _post_system(client: ChatClient, text: str) -> None:
+    """Post a system message to both #general (for agents) and #system (for operator)."""
+    client.post_message("System", text, channel="#general")
+    client.post_message("System", text, channel="#system")
+
+
 def _log_doc_results(client: ChatClient, persona: dict, results: list[dict]) -> None:
     """Log and post doc command results."""
     for r in results:
         if r.get("action") == "search":
             msg_text = _format_search_results(r)
-            client.post_message("System", msg_text, channel="#general")
+            _post_system(client, msg_text)
             print(f"  {persona['display_name']}: doc search -> {len(r.get('results', []))} results")
         elif r.get("action") == "read":
             formatted = _format_doc_read_result(r)
             if formatted:
-                client.post_message("System", formatted, channel="#general")
+                _post_system(client, formatted)
                 print(f"  {persona['display_name']}: doc read -> {r.get('slug', '?')}")
         elif r.get("ok"):
             print(f"  {persona['display_name']}: doc {r['action']} -> {r.get('slug', r.get('title', '?'))}")
@@ -562,7 +569,7 @@ def _log_gitlab_results(client: ChatClient, persona: dict, results: list[dict]) 
     for r in results:
         formatted = _format_gitlab_results(r)
         if formatted:
-            client.post_message("System", formatted, channel="#general")
+            _post_system(client, formatted)
             print(f"  {persona['display_name']}: gitlab {r['action']} -> posted result")
         elif r.get("ok"):
             print(f"  {persona['display_name']}: gitlab {r['action']} -> {r.get('name', r.get('project', '?'))}")
@@ -575,7 +582,7 @@ def _log_tickets_results(client: ChatClient, persona: dict, results: list[dict])
     for r in results:
         formatted = _format_tickets_results(r)
         if formatted:
-            client.post_message("System", formatted, channel="#general")
+            _post_system(client, formatted)
             print(f"  {persona['display_name']}: tickets list -> {len(r.get('tickets', []))} tickets")
         elif r.get("ok"):
             print(f"  {persona['display_name']}: ticket {r['action']} -> {r.get('id', r.get('title', '?'))}")
@@ -693,7 +700,7 @@ async def _process_agent_response(
 
 def _is_agent_message(msg: dict) -> bool:
     """Return True if the message was posted by an agent."""
-    return msg["sender"] in _AGENT_DISPLAY_NAMES
+    return msg["sender"] in _get_agent_display_names()
 
 
 def _get_channel_memberships(client: ChatClient) -> dict[str, set[str]]:
@@ -790,8 +797,25 @@ async def _run_loop(
                     repos=repos,
                     tickets=tickets,
                 )
+
+                # Show typing indicator in all channels this agent is in
+                display_name = persona["display_name"]
+                for ch in all_agent_channels:
+                    client.set_typing(display_name, ch, active=True)
+
+                # Update heartbeat to show this agent is responding
+                agents_status = _build_agent_status(personas, pool)
+                agents_status[pk]["state"] = "responding"
+                client.send_heartbeat("responding", scenario_name, agents_status,
+                                      f"{display_name} is thinking...")
+
                 result = await pool.send(pk, prompt)
-                return pk, trigger_ch, result
+
+                # Clear typing indicators
+                for ch in all_agent_channels:
+                    client.set_typing(display_name, ch, active=False)
+
+                return pk, trigger_ch, result, all_agent_channels
 
             tasks = [
                 _run_agent(pk, sorted(triggered_by)[0])
@@ -805,34 +829,55 @@ async def _run_loop(
                     print(f"  [Tier {tier_num}] agent task failed: {entry}")
                     continue
 
-                persona_key, trigger_ch, result = entry
+                persona_key, trigger_ch, result, all_agent_channels = entry
                 persona = persona_map[persona_key]
+                display_name = persona["display_name"]
+
+                # Reset agent status after response
+                agents_status = _build_agent_status(personas, pool)
+                client.send_heartbeat("responding", scenario_name, agents_status,
+                                      "Processing messages...")
 
                 if not result["success"]:
-                    print(f"  {persona['display_name']}: failed, skipping")
+                    print(f"  {display_name}: failed, skipping")
                     continue
 
                 response = result["response_text"].strip()
+
+                # Update status during command processing
+                def _update_agent_activity(activity, _pk=persona_key, _dn=display_name):
+                    s = _build_agent_status(personas, pool)
+                    s[_pk]["state"] = activity
+                    client.send_heartbeat("responding", scenario_name, s,
+                                          f"{_dn}: {activity}...")
+
+                _update_agent_activity("processing commands")
                 channel_posts = await _process_agent_response(
-                    client, response, persona, trigger_ch,
+                    client, response, persona, trigger_ch, _update_agent_activity,
                 )
 
-                display_name = persona['display_name']
+                # Reset status
+                agents_status = _build_agent_status(personas, pool)
+                client.send_heartbeat("responding", scenario_name, agents_status,
+                                      "Processing messages...")
+
                 print(f"  {display_name}: response={len(response)} chars, channels={list(channel_posts.keys())}")
 
                 if not channel_posts:
-                    print(f"  {persona['display_name']}: PASS")
+                    print(f"  {display_name}: PASS")
                     continue
 
                 for ch, content in channel_posts.items():
-                    if ch not in memberships:
-                        print(f"  {persona['display_name']}: skipping unknown channel {ch}")
+                    # Allow agents to post to their own director channel
+                    own_director = ch == f"#director-{persona_key}"
+                    if not own_director and ch not in memberships:
+                        print(f"  {display_name}: skipping unknown channel {ch}")
                         continue
-                    if persona_key not in memberships[ch]:
-                        print(f"  {persona['display_name']}: skipping {ch} — not a member")
+                    if not own_director and persona_key not in memberships.get(ch, set()):
+                        print(f"  {display_name}: skipping {ch} — not a member")
                         continue
-                    client.post_message(persona["display_name"], content, channel=ch)
-                    print(f"  {persona['display_name']}: posted to {ch} ({len(content)} chars)")
+                    client.post_message(display_name, content, channel=ch)
+                    print(f"  {display_name}: posted to {ch} ({len(content)} chars)")
                     posted_channels.add(ch)
                     if ch not in trigger_channels:
                         new_trigger_channels.add(ch)
@@ -845,11 +890,80 @@ async def _run_loop(
     return posted_channels
 
 
+def _build_agent_status(personas: list[dict], pool: AgentPool | None = None) -> dict:
+    """Build agent status dict for heartbeat."""
+    result = {}
+    for p in personas:
+        key = p["name"]
+        has_session = pool is not None and key in pool._clients
+        result[key] = {
+            "display_name": p["display_name"],
+            "state": "ready" if has_session else "offline",
+        }
+    return result
+
+
+async def _start_agents(client, personas, model, scenario_name):
+    """Spin up agent pool and announce agents online."""
+    pool = AgentPool(personas, model, LOG_DIR)
+    total = len(personas)
+
+    online_names = []
+
+    def on_progress(i, tot, key, display_name, state):
+        agents = _build_agent_status(personas, pool)
+        agents[key]["state"] = state
+        if state == "starting":
+            msg = f"Starting agent {i}/{tot}: {display_name}..."
+        else:
+            online_names.append(display_name)
+            msg = f"Agent ready {i}/{tot}: {display_name}"
+            online_list = ", ".join(online_names)
+            client.post_message("System",
+                f"{display_name} is online ({i}/{tot})\n\nAgents online: {online_list}",
+                channel="#system")
+        client.send_heartbeat("starting", scenario_name, agents, msg)
+
+    await pool.start(build_initial_prompt, on_progress=on_progress)
+
+    # Send ready heartbeat
+    agents = _build_agent_status(personas, pool)
+    client.send_heartbeat("ready", scenario_name, agents, "All agents ready")
+
+    return pool
+
+
+async def _stop_agents(client, pool, personas, scenario_name=""):
+    """Shut down agent pool and announce agents offline."""
+    if not pool:
+        return
+    names = [p["display_name"] for p in personas]
+    remaining = list(names)
+    total = len(names)
+    for i, name in enumerate(names, 1):
+        remaining.remove(name)
+        if remaining:
+            online_list = ", ".join(remaining)
+            client.post_message("System",
+                f"{name} is offline ({i}/{total})\n\nAgents still online: {online_list}",
+                channel="#system")
+        else:
+            client.post_message("System",
+                f"{name} is offline ({i}/{total})\n\nAll agents offline.",
+                channel="#system")
+        agents = _build_agent_status(personas, pool)
+        agents[personas[i-1]["name"]]["state"] = "offline"
+        client.send_heartbeat("stopping", scenario_name, agents,
+                              f"Stopping agent {i}/{total}: {name}")
+    await pool.close()
+
+
 async def run_orchestrator(args) -> None:
     """Main orchestrator loop: poll for messages, run agents, post responses."""
     client = ChatClient(base_url=args.server_url)
     personas = get_active_personas(getattr(args, "personas", None))
     model = getattr(args, "model", "sonnet")
+    scenario_name = getattr(args, "scenario", "tech-startup")
     max_waves = getattr(args, "max_rounds", 3)
     poll_interval = getattr(args, "poll_interval", 5.0)
 
@@ -861,6 +975,7 @@ async def run_orchestrator(args) -> None:
 
     print(f"Orchestrator starting")
     print(f"  Server: {args.server_url}")
+    print(f"  Scenario: {scenario_name}")
     print(f"  Model: {model}")
     print(f"  Personas: {', '.join(p['display_name'] for p in personas)}")
     print(f"  Max waves: {max_waves}")
@@ -868,14 +983,14 @@ async def run_orchestrator(args) -> None:
     print(f"  Poll interval: {poll_interval}s")
 
     # Wait for server to be reachable
+    client.send_heartbeat("connecting", scenario_name, {}, "Waiting for server...")
     while not client.health_check():
         print("Waiting for chat server...")
         await asyncio.sleep(2)
     print("Connected to chat server")
 
     # Open persistent agent sessions
-    pool = AgentPool(personas, model, LOG_DIR)
-    await pool.start(build_initial_prompt)
+    pool = await _start_agents(client, personas, model, scenario_name)
 
     # Skip any existing messages
     existing = client.get_messages()
@@ -884,6 +999,36 @@ async def run_orchestrator(args) -> None:
 
     try:
         while True:
+            # Check for commands from the server
+            agents = _build_agent_status(personas, pool)
+            cmd = client.send_heartbeat("ready", scenario_name, agents)
+            if cmd.get("action") == "restart":
+                new_scenario = cmd.get("scenario", scenario_name)
+                print(f"\n*** Restart command received (scenario: {new_scenario}) ***")
+
+                # Shut down current agents
+                await _stop_agents(client, pool, personas, scenario_name)
+
+                # Reload scenario if changed
+                if new_scenario != scenario_name:
+                    from lib.scenario_loader import load_scenario
+                    load_scenario(new_scenario)
+                    scenario_name = new_scenario
+
+                # Reload personas and start new agents
+                personas = get_active_personas(getattr(args, "personas", None))
+                pool = await _start_agents(client, personas, model, scenario_name)
+
+                # Reset message tracking
+                existing = client.get_messages()
+                last_seen_id = existing[-1]["id"] if existing else 0
+                print(f"Restart complete. Skipping {len(existing)} existing messages.")
+                continue
+
+            if cmd.get("action") == "shutdown":
+                print("\n*** Shutdown command received ***")
+                break
+
             new_messages = client.get_messages(since=last_seen_id)
 
             # Only trigger on non-agent messages (human input)
@@ -892,6 +1037,10 @@ async def run_orchestrator(args) -> None:
             if not human_messages:
                 await asyncio.sleep(poll_interval)
                 continue
+
+            # Update heartbeat to show responding
+            agents = _build_agent_status(personas, pool)
+            client.send_heartbeat("responding", scenario_name, agents, "Processing messages...")
 
             # Update last_seen_id
             if new_messages:
@@ -942,4 +1091,7 @@ async def run_orchestrator(args) -> None:
 
             print(f"\nWaiting for new messages (last_seen_id={last_seen_id})...")
     finally:
-        await pool.close()
+        try:
+            await _stop_agents(client, pool, personas, scenario_name)
+        except (Exception, BaseException):
+            pass
