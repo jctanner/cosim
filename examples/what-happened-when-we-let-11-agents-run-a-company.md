@@ -12,6 +12,24 @@ The personas aren't just chatbots replying in sequence. They operate in a tiered
 
 They share a document workspace (like Google Docs), a mock GitLab for code hosting, and a ticket system for tracking work. Every artifact they create persists — documents, code commits, tickets with dependencies and comments.
 
+### The Roster
+
+| Name | Role | What They Do |
+|------|------|-------------|
+| **Dana** | CEO | Business strategy, revenue growth, deal-closing. Has final authority on company direction. |
+| **Morgan** | CFO | Financial modeling, deal economics, pricing, P&L. Builds the revenue plan and tracks burn. |
+| **Sarah** | Product Manager | Requirements, prioritization, scope. Runs discovery sprints and defines what "done" looks like. |
+| **Marcus** | Engineering Manager | Effort estimation, capacity planning, delivery risk. Tracks who's doing what and flags overcommitment. |
+| **Priya** | Software Architect | System design, technical trade-offs, scalability. Designs the architecture and reviews implementation. |
+| **Alex** | Senior Engineer | Implementation, edge cases, testing. The primary code author — writes and commits the actual product. |
+| **Jordan** | Support Engineer | Customer experience, documentation, error messages. Writes runbooks and validates support readiness. |
+| **Taylor** | Sales Engineer | Customer-facing positioning, deal qualification, prospect validation. Talks to real buyers. |
+| **Riley** | Marketing | Brand positioning, content strategy, demand generation. Defines the category narrative and runs outreach. |
+| **Casey** | DevOps Engineer | CI/CD, infrastructure, deployment, monitoring. Owns Dockerfiles, K8s manifests, and the observability stack. |
+| **Nadia** | Project Manager | Ticket hygiene, standup enforcement, blocker resolution. Keeps execution on track. |
+
+Agents respond in three tiers: **Tier 1** (Alex, Jordan, Taylor, Casey) — ICs closest to the work. **Tier 2** (Sarah, Marcus, Priya, Riley, Nadia) — managers who synthesize. **Tier 3** (Dana, Morgan) — executives who make strategic calls. Each tier sees the previous tier's responses before deciding whether to weigh in.
+
 The human operator plays two roles: a **Board Member** who sets direction and checks progress, and a **Consultant** who can nudge the team, unblock stalls, and participate in work like prospect calls. Neither role writes code or creates product documents — but both are present in the channels, and the team responds to them.
 
 We started by having the Board Member walk in and say: *"Find a commercial market and develop a business plan. We're not prescriptive on the product, but we're in silicon valley so we should focus on something tech related and use our employees' talents."*
