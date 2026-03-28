@@ -24,16 +24,17 @@ DEFAULT_FOLDERS = {
     "devops":      {"type": "department", "description": "DevOps department"},
     "riley":       {"type": "personal",  "description": "Riley's private folder"},
     "casey":       {"type": "personal",  "description": "Casey's private folder"},
+    "nadia":       {"type": "personal",  "description": "Nadia's private folder"},
 }
 
 # Folder access: folder_name -> set of persona keys allowed
 DEFAULT_FOLDER_ACCESS = {
-    "shared":      {"pm", "engmgr", "architect", "senior", "support", "sales", "ceo", "cfo", "marketing", "devops"},
-    "public":      {"pm", "engmgr", "architect", "senior", "support", "sales", "ceo", "cfo", "marketing", "devops"},
-    "engineering": {"pm", "engmgr", "architect", "senior", "devops"},
+    "shared":      {"pm", "engmgr", "architect", "senior", "support", "sales", "ceo", "cfo", "marketing", "devops", "projmgr"},
+    "public":      {"pm", "engmgr", "architect", "senior", "support", "sales", "ceo", "cfo", "marketing", "devops", "projmgr"},
+    "engineering": {"pm", "engmgr", "architect", "senior", "devops", "projmgr"},
     "sales":       {"pm", "sales", "ceo", "cfo"},
-    "support":     {"pm", "engmgr", "support", "devops"},
-    "leadership":  {"pm", "ceo", "cfo"},
+    "support":     {"pm", "engmgr", "support", "devops", "projmgr"},
+    "leadership":  {"pm", "ceo", "cfo", "projmgr"},
     "sarah":       {"pm"},
     "marcus":      {"engmgr"},
     "priya":       {"architect"},
@@ -42,10 +43,11 @@ DEFAULT_FOLDER_ACCESS = {
     "taylor":      {"sales"},
     "dana":        {"ceo"},
     "morgan":      {"cfo"},
-    "marketing":   {"pm", "marketing", "sales", "ceo"},
-    "devops":      {"pm", "engmgr", "devops"},
+    "marketing":   {"pm", "marketing", "sales", "ceo", "projmgr"},
+    "devops":      {"pm", "engmgr", "devops", "projmgr"},
     "riley":       {"marketing"},
     "casey":       {"devops"},
+    "nadia":       {"projmgr"},
 }
 
 

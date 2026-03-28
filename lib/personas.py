@@ -61,6 +61,11 @@ PERSONAS = {
         "skill": "devops-engineer",
         "display_name": "Casey (DevOps)",
     },
+    "projmgr": {
+        "name": "projmgr",
+        "skill": "project-manager-ops",
+        "display_name": "Nadia (Project Mgr)",
+    },
 }
 
 # Channel definitions
@@ -88,13 +93,14 @@ DEFAULT_MEMBERSHIPS = {
     "cfo":       {"#general", "#leadership", "#sales"},
     "marketing": {"#general", "#marketing", "#sales", "#sales-external"},
     "devops":    {"#general", "#devops", "#engineering", "#support"},
+    "projmgr":   {"#general", "#engineering", "#support", "#leadership", "#devops", "#sales", "#marketing"},
 }
 
 # Response tiers: lower tiers respond first, higher tiers see previous responses
 # before deciding whether to weigh in. Within a tier, agents run in parallel.
 RESPONSE_TIERS = {
     1: ["senior", "support", "sales", "devops"],  # ICs — closest to the work
-    2: ["engmgr", "architect", "pm", "marketing"], # Managers/leads — synthesize
+    2: ["engmgr", "architect", "pm", "marketing", "projmgr"], # Managers/leads — synthesize
     3: ["ceo", "cfo"],                             # Executives — strategic only
 }
 
@@ -204,6 +210,69 @@ def build_gitlab_index(repos: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def build_tickets_index(tickets: list[dict], persona_display_name: str) -> str:
+    """Format tickets as a prompt section with the agent's queue highlighted.
+
+    Returns a section with "## Your Ticket Queue" (assigned to this agent)
+    and "## All Open Tickets" (everything else that's open/in_progress).
+    Returns empty string if no relevant tickets exist.
+    """
+    if not tickets:
+        return ""
+
+    my_tickets = []
+    other_tickets = []
+
+    for t in tickets:
+        if t.get("assignee") == persona_display_name:
+            my_tickets.append(t)
+        elif t.get("status") in ("open", "in_progress"):
+            other_tickets.append(t)
+
+    if not my_tickets and not other_tickets:
+        return ""
+
+    lines = []
+
+    if my_tickets:
+        lines.append("## Your Ticket Queue")
+        lines.append("")
+        lines.append("These tickets are assigned to you. Pick them up when relevant:")
+        lines.append("")
+        for t in my_tickets:
+            status = t.get("status", "open")
+            priority = t.get("priority", "medium")
+            blocked_by = t.get("blocked_by", [])
+            # Check if blocked
+            if blocked_by:
+                # Check which blockers are still unresolved
+                unresolved = [b for b in blocked_by
+                              if any(tk.get("id") == b and tk.get("status") not in ("resolved", "closed")
+                                     for tk in tickets)]
+                if unresolved:
+                    block_str = f" **BLOCKED by {', '.join(unresolved)}**"
+                else:
+                    block_str = " (ready — dependencies resolved)"
+            else:
+                block_str = ""
+            lines.append(f"- **{t['id']}** [{status}] [{priority}] {t.get('title', '?')}{block_str}")
+        lines.append("")
+
+    if other_tickets:
+        lines.append("## All Open Tickets")
+        lines.append("")
+        for t in other_tickets:
+            status = t.get("status", "open")
+            priority = t.get("priority", "medium")
+            assignee = t.get("assignee", "Unassigned") or "Unassigned"
+            blocked_by = t.get("blocked_by", [])
+            dep_str = f" (blocked by {', '.join(blocked_by)})" if blocked_by else ""
+            lines.append(f"- **{t['id']}** [{status}] [{priority}] {t.get('title', '?')} — {assignee}{dep_str}")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
 def build_initial_prompt(persona_key: str, channels: dict[str, dict] | None = None) -> str:
     """Build the one-time session initialization prompt for a persona.
 
@@ -306,6 +375,7 @@ Everyone on this list is an active participant. You do NOT need to escalate to a
 - **Taylor (Sales Eng)** — customer-facing, competitive positioning, deal qualification
 - **Riley (Marketing)** — brand positioning, content strategy, demand generation
 - **Casey (DevOps)** — CI/CD pipelines, infrastructure, deployment automation, reliability
+- **Nadia (Project Mgr)** — ticket hygiene, standup enforcement, blocker resolution, execution tracking
 
 All authority needed to make decisions is present in this team. Do not suggest "escalating to leadership" or "getting executive approval" — Dana and Morgan ARE leadership and they are right here.
 
@@ -399,6 +469,46 @@ from flask import Flask
 
 You will see a "GitLab Repositories" section in each turn showing what repos currently exist.
 
+## Tickets (Task Tracking)
+
+Your team has a ticket system for tracking work items. Use tickets to create trackable tasks, assign them to teammates, and declare dependencies. This replaces verbal commitments with trackable work items.
+
+### Ticket Commands
+
+**Create a ticket** (assignee and blocked_by are optional):
+<<<TICKETS:CREATE title="API rate limiting" assignee="Alex (Senior Eng)" priority="high">>>
+Design and implement rate limiting for the public API endpoints.
+Acceptance criteria: configurable per-endpoint limits, proper 429 responses.
+<<<END_TICKETS>>>
+
+**Create a ticket with dependencies:**
+<<<TICKETS:CREATE title="Deploy rate limiter" assignee="Casey (DevOps)" priority="high" blocked_by="TK-A1B2C3">>>
+Deploy the rate limiting config after implementation is complete.
+<<<END_TICKETS>>>
+
+**Update a ticket's status or assignee:**
+<<<TICKETS:UPDATE id="TK-A1B2C3" status="in_progress"/>>>
+<<<TICKETS:UPDATE id="TK-A1B2C3" status="resolved"/>>>
+<<<TICKETS:UPDATE id="TK-A1B2C3" assignee="Casey (DevOps)"/>>>
+
+**Add a comment to a ticket:**
+<<<TICKETS:COMMENT id="TK-A1B2C3">>>
+Found the root cause — session timeout in the auth middleware.
+<<<END_TICKETS>>>
+
+**Add a dependency between tickets:**
+<<<TICKETS:DEPENDS id="TK-D4E5F6" blocked_by="TK-A1B2C3"/>>>
+
+**List tickets (optional filters):**
+<<<TICKETS:LIST/>>>
+<<<TICKETS:LIST status="open"/>>>
+<<<TICKETS:LIST assignee="Alex (Senior Eng)"/>>>
+
+Valid statuses: open, in_progress, resolved, closed
+Valid priorities: low, medium, high, critical
+
+You will see a "Your Ticket Queue" section in each turn showing tickets assigned to you, and "All Open Tickets" showing what else is being tracked. When you resolve a ticket, check if it unblocks other tickets.
+
 ---
 
 You will receive a series of updates showing chat history from your channels and which channel has new activity. Respond to what's relevant. In external channels, address the customer directly. In internal channels, discuss freely with the team.
@@ -439,6 +549,7 @@ def build_turn_prompt(
     channels: set[str] | None = None,
     docs: list[dict] | None = None,
     repos: list[dict] | None = None,
+    tickets: list[dict] | None = None,
 ) -> str:
     """Build a lean per-turn prompt for a persistent session.
 
@@ -449,6 +560,7 @@ def build_turn_prompt(
         channels: Set of channel names this agent belongs to.
         docs: List of document metadata dicts.
         repos: List of GitLab repository metadata dicts.
+        tickets: List of ticket dicts.
     """
     persona = PERSONAS[persona_key]
     if channels is None:
@@ -457,6 +569,7 @@ def build_turn_prompt(
     history = _build_history_sections(messages, channels)
     docs_section = build_docs_index(docs, persona_key) if docs else ""
     repos_section = build_gitlab_index(repos) if repos else ""
+    tickets_section = build_tickets_index(tickets, persona["display_name"]) if tickets else ""
     membership_section = _build_channel_membership_section(channels)
 
     # Determine if trigger channel is external
@@ -507,6 +620,8 @@ Rules:
         parts.append(docs_section)
     if repos_section:
         parts.append(repos_section)
+    if tickets_section:
+        parts.append(tickets_section)
     parts.append(membership_section)
     parts.append(action)
 
