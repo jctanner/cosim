@@ -1101,6 +1101,7 @@ function connectSSE() {
       addMessage(data);
     }
   });
+  es.onopen = () => { loadMessages(); };
   es.onerror = () => { setTimeout(connectSSE, 2000); es.close(); };
 }
 

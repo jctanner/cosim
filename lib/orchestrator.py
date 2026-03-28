@@ -726,6 +726,9 @@ async def _run_loop(
                     client, response, persona, trigger_ch,
                 )
 
+                display_name = persona['display_name']
+                print(f"  {display_name}: response={len(response)} chars, channels={list(channel_posts.keys())}")
+
                 if not channel_posts:
                     print(f"  {persona['display_name']}: PASS")
                     continue
@@ -733,6 +736,9 @@ async def _run_loop(
                 for ch, content in channel_posts.items():
                     if ch not in memberships:
                         print(f"  {persona['display_name']}: skipping unknown channel {ch}")
+                        continue
+                    if persona_key not in memberships[ch]:
+                        print(f"  {persona['display_name']}: skipping {ch} — not a member")
                         continue
                     client.post_message(persona["display_name"], content, channel=ch)
                     print(f"  {persona['display_name']}: posted to {ch} ({len(content)} chars)")
