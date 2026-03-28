@@ -715,9 +715,14 @@ async def _run_loop(
     """Run the event-driven response loop with tiered responses.
 
     Within each wave, agents respond in tiers (ICs first, then managers,
-    then executives). Each tier sees the previous tier's responses before
-    deciding whether to weigh in. Between waves, channels that received
-    new messages become the next trigger set, up to max_waves.
+    then executives). Agents within a tier run in parallel — they all get
+    the same state snapshot and their LLM calls execute concurrently via
+    asyncio.gather(). After all sends complete, responses are processed
+    and posted sequentially to preserve message ordering.
+
+    Tier-to-tier ordering is preserved: higher tiers see all lower tier
+    output before running. Between waves, channels that received new
+    messages become the next trigger set, up to max_waves.
 
     Returns the set of channels that received agent posts (empty if all PASS).
     """
@@ -752,33 +757,32 @@ async def _run_loop(
 
         new_trigger_channels: set[str] = set()
 
-        # Run tiers sequentially (1, 2, 3), agents within a tier sequentially
-        # so each agent sees the previous agent's response before deciding
+        # Run tiers sequentially (1, 2, 3), agents within a tier in parallel.
+        # All agents in a tier get the same state snapshot and run concurrently.
+        # Tier-to-tier ordering is preserved so higher tiers see lower tier output.
         for tier_num in sorted(tiers.keys()):
             tier_agents = tiers[tier_num]
             tier_names = ", ".join(
                 persona_map[pk]["display_name"] for pk in sorted(tier_agents)
             )
-            print(f"\n--- Tier {tier_num}: {tier_names} ---")
+            print(f"\nWave {wave}, Tier {tier_num}: running {len(tier_agents)} agent(s) "
+                  f"in parallel ({tier_names})")
 
-            for persona_key, triggered_by in tier_agents.items():
-                persona = persona_map[persona_key]
-                trigger_ch = sorted(triggered_by)[0]
+            # 1. Fetch state ONCE per tier (shared snapshot)
+            full_history = client.get_messages()
+            docs = client.list_docs()
+            repos = client.list_repos()
+            tickets = client.list_tickets()
 
-                # Re-fetch history before each agent so it sees prior responses
-                full_history = client.get_messages()
-                docs = client.list_docs()
-                repos = client.list_repos()
-                tickets = client.list_tickets()
-
-                # Collect all channels this agent is in
-                all_agent_channels = set()
-                for ch_name, ch_members in memberships.items():
-                    if persona_key in ch_members:
-                        all_agent_channels.add(ch_name)
-
+            # 2. Build prompts and launch all sends in parallel
+            async def _run_agent(pk, trigger_ch):
+                persona = persona_map[pk]
+                all_agent_channels = {
+                    ch_name for ch_name, ch_members in memberships.items()
+                    if pk in ch_members
+                }
                 prompt = build_turn_prompt(
-                    persona_key,
+                    pk,
                     full_history,
                     trigger_channel=trigger_ch,
                     channels=all_agent_channels,
@@ -786,7 +790,23 @@ async def _run_loop(
                     repos=repos,
                     tickets=tickets,
                 )
-                result = await pool.send(persona_key, prompt)
+                result = await pool.send(pk, prompt)
+                return pk, trigger_ch, result
+
+            tasks = [
+                _run_agent(pk, sorted(triggered_by)[0])
+                for pk, triggered_by in tier_agents.items()
+            ]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+
+            # 3. Process responses sequentially (preserves posting order)
+            for entry in results:
+                if isinstance(entry, Exception):
+                    print(f"  [Tier {tier_num}] agent task failed: {entry}")
+                    continue
+
+                persona_key, trigger_ch, result = entry
+                persona = persona_map[persona_key]
 
                 if not result["success"]:
                     print(f"  {persona['display_name']}: failed, skipping")
