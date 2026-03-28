@@ -78,19 +78,27 @@ class AgentPool:
         self._clients: dict[str, ClaudeSDKClient] = {}
         self._log_files: dict[str, Path] = {}
 
-    async def start(self, build_initial_prompt) -> None:
+    async def start(self, build_initial_prompt, on_progress=None) -> None:
         """Open and initialize sessions for all personas.
 
         Args:
             build_initial_prompt: callable(persona_key) -> str that returns the
                 one-time role prompt for a persona.
+            on_progress: optional callable(i, total, persona_key, display_name, state)
+                called before ("starting") and after ("ready") each agent.
         """
         self._log_dir.mkdir(parents=True, exist_ok=True)
 
-        print(f"Opening {len(self._personas)} agent sessions...")
-        for key, persona in self._personas.items():
+        total = len(self._personas)
+        print(f"Opening {total} agent sessions...")
+        for i, (key, persona) in enumerate(self._personas.items(), 1):
+            print(f"  Starting ({i}/{total}): {persona['display_name']}...", end="", flush=True)
+            if on_progress:
+                on_progress(i, total, key, persona["display_name"], "starting")
             await self._open_session(key, build_initial_prompt)
-        print(f"All {len(self._clients)} sessions ready")
+            if on_progress:
+                on_progress(i, total, key, persona["display_name"], "ready")
+        print(f"All {len(self._clients)}/{total} sessions ready")
 
     async def _open_session(self, persona_key: str, build_initial_prompt) -> None:
         """Open a single persistent session and send role instructions."""
@@ -128,7 +136,9 @@ class AgentPool:
             pass  # Consume init response (expect "READY" or similar)
 
         elapsed = time.monotonic() - start_time
-        print(f"  Session ready: {name} ({format_duration(elapsed)})")
+        ready_count = len(self._clients)
+        total_count = len(self._personas)
+        print(f" ready ({ready_count}/{total_count}) ({format_duration(elapsed)})")
 
     async def send(self, persona_key: str, prompt: str) -> dict:
         """Send a turn prompt to a persona's persistent session.
@@ -203,17 +213,20 @@ class AgentPool:
             }
 
     async def _close_session(self, persona_key: str) -> None:
-        """Close a single session."""
+        """Close a single session. Handles SDK errors gracefully."""
         client = self._clients.pop(persona_key, None)
         if client:
             try:
                 await client.__aexit__(None, None, None)
-            except Exception:
-                pass
+            except (Exception, BaseException):
+                pass  # SDK may raise CancelledError or other async errors
 
     async def close(self) -> None:
-        """Close all sessions."""
-        for key in list(self._clients.keys()):
+        """Close all sessions. Safe to call multiple times."""
+        keys = list(self._clients.keys())
+        if not keys:
+            return
+        for key in keys:
             await self._close_session(key)
         print("All agent sessions closed")
 

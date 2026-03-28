@@ -32,6 +32,13 @@ load_dotenv(dotenv_path=env_path)
 
 if __name__ == "__main__":
     args = parse_args()
+
+    # Load scenario config before any consumer imports
+    from lib.scenario_loader import load_scenario
+    from lib.session import set_scenario
+    load_scenario(args.scenario)
+    set_scenario(args.scenario)
+
     try:
         if args.command == "server":
             from lib.webapp import create_app

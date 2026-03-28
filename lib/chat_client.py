@@ -303,3 +303,33 @@ class ChatClient:
         )
         resp.raise_for_status()
         return resp.json()
+
+    # -- Typing indicators --
+
+    def set_typing(self, sender: str, channel: str, active: bool = True):
+        """Send typing indicator for an agent in a channel."""
+        try:
+            requests.post(
+                f"{self.base_url}/api/typing",
+                json={"sender": sender, "channel": channel, "active": active},
+                timeout=5,
+            )
+        except Exception:
+            pass
+
+    # -- Orchestrator control --
+
+    def send_heartbeat(self, state: str, scenario: str, agents: dict,
+                       message: str = "") -> dict:
+        """Send orchestrator heartbeat. Returns any pending command."""
+        try:
+            resp = requests.post(
+                f"{self.base_url}/api/orchestrator/heartbeat",
+                json={"state": state, "scenario": scenario,
+                      "agents": agents, "message": message},
+                timeout=5,
+            )
+            resp.raise_for_status()
+            return resp.json()
+        except Exception:
+            return {"action": None}
