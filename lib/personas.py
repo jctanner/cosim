@@ -113,7 +113,7 @@ for _tier, _keys in RESPONSE_TIERS.items():
 # Maximum messages to include per channel in turn prompts.
 # Older messages are dropped with a truncation notice. This prevents
 # prompt size from growing without bound as chat history accumulates.
-MAX_HISTORY_MESSAGES_PER_CHANNEL = 30
+MAX_HISTORY_MESSAGES_PER_CHANNEL = 10
 
 
 def load_persona_instructions(skill_name: str) -> str:
