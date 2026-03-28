@@ -8,3 +8,5 @@ chat.log
 dist/
 build/
 .venv/
+gitlab/
+docs/
