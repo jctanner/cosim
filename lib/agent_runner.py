@@ -1,5 +1,6 @@
 """Claude SDK agent launcher — captures and returns full text responses."""
 
+import json
 import time
 import asyncio
 from pathlib import Path
@@ -49,6 +50,12 @@ def _extract_response_text(msg, response_parts: list[str]) -> None:
             if type(block).__name__ == "TextBlock":
                 response_parts.append(block.text)
     elif type_name == "ResultMessage":
+        # Handle structured_output (JSON mode) if present
+        if hasattr(msg, "structured_output") and msg.structured_output:
+            try:
+                response_parts.append(json.dumps(msg.structured_output))
+            except (TypeError, ValueError):
+                pass
         if hasattr(msg, "result") and msg.result:
             if not response_parts:
                 response_parts.append(msg.result)

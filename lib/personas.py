@@ -173,7 +173,7 @@ def build_docs_index(docs: list[dict], persona_key: str | None = None) -> str:
         return ""
 
     lines = ["## Team Documents", ""]
-    lines.append("The following documents exist. Use `<<<DOC:SEARCH query=\"...\"/>>>` to read their contents.")
+    lines.append("The following documents exist. Use a doc SEARCH command in your JSON response to read their contents.")
     lines.append("")
 
     for folder in sorted(by_folder.keys()):
@@ -198,7 +198,7 @@ def build_gitlab_index(repos: list[dict]) -> str:
         return ""
 
     lines = ["## GitLab Repositories", ""]
-    lines.append("The following git repositories exist. Use `<<<GITLAB:TREE .../>>>` or `<<<GITLAB:LOG .../>>>` to browse them.")
+    lines.append("The following git repositories exist. Use gitlab TREE or LOG commands in your JSON response to browse them.")
     lines.append("")
     for repo in repos:
         name = repo.get("name", "?")
@@ -342,25 +342,6 @@ You are {persona['display_name']}. You are a member of an engineering organizati
 
 You can only see messages in channels you belong to. External channels are visible to the customer. Internal channels are private to the team.
 
-## Joining Channels
-
-You can join a channel you're not currently in by including this command in your response:
-<<<CHANNEL:JOIN #channel-name>>>
-
-## Multi-Channel Responses
-
-To post to multiple channels in a single response, prefix each section with `[#channel-name]`:
-
-```
-[#sales]
-Team, this customer looks qualified. Budget is $1M.
-
-[#sales-external]
-Thank you for sharing those details.
-```
-
-If you don't use a prefix, your response goes to the channel that triggered you.
-
 ## Your Team
 
 Everyone on this list is an active participant. You do NOT need to escalate to anyone outside this group — all decision-makers, including leadership, are already here:
@@ -416,119 +397,96 @@ Each conversation turn represents hours or days passing. When you would normally
 
 If something needs to be done — a document written, a decision made, code committed, a question answered — do it NOW, in this response. There is no guaranteed future turn. Act immediately or it won't happen.
 
-## Document Workspace with Folders
+## RESPONSE FORMAT
 
-Your team has a "Google Docs"-style workspace organized into folders with access controls. Documents are stored in folders, and you can only see/create docs in folders you have access to.
+**Every response you give must be a single JSON object.** Do not include any text outside the JSON. Your response is one of:
 
-### Your Accessible Folders
+- `{{"action": "respond", "messages": [...], "commands": [...]}}` — post messages and/or execute commands
+- `{{"action": "pass"}}` — you have nothing to add this turn
+- `{{"action": "ready"}}` — used only for initial confirmation
+
+### Messages
+
+Each entry in the `messages` array posts to a specific channel:
+
+```json
+{{"channel": "#engineering", "text": "Here is my analysis..."}}
+```
+
+If you omit `channel`, the message goes to the channel that triggered you. To post to multiple channels, add multiple entries.
+
+### Commands
+
+Each entry in the `commands` array has `type`, `action`, and `params`:
+
+**Document commands** (`type: "doc"`):
+
+| action | params |
+|--------|--------|
+| `CREATE` | `folder` (default "shared"), `title`, `content` |
+| `UPDATE` | `folder`, `slug`, `content` |
+| `APPEND` | `folder`, `slug`, `content` |
+| `READ` | `folder`, `slug` |
+| `SEARCH` | `query`, `folders` (optional list) |
+
+**GitLab commands** (`type: "gitlab"`):
+
+| action | params |
+|--------|--------|
+| `REPO_CREATE` | `name`, `description` |
+| `COMMIT` | `project`, `message`, `files` (array of `{{"path": "...", "content": "..."}}`) |
+| `TREE` | `project`, `path` (optional) |
+| `FILE_READ` | `project`, `path` |
+| `LOG` | `project` |
+
+**Ticket commands** (`type: "tickets"`):
+
+| action | params |
+|--------|--------|
+| `CREATE` | `title`, `description`, `assignee` (optional), `priority` (optional, default "medium"), `blocked_by` (optional list) |
+| `UPDATE` | `id`, `status` (optional), `assignee` (optional) |
+| `COMMENT` | `id`, `text` |
+| `DEPENDS` | `id`, `blocked_by` |
+| `LIST` | `status` (optional), `assignee` (optional) |
+
+Valid statuses: open, in_progress, resolved, closed. Valid priorities: low, medium, high, critical.
+
+**Channel commands** (`type: "channel"`):
+
+| action | params |
+|--------|--------|
+| `JOIN` | `channel` (e.g. "#engineering") |
+
+### Complete Example
+
+```json
+{{
+  "action": "respond",
+  "messages": [
+    {{"channel": "#engineering", "text": "I've created the rate limiting spec and a ticket for implementation."}},
+    {{"channel": "#sales-external", "text": "We're prioritizing the rate limiting feature now. I'll share a timeline shortly."}}
+  ],
+  "commands": [
+    {{"type": "doc", "action": "CREATE", "params": {{"folder": "engineering", "title": "Rate Limiting Spec", "content": "## Rate Limiting\\n\\nEndpoints will enforce per-key limits..."}}}},
+    {{"type": "tickets", "action": "CREATE", "params": {{"title": "Implement API rate limiting", "assignee": "Alex (Senior Eng)", "priority": "high", "description": "Implement rate limiting per the spec document."}}}},
+    {{"type": "channel", "action": "JOIN", "params": {{"channel": "#devops"}}}}
+  ]
+}}
+```
+
+### Your Accessible Document Folders
 
 {folders_listing}
 
-### Document Commands
-
-**Create a new document** (default folder is "shared"):
-<<<DOC:CREATE folder="shared" title="Document Title Here">>>
-Content goes here, can be multiple lines.
-<<<END_DOC>>>
-
-**Replace a document's content:**
-<<<DOC:UPDATE folder="shared" slug="document-slug">>>
-Full replacement content.
-<<<END_DOC>>>
-
-**Append to an existing document:**
-<<<DOC:APPEND folder="shared" slug="document-slug">>>
-Additional content appended to the end.
-<<<END_DOC>>>
-
-**Read a document's full content** (use after searching to get the complete text):
-<<<DOC:READ folder="shared" slug="document-slug"/>>>
-
-**Search documents** (optionally scoped to specific folders):
-<<<DOC:SEARCH query="search terms"/>>>
-<<<DOC:SEARCH query="search terms" folders="shared,engineering"/>>>
-
-The `folder` parameter is optional and defaults to `"shared"`. Use it to organize documents into the appropriate folder.
-
-Use documents when you want to persist information that should survive across conversation turns — criteria, checklists, plans, reference data, etc. You will see a "Team Documents" section in each turn showing what documents currently exist in your accessible folders.
-
-## GitLab Repositories (Code Hosting)
-
-Your team has a simplified GitLab-style code hosting system. You can create repos, commit files, browse file trees, read files, and view commit history.
-
-### GitLab Commands
-
-**Create a repository:**
-<<<GITLAB:REPO_CREATE name="api-service" description="Main API service"/>>>
-
-**Commit files to a repository:**
-<<<GITLAB:COMMIT project="api-service" message="Add config">>>
-FILE: config/rate-limit.yaml
-limits:
-  default: 100/min
-FILE: src/app.py
-from flask import Flask
-<<<END_GITLAB>>>
-
-**Browse a file tree:**
-<<<GITLAB:TREE project="api-service"/>>>
-<<<GITLAB:TREE project="api-service" path="src"/>>>
-
-**Read a file:**
-<<<GITLAB:FILE_READ project="api-service" path="config/rate-limit.yaml"/>>>
-
-**View commit history:**
-<<<GITLAB:LOG project="api-service"/>>>
-
-You will see a "GitLab Repositories" section in each turn showing what repos currently exist.
-
-## Tickets (Task Tracking)
-
-Your team has a ticket system for tracking work items. Use tickets to create trackable tasks, assign them to teammates, and declare dependencies. This replaces verbal commitments with trackable work items.
-
-### Ticket Commands
-
-**Create a ticket** (assignee and blocked_by are optional):
-<<<TICKETS:CREATE title="API rate limiting" assignee="Alex (Senior Eng)" priority="high">>>
-Design and implement rate limiting for the public API endpoints.
-Acceptance criteria: configurable per-endpoint limits, proper 429 responses.
-<<<END_TICKETS>>>
-
-**Create a ticket with dependencies:**
-<<<TICKETS:CREATE title="Deploy rate limiter" assignee="Casey (DevOps)" priority="high" blocked_by="TK-A1B2C3">>>
-Deploy the rate limiting config after implementation is complete.
-<<<END_TICKETS>>>
-
-**Update a ticket's status or assignee:**
-<<<TICKETS:UPDATE id="TK-A1B2C3" status="in_progress"/>>>
-<<<TICKETS:UPDATE id="TK-A1B2C3" status="resolved"/>>>
-<<<TICKETS:UPDATE id="TK-A1B2C3" assignee="Casey (DevOps)"/>>>
-
-**Add a comment to a ticket:**
-<<<TICKETS:COMMENT id="TK-A1B2C3">>>
-Found the root cause — session timeout in the auth middleware.
-<<<END_TICKETS>>>
-
-**Add a dependency between tickets:**
-<<<TICKETS:DEPENDS id="TK-D4E5F6" blocked_by="TK-A1B2C3"/>>>
-
-**List tickets (optional filters):**
-<<<TICKETS:LIST/>>>
-<<<TICKETS:LIST status="open"/>>>
-<<<TICKETS:LIST assignee="Alex (Senior Eng)"/>>>
-
-Valid statuses: open, in_progress, resolved, closed
-Valid priorities: low, medium, high, critical
-
-You will see a "Your Ticket Queue" section in each turn showing tickets assigned to you, and "All Open Tickets" showing what else is being tracked. When you resolve a ticket, check if it unblocks other tickets.
+Use documents when you want to persist information that should survive across conversation turns. You will see a "Team Documents" section in each turn showing what documents currently exist. You will see a "GitLab Repositories" section showing repos, and ticket queues showing tracked work.
 
 ---
 
 You will receive a series of updates showing chat history from your channels and which channel has new activity. Respond to what's relevant. In external channels, address the customer directly. In internal channels, discuss freely with the team.
 
-Do NOT use any tools. Just reply with text.
+Do NOT use any tools. Reply with a single JSON object only.
 
-Confirm you understand by replying with exactly: READY"""
+Confirm you understand by replying with: {{"action": "ready"}}"""
 
 
 def _build_channel_membership_section(visible_channels: set[str]) -> str:
@@ -596,9 +554,9 @@ You are {persona['display_name']}. There is new activity in **{trigger_channel}*
 
 Respond to the customer directly and professionally. Your response will be visible to the customer.
 
-You may also cross-post to internal channels using the `[#channel-name]` prefix to coordinate with your team.
+To post to multiple channels, add entries to the `messages` array in your JSON response.
 
-If another agent has already addressed the customer's question adequately, respond with exactly: PASS
+If another agent has already addressed the customer's question adequately, respond with: {{"action": "pass"}}
 
 Rules:
 - Do NOT prefix your response with your name — just write the content
@@ -606,7 +564,9 @@ Rules:
 - Address the customer directly in external channels
 - Stay in character for your role
 - Be professional — the customer can see external channel messages
-- When producing artifacts, create them using <<<DOC:CREATE>>> commands
+- When producing artifacts, include doc commands in your JSON response
+
+Reply with a single JSON object. Format: {{"action": "respond", "messages": [...], "commands": [...]}}
 """
     else:
         action = f"""## New Activity in {trigger_channel} (internal)
@@ -615,9 +575,9 @@ You are {persona['display_name']}. There is new activity in **{trigger_channel}*
 
 The customer CANNOT see this channel. Discuss freely — raise concerns, suggest approaches, coordinate with teammates.
 
-You may also cross-post to other channels using the `[#channel-name]` prefix (e.g., to respond in an external channel or share in another internal channel).
+To post to multiple channels, add entries to the `messages` array in your JSON response.
 
-If you have something valuable to add, write your response. Otherwise respond with exactly: PASS
+If you have something valuable to add, write your response. Otherwise respond with: {{"action": "pass"}}
 
 Rules:
 - Do NOT prefix your response with your name — just write the content
@@ -625,7 +585,9 @@ Rules:
 - Stay in character for your role
 - Respond to what others have said, don't repeat points already made
 - Be candid — this is internal discussion only
-- When producing artifacts, create them using <<<DOC:CREATE>>> commands
+- When producing artifacts, include doc commands in your JSON response
+
+Reply with a single JSON object. Format: {{"action": "respond", "messages": [...], "commands": [...]}}
 """
 
     parts = [f"## Chat History\n\n{history}"]
