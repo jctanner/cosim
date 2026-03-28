@@ -1016,6 +1016,7 @@ function switchChannel(name) {
   renderSidebar();
   updateChannelHeader();
   renderMessages();
+  loadMessages(name);
   updateSenderDropdown();
 }
 
@@ -1073,8 +1074,10 @@ function renderMessages() {
   msgs.forEach(appendMessageEl);
 }
 
-async function loadMessages() {
-  const resp = await fetch('/api/messages');
+async function loadMessages(channel) {
+  let url = '/api/messages';
+  if (channel) url += '?channels=' + encodeURIComponent(channel);
+  const resp = await fetch(url);
   const msgs = await resp.json();
   msgs.forEach(addMessage);
 }
