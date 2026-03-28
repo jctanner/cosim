@@ -110,6 +110,11 @@ for _tier, _keys in RESPONSE_TIERS.items():
     for _key in _keys:
         PERSONA_TIER[_key] = _tier
 
+# Maximum messages to include per channel in turn prompts.
+# Older messages are dropped with a truncation notice. This prevents
+# prompt size from growing without bound as chat history accumulates.
+MAX_HISTORY_MESSAGES_PER_CHANNEL = 30
+
 
 def load_persona_instructions(skill_name: str) -> str:
     """Read a SKILL.md file and strip YAML frontmatter, returning the body."""
@@ -129,8 +134,16 @@ def format_chat_history(messages: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def _build_history_sections(messages: list[dict], visible_channels: set[str]) -> str:
-    """Filter messages to visible channels and format into labeled sections."""
+def _build_history_sections(
+    messages: list[dict],
+    visible_channels: set[str],
+    max_per_channel: int = MAX_HISTORY_MESSAGES_PER_CHANNEL,
+) -> str:
+    """Filter messages to visible channels and format into labeled sections.
+
+    Only the most recent ``max_per_channel`` messages are kept per channel.
+    A truncation notice is prepended when older messages are dropped.
+    """
     filtered = [m for m in messages if m.get("channel", "#general") in visible_channels]
     if not filtered:
         return "(no messages yet)"
@@ -144,7 +157,19 @@ def _build_history_sections(messages: list[dict], visible_channels: set[str]) ->
     parts = []
     # Sort channels for consistent ordering
     for ch in sorted(by_channel.keys()):
-        parts.append(f"### {ch}\n\n" + format_chat_history(by_channel[ch]))
+        ch_msgs = by_channel[ch]
+        if max_per_channel and len(ch_msgs) > max_per_channel:
+            dropped = len(ch_msgs) - max_per_channel
+            ch_msgs = ch_msgs[-max_per_channel:]
+            header = (
+                f"### {ch}\n\n"
+                f"*(showing last {max_per_channel} messages; "
+                f"{dropped} older messages omitted — "
+                f"use doc SEARCH or READ commands to find earlier context)*\n\n"
+            )
+        else:
+            header = f"### {ch}\n\n"
+        parts.append(header + format_chat_history(ch_msgs))
 
     return "\n\n".join(parts)
 
