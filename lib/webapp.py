@@ -11,6 +11,7 @@ from flask import Flask, Response, jsonify, request
 from lib.docs import slugify, DEFAULT_FOLDERS, DEFAULT_FOLDER_ACCESS
 from lib.personas import DEFAULT_CHANNELS, DEFAULT_MEMBERSHIPS, PERSONAS
 from lib.gitlab import GITLAB_DIR, init_gitlab_storage, load_repos_index, save_repos_index, generate_commit_id
+from lib.tickets import TICKETS_DIR, init_tickets_storage, load_tickets_index, save_tickets_index, generate_ticket_id
 
 
 CHAT_LOG = Path(__file__).parent.parent / "chat.log"
@@ -42,6 +43,10 @@ _folder_lock = threading.Lock()
 _gitlab_repos: dict[str, dict] = {}
 _gitlab_commits: dict[str, list[dict]] = {}
 _gitlab_lock = threading.Lock()
+
+# Tickets state: ticket_id -> full ticket dict
+_tickets: dict[str, dict] = {}
+_tickets_lock = threading.Lock()
 
 
 def _init_channels():
@@ -231,6 +236,31 @@ def _init_gitlab():
                 _gitlab_commits[repo_name] = []
 
 
+def _init_tickets():
+    """Initialize tickets storage and load tickets from disk."""
+    init_tickets_storage()
+    with _tickets_lock:
+        _tickets.clear()
+        index = load_tickets_index()
+        _tickets.update(index)
+
+
+def _broadcast_tickets_event(action: str, data: dict):
+    """Send a tickets_event through the existing SSE subscribers."""
+    payload = {"type": "tickets_event", "action": action}
+    payload.update(data)
+    raw = json.dumps(payload)
+    with _sub_lock:
+        dead = []
+        for q in _subscribers:
+            try:
+                q.put_nowait(raw)
+            except queue.Full:
+                dead.append(q)
+        for q in dead:
+            _subscribers.remove(q)
+
+
 # -- Web UI HTML --
 
 WEB_UI = """<!DOCTYPE html>
@@ -326,6 +356,7 @@ WEB_UI = """<!DOCTYPE html>
   .msg-cfo .sender { color: #3498db; }
   .msg-marketing .sender { color: #e056a0; }
   .msg-devops .sender { color: #00bcd4; }
+  .msg-projmgr .sender { color: #26c6da; }
   .msg-default .sender { color: #95a5a6; }
 
   /* -- Input area -- */
@@ -434,6 +465,112 @@ WEB_UI = """<!DOCTYPE html>
   .commit-item-id { font-family: monospace; font-size: 12px; color: #4fc3f7; margin-right: 8px; }
   .commit-item-msg { font-size: 14px; color: #e0e0e0; }
   .commit-item-meta { font-size: 12px; color: #666; margin-top: 4px; }
+
+  /* -- Tickets tab -- */
+  #tickets-pane { padding: 0; flex-direction: row; }
+  #tickets-sidebar { width: 200px; min-width: 200px; background: #121a30; border-right: 1px solid #0f3460;
+                     display: flex; flex-direction: column; overflow-y: auto; padding: 8px 0; }
+  .tickets-sidebar-section { font-size: 11px; font-weight: 700; text-transform: uppercase;
+                             letter-spacing: 1px; color: #555; padding: 10px 14px 4px; }
+  .tickets-filter-btn { display: flex; align-items: center; gap: 6px; width: 100%; text-align: left;
+                        background: transparent; border: none; color: #999; padding: 5px 14px;
+                        font-size: 13px; cursor: pointer; transition: all 0.1s ease; }
+  .tickets-filter-btn:hover { background: #1a1a3e; color: #e0e0e0; }
+  .tickets-filter-btn.active { background: #1a1a3e; color: #fff; font-weight: 700; }
+  .tickets-filter-btn .tk-count { margin-left: auto; font-size: 11px; color: #666; }
+  #tickets-main { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
+  #tickets-header { padding: 12px 20px; border-bottom: 1px solid #0f3460; background: #16213e;
+                    font-size: 15px; font-weight: 700; color: #e0e0e0; }
+  #tickets-list { flex: 1; overflow-y: auto; padding: 16px 20px; }
+  #tickets-empty { color: #555; font-size: 14px; text-align: center; padding: 40px 20px; }
+  .ticket-card { background: #1a1a2e; border: 1px solid #333; border-radius: 8px; padding: 12px 16px;
+                 margin-bottom: 8px; cursor: pointer; transition: border-color 0.15s ease; }
+  .ticket-card:hover { border-color: #e94560; }
+  .ticket-card-top { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+  .ticket-card-id { font-family: monospace; font-size: 11px; color: #888; }
+  .ticket-card-title { font-size: 14px; font-weight: 700; color: #e0e0e0; flex: 1; }
+  .ticket-card-bottom { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .tk-badge { font-size: 11px; padding: 2px 8px; border-radius: 4px; font-weight: 600; }
+  .tk-status-open { background: #1b5e20; color: #a5d6a7; }
+  .tk-status-in_progress { background: #0d47a1; color: #90caf9; }
+  .tk-status-resolved { background: #4a148c; color: #ce93d8; }
+  .tk-status-closed { background: #333; color: #888; }
+  .tk-priority-low { background: #263238; color: #78909c; }
+  .tk-priority-medium { background: #33691e; color: #aed581; }
+  .tk-priority-high { background: #e65100; color: #ffcc80; }
+  .tk-priority-critical { background: #b71c1c; color: #ef9a9a; }
+  .tk-assignee { font-size: 11px; color: #4fc3f7; margin-left: auto; }
+  #ticket-detail { display: none; flex-direction: column; flex: 1; overflow: hidden; }
+  #ticket-detail.open { display: flex; }
+  #ticket-detail-header { padding: 12px 20px; border-bottom: 1px solid #0f3460; background: #16213e;
+                          display: flex; align-items: center; gap: 10px; }
+  #ticket-back-btn { background: transparent; border: 1px solid #333; color: #888; padding: 6px 12px;
+                     border-radius: 6px; cursor: pointer; font-size: 13px; }
+  #ticket-back-btn:hover { border-color: #e94560; color: #e94560; }
+  #ticket-detail-title { font-size: 16px; font-weight: 700; color: #e0e0e0; }
+  #ticket-detail-id { font-family: monospace; font-size: 12px; color: #888; margin-left: 8px; }
+  #ticket-detail-content { flex: 1; overflow-y: auto; padding: 20px; font-size: 14px;
+                           color: #e0e0e0; line-height: 1.7; }
+  .tk-detail-meta { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+  .tk-detail-field { font-size: 13px; color: #888; }
+  .tk-detail-field strong { color: #e0e0e0; }
+  .tk-detail-desc { background: #111; border: 1px solid #333; border-radius: 6px; padding: 12px;
+                    margin-bottom: 16px; white-space: pre-wrap; word-break: break-word; }
+  .tk-detail-deps { margin-bottom: 16px; font-size: 13px; }
+  .tk-detail-deps span { color: #4fc3f7; font-family: monospace; cursor: pointer; }
+  .tk-comments-header { font-size: 14px; font-weight: 700; color: #e0e0e0; margin-bottom: 8px;
+                        border-bottom: 1px solid #333; padding-bottom: 4px; }
+  .tk-comment { background: #111; border-left: 3px solid #0f3460; padding: 8px 12px; margin-bottom: 8px;
+                border-radius: 0 6px 6px 0; }
+  .tk-comment-author { font-size: 12px; font-weight: 700; color: #4fc3f7; }
+  .tk-comment-time { font-size: 11px; color: #666; margin-left: 8px; }
+  .tk-comment-text { font-size: 13px; color: #e0e0e0; margin-top: 4px; }
+  #tk-create-btn { background: #e94560; color: #fff; border: none; padding: 6px 14px; border-radius: 6px;
+                   cursor: pointer; font-size: 12px; font-weight: 600; margin-left: auto; }
+  #tk-create-btn:hover { background: #c0392b; }
+  #tk-create-form { display: none; background: #1a1a2e; border: 1px solid #333; border-radius: 8px;
+                    padding: 16px; margin-bottom: 12px; }
+  #tk-create-form.open { display: block; }
+  .tk-form-row { display: flex; gap: 10px; margin-bottom: 10px; align-items: center; }
+  .tk-form-row label { font-size: 12px; color: #888; min-width: 70px; }
+  .tk-form-input { flex: 1; background: #111; color: #e0e0e0; border: 1px solid #333; padding: 6px 10px;
+                   border-radius: 6px; font-size: 13px; outline: none; }
+  .tk-form-input:focus { border-color: #e94560; }
+  .tk-form-select { background: #111; color: #e0e0e0; border: 1px solid #333; padding: 6px 10px;
+                    border-radius: 6px; font-size: 13px; outline: none; }
+  .tk-form-textarea { flex: 1; background: #111; color: #e0e0e0; border: 1px solid #333; padding: 6px 10px;
+                      border-radius: 6px; font-size: 13px; outline: none; resize: vertical; min-height: 60px;
+                      font-family: inherit; }
+  .tk-form-textarea:focus { border-color: #e94560; }
+  .tk-form-actions { display: flex; gap: 8px; justify-content: flex-end; }
+  .tk-form-submit { background: #e94560; color: #fff; border: none; padding: 6px 16px; border-radius: 6px;
+                    cursor: pointer; font-size: 12px; font-weight: 600; }
+  .tk-form-submit:hover { background: #c0392b; }
+  .tk-form-cancel { background: transparent; color: #888; border: 1px solid #333; padding: 6px 16px;
+                    border-radius: 6px; cursor: pointer; font-size: 12px; }
+  .tk-form-cancel:hover { border-color: #e94560; color: #e94560; }
+  .tk-detail-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px;
+                       padding-bottom: 12px; border-bottom: 1px solid #333; }
+  .tk-action-btn { background: transparent; border: 1px solid #333; color: #e0e0e0; padding: 5px 12px;
+                   border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 600; }
+  .tk-action-btn:hover { border-color: #e94560; color: #e94560; }
+  .tk-action-btn.primary { background: #0d47a1; border-color: #0d47a1; color: #90caf9; }
+  .tk-action-btn.primary:hover { background: #1565c0; }
+  .tk-action-btn.danger { border-color: #b71c1c; color: #ef9a9a; }
+  .tk-action-btn.danger:hover { background: #b71c1c; color: #fff; }
+  .tk-action-btn.success { border-color: #1b5e20; color: #a5d6a7; }
+  .tk-action-btn.success:hover { background: #1b5e20; color: #fff; }
+  .tk-assign-row { display: flex; gap: 8px; align-items: center; }
+  .tk-assign-select { background: #111; color: #e0e0e0; border: 1px solid #333; padding: 4px 8px;
+                      border-radius: 6px; font-size: 12px; }
+  .tk-comment-input-area { display: flex; gap: 8px; margin-top: 12px; align-items: flex-start; }
+  .tk-comment-input { flex: 1; background: #111; color: #e0e0e0; border: 1px solid #333; padding: 8px 10px;
+                      border-radius: 6px; font-size: 13px; outline: none; resize: vertical; min-height: 36px;
+                      font-family: inherit; }
+  .tk-comment-input:focus { border-color: #e94560; }
+  .tk-comment-submit { background: #e94560; color: #fff; border: none; padding: 8px 14px; border-radius: 6px;
+                       cursor: pointer; font-size: 12px; font-weight: 600; align-self: flex-end; }
+  .tk-comment-submit:hover { background: #c0392b; }
 </style>
 </head>
 <body>
@@ -442,6 +579,7 @@ WEB_UI = """<!DOCTYPE html>
   <button class="header-tab active" data-tab="chat">Chat</button>
   <button class="header-tab" data-tab="docs">Docs</button>
   <button class="header-tab" data-tab="gitlab">GitLab</button>
+  <button class="header-tab" data-tab="tickets">Tickets</button>
 </div>
 <div id="main-layout">
   <!-- Chat tab: sidebar + chat area -->
@@ -522,6 +660,112 @@ WEB_UI = """<!DOCTYPE html>
       </div>
     </div>
   </div>
+  <!-- Tickets tab -->
+  <div id="tickets-pane" class="tab-pane">
+    <div id="tickets-sidebar">
+      <div class="tickets-sidebar-section">Status Filter</div>
+      <button class="tickets-filter-btn active" data-status="" id="tk-filter-all">All <span class="tk-count" id="tk-count-all"></span></button>
+      <button class="tickets-filter-btn" data-status="open">Open <span class="tk-count" id="tk-count-open"></span></button>
+      <button class="tickets-filter-btn" data-status="in_progress">In Progress <span class="tk-count" id="tk-count-in_progress"></span></button>
+      <button class="tickets-filter-btn" data-status="resolved">Resolved <span class="tk-count" id="tk-count-resolved"></span></button>
+      <button class="tickets-filter-btn" data-status="closed">Closed <span class="tk-count" id="tk-count-closed"></span></button>
+    </div>
+    <div id="tickets-main">
+      <div id="tickets-header" style="display:flex;align-items:center;">
+        <span>Tickets</span>
+        <button id="tk-create-btn" onclick="toggleCreateForm()">+ New Ticket</button>
+      </div>
+      <div id="tickets-list">
+        <div id="tk-create-form">
+          <div class="tk-form-row">
+            <label>Title</label>
+            <input class="tk-form-input" id="tk-form-title" placeholder="Ticket title" />
+          </div>
+          <div class="tk-form-row">
+            <label>Priority</label>
+            <select class="tk-form-select" id="tk-form-priority">
+              <option value="low">Low</option>
+              <option value="medium" selected>Medium</option>
+              <option value="high">High</option>
+              <option value="critical">Critical</option>
+            </select>
+            <label style="margin-left:12px;">Assignee</label>
+            <select class="tk-form-select" id="tk-form-assignee">
+              <option value="">Unassigned</option>
+              <option value="Sarah (PM)">Sarah (PM)</option>
+              <option value="Marcus (Eng Manager)">Marcus (Eng Manager)</option>
+              <option value="Priya (Architect)">Priya (Architect)</option>
+              <option value="Alex (Senior Eng)">Alex (Senior Eng)</option>
+              <option value="Jordan (Support Eng)">Jordan (Support Eng)</option>
+              <option value="Taylor (Sales Eng)">Taylor (Sales Eng)</option>
+              <option value="Dana (CEO)">Dana (CEO)</option>
+              <option value="Morgan (CFO)">Morgan (CFO)</option>
+              <option value="Riley (Marketing)">Riley (Marketing)</option>
+              <option value="Casey (DevOps)">Casey (DevOps)</option>
+              <option value="Nadia (Project Mgr)">Nadia (Project Mgr)</option>
+            </select>
+          </div>
+          <div class="tk-form-row">
+            <label>Created by</label>
+            <select class="tk-form-select" id="tk-form-author">
+              <option value="Consultant" selected>Consultant</option>
+              <option value="Customer">Customer</option>
+              <option value="Sarah (PM)">Sarah (PM)</option>
+              <option value="Marcus (Eng Manager)">Marcus (Eng Manager)</option>
+              <option value="Priya (Architect)">Priya (Architect)</option>
+              <option value="Alex (Senior Eng)">Alex (Senior Eng)</option>
+              <option value="Jordan (Support Eng)">Jordan (Support Eng)</option>
+              <option value="Taylor (Sales Eng)">Taylor (Sales Eng)</option>
+              <option value="Dana (CEO)">Dana (CEO)</option>
+              <option value="Morgan (CFO)">Morgan (CFO)</option>
+              <option value="Riley (Marketing)">Riley (Marketing)</option>
+              <option value="Casey (DevOps)">Casey (DevOps)</option>
+              <option value="Nadia (Project Mgr)">Nadia (Project Mgr)</option>
+              <option value="Board Member">Board Member</option>
+              <option value="Investor">Investor</option>
+              <option value="God">God</option>
+            </select>
+          </div>
+          <div class="tk-form-row">
+            <label>Description</label>
+            <textarea class="tk-form-textarea" id="tk-form-desc" placeholder="Describe the work to be done..."></textarea>
+          </div>
+          <div class="tk-form-actions">
+            <button class="tk-form-cancel" onclick="toggleCreateForm()">Cancel</button>
+            <button class="tk-form-submit" onclick="submitCreateTicket()">Create Ticket</button>
+          </div>
+        </div>
+        <div id="tickets-empty">No tickets yet.</div>
+      </div>
+      <div id="ticket-detail">
+        <div id="ticket-detail-header">
+          <button id="ticket-back-btn">Back</button>
+          <span id="ticket-detail-title"></span>
+          <span id="ticket-detail-id"></span>
+          <span style="margin-left:auto;font-size:12px;color:#888;">Acting as</span>
+          <select class="tk-form-select" id="tk-acting-as" style="font-size:12px;">
+            <option value="Consultant" selected>Consultant</option>
+            <option value="Customer">Customer</option>
+            <option value="Sarah (PM)">Sarah (PM)</option>
+            <option value="Marcus (Eng Manager)">Marcus (Eng Manager)</option>
+            <option value="Priya (Architect)">Priya (Architect)</option>
+            <option value="Alex (Senior Eng)">Alex (Senior Eng)</option>
+            <option value="Jordan (Support Eng)">Jordan (Support Eng)</option>
+            <option value="Taylor (Sales Eng)">Taylor (Sales Eng)</option>
+            <option value="Dana (CEO)">Dana (CEO)</option>
+            <option value="Morgan (CFO)">Morgan (CFO)</option>
+            <option value="Riley (Marketing)">Riley (Marketing)</option>
+            <option value="Casey (DevOps)">Casey (DevOps)</option>
+            <option value="Nadia (Project Mgr)">Nadia (Project Mgr)</option>
+            <option value="Board Member">Board Member</option>
+            <option value="Investor">Investor</option>
+            <option value="God">God</option>
+          </select>
+        </div>
+        <div id="ticket-detail-content"></div>
+      </div>
+    </div>
+  </div>
 </div>
 <script>
 const messagesPanel = document.getElementById('messages-panel');
@@ -550,6 +794,7 @@ const SENDER_CLASS_MAP = {
   'Morgan (CFO)': 'msg-cfo',
   'Riley (Marketing)': 'msg-marketing',
   'Casey (DevOps)': 'msg-devops',
+  'Nadia (Project Mgr)': 'msg-projmgr',
 };
 
 const PERSONA_DISPLAY = {
@@ -557,6 +802,7 @@ const PERSONA_DISPLAY = {
   'senior': 'Alex', 'support': 'Jordan', 'sales': 'Taylor',
   'ceo': 'Dana', 'cfo': 'Morgan',
   'marketing': 'Riley', 'devops': 'Casey',
+  'projmgr': 'Nadia',
 };
 
 const HUMAN_CLASS_MAP = {
@@ -598,6 +844,7 @@ document.querySelectorAll('.header-tab').forEach(tab => {
     document.getElementById(target + '-pane').classList.add('active');
     if (target === 'docs') loadDocs();
     if (target === 'gitlab') loadRepos();
+    if (target === 'tickets') loadTickets();
   });
 });
 
@@ -741,6 +988,11 @@ function connectSSE() {
       if (currentTab === 'docs') loadDocs();
     } else if (data.type === 'gitlab_event') {
       if (currentTab === 'gitlab') loadRepos();
+    } else if (data.type === 'tickets_event') {
+      if (currentTab === 'tickets') {
+        loadTickets();
+        if (tkCurrentViewId) viewTicket(tkCurrentViewId);
+      }
     } else {
       addMessage(data);
     }
@@ -1041,6 +1293,240 @@ function renderCommits(commits) {
   content.innerHTML = html;
 }
 
+// -- Tickets tab --
+let tkAllTickets = [];
+let tkStatusFilter = '';
+
+document.querySelectorAll('.tickets-filter-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    tkStatusFilter = btn.dataset.status;
+    document.querySelectorAll('.tickets-filter-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    renderTicketList();
+  });
+});
+
+async function loadTickets() {
+  const resp = await fetch('/api/tickets');
+  tkAllTickets = await resp.json();
+  updateTicketCounts();
+  renderTicketList();
+}
+
+function updateTicketCounts() {
+  const counts = { all: tkAllTickets.length, open: 0, in_progress: 0, resolved: 0, closed: 0 };
+  tkAllTickets.forEach(t => { if (counts[t.status] !== undefined) counts[t.status]++; });
+  ['all', 'open', 'in_progress', 'resolved', 'closed'].forEach(s => {
+    const el = document.getElementById('tk-count-' + s);
+    if (el) el.textContent = counts[s] > 0 ? '(' + counts[s] + ')' : '';
+  });
+}
+
+function renderTicketList() {
+  const list = document.getElementById('tickets-list');
+  list.querySelectorAll('.ticket-card').forEach(el => el.remove());
+  const empty = document.getElementById('tickets-empty');
+  const detail = document.getElementById('ticket-detail');
+  detail.classList.remove('open');
+  list.style.display = '';
+
+  let filtered = tkAllTickets;
+  if (tkStatusFilter) filtered = filtered.filter(t => t.status === tkStatusFilter);
+
+  // Sort: critical > high > medium > low, then by updated_at desc
+  const priOrder = { critical: 0, high: 1, medium: 2, low: 3 };
+  filtered.sort((a, b) => (priOrder[a.priority] || 3) - (priOrder[b.priority] || 3) || b.updated_at - a.updated_at);
+
+  empty.style.display = filtered.length ? 'none' : 'block';
+  filtered.forEach(t => {
+    const card = document.createElement('div');
+    card.className = 'ticket-card';
+    const assignee = t.assignee ? t.assignee : 'Unassigned';
+    card.innerHTML = '<div class="ticket-card-top">'
+      + '<span class="ticket-card-id">' + escapeHtml(t.id) + '</span>'
+      + '<span class="ticket-card-title">' + escapeHtml(t.title) + '</span>'
+      + '</div>'
+      + '<div class="ticket-card-bottom">'
+      + '<span class="tk-badge tk-status-' + t.status + '">' + escapeHtml(t.status) + '</span>'
+      + '<span class="tk-badge tk-priority-' + t.priority + '">' + escapeHtml(t.priority) + '</span>'
+      + '<span class="tk-assignee">' + escapeHtml(assignee) + '</span>'
+      + '</div>';
+    card.addEventListener('click', () => viewTicket(t.id));
+    list.appendChild(card);
+  });
+}
+
+let tkCurrentViewId = null;
+
+const TK_ASSIGNEE_OPTIONS = [
+  '', 'Sarah (PM)', 'Marcus (Eng Manager)', 'Priya (Architect)', 'Alex (Senior Eng)',
+  'Jordan (Support Eng)', 'Taylor (Sales Eng)', 'Dana (CEO)', 'Morgan (CFO)',
+  'Riley (Marketing)', 'Casey (DevOps)', 'Nadia (Project Mgr)',
+];
+
+function toggleCreateForm() {
+  const form = document.getElementById('tk-create-form');
+  form.classList.toggle('open');
+  if (form.classList.contains('open')) {
+    document.getElementById('tk-form-title').focus();
+  }
+}
+
+async function submitCreateTicket() {
+  const title = document.getElementById('tk-form-title').value.trim();
+  if (!title) { document.getElementById('tk-form-title').focus(); return; }
+  const priority = document.getElementById('tk-form-priority').value;
+  const assignee = document.getElementById('tk-form-assignee').value;
+  const description = document.getElementById('tk-form-desc').value.trim();
+  const author = document.getElementById('tk-form-author').value;
+  await fetch('/api/tickets', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ title, description, priority, assignee, author }),
+  });
+  document.getElementById('tk-form-title').value = '';
+  document.getElementById('tk-form-desc').value = '';
+  document.getElementById('tk-form-priority').value = 'medium';
+  document.getElementById('tk-form-assignee').value = '';
+  document.getElementById('tk-create-form').classList.remove('open');
+  loadTickets();
+}
+
+function tkActingAs() {
+  const sel = document.getElementById('tk-acting-as');
+  return sel ? sel.value : 'Consultant';
+}
+
+async function tkUpdateStatus(ticketId, newStatus) {
+  await fetch('/api/tickets/' + encodeURIComponent(ticketId), {
+    method: 'PUT',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ status: newStatus, author: tkActingAs() }),
+  });
+  loadTickets();
+  viewTicket(ticketId);
+}
+
+async function tkAssign(ticketId) {
+  const sel = document.getElementById('tk-assign-select');
+  if (!sel) return;
+  await fetch('/api/tickets/' + encodeURIComponent(ticketId), {
+    method: 'PUT',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ assignee: sel.value, author: tkActingAs() }),
+  });
+  loadTickets();
+  viewTicket(ticketId);
+}
+
+async function tkAddComment(ticketId) {
+  const input = document.getElementById('tk-comment-new');
+  if (!input) return;
+  const text = input.value.trim();
+  if (!text) { input.focus(); return; }
+  await fetch('/api/tickets/' + encodeURIComponent(ticketId) + '/comment', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ text, author: tkActingAs() }),
+  });
+  input.value = '';
+  viewTicket(ticketId);
+}
+
+async function viewTicket(ticketId) {
+  const resp = await fetch('/api/tickets/' + encodeURIComponent(ticketId));
+  if (!resp.ok) return;
+  const t = await resp.json();
+  tkCurrentViewId = t.id;
+  document.getElementById('ticket-detail-title').textContent = t.title;
+  document.getElementById('ticket-detail-id').textContent = t.id;
+
+  let html = '';
+
+  // -- Action buttons --
+  html += '<div class="tk-detail-actions">';
+  if (t.status === 'open') {
+    html += '<button class="tk-action-btn primary" onclick="tkUpdateStatus(\\'' + t.id + '\\', \\'in_progress\\')">Start Work</button>';
+    html += '<button class="tk-action-btn success" onclick="tkUpdateStatus(\\'' + t.id + '\\', \\'resolved\\')">Resolve</button>';
+    html += '<button class="tk-action-btn danger" onclick="tkUpdateStatus(\\'' + t.id + '\\', \\'closed\\')">Close</button>';
+  } else if (t.status === 'in_progress') {
+    html += '<button class="tk-action-btn success" onclick="tkUpdateStatus(\\'' + t.id + '\\', \\'resolved\\')">Resolve</button>';
+    html += '<button class="tk-action-btn" onclick="tkUpdateStatus(\\'' + t.id + '\\', \\'open\\')">Reopen</button>';
+    html += '<button class="tk-action-btn danger" onclick="tkUpdateStatus(\\'' + t.id + '\\', \\'closed\\')">Close</button>';
+  } else if (t.status === 'resolved') {
+    html += '<button class="tk-action-btn" onclick="tkUpdateStatus(\\'' + t.id + '\\', \\'open\\')">Reopen</button>';
+    html += '<button class="tk-action-btn danger" onclick="tkUpdateStatus(\\'' + t.id + '\\', \\'closed\\')">Close</button>';
+  } else if (t.status === 'closed') {
+    html += '<button class="tk-action-btn" onclick="tkUpdateStatus(\\'' + t.id + '\\', \\'open\\')">Reopen</button>';
+  }
+  // Assign dropdown
+  html += '<div class="tk-assign-row" style="margin-left:auto;">';
+  html += '<select class="tk-assign-select" id="tk-assign-select">';
+  TK_ASSIGNEE_OPTIONS.forEach(name => {
+    const label = name || 'Unassigned';
+    const sel = name === (t.assignee || '') ? ' selected' : '';
+    html += '<option value="' + escapeHtml(name) + '"' + sel + '>' + escapeHtml(label) + '</option>';
+  });
+  html += '</select>';
+  html += '<button class="tk-action-btn" onclick="tkAssign(\\'' + t.id + '\\')">Assign</button>';
+  html += '</div>';
+  html += '</div>';
+
+  // -- Meta info --
+  html += '<div class="tk-detail-meta">';
+  html += '<span class="tk-detail-field"><strong>Status:</strong> <span class="tk-badge tk-status-' + t.status + '">' + escapeHtml(t.status) + '</span></span>';
+  html += '<span class="tk-detail-field"><strong>Priority:</strong> <span class="tk-badge tk-priority-' + t.priority + '">' + escapeHtml(t.priority) + '</span></span>';
+  html += '<span class="tk-detail-field"><strong>Assignee:</strong> ' + escapeHtml(t.assignee || 'Unassigned') + '</span>';
+  html += '<span class="tk-detail-field"><strong>Created by:</strong> ' + escapeHtml(t.created_by) + '</span>';
+  const created = new Date(t.created_at * 1000).toLocaleString();
+  const updated = new Date(t.updated_at * 1000).toLocaleString();
+  html += '<span class="tk-detail-field"><strong>Created:</strong> ' + created + '</span>';
+  html += '<span class="tk-detail-field"><strong>Updated:</strong> ' + updated + '</span>';
+  html += '</div>';
+
+  if (t.description) {
+    html += '<div class="tk-detail-desc">' + escapeHtml(t.description) + '</div>';
+  }
+
+  if (t.blocked_by && t.blocked_by.length > 0) {
+    html += '<div class="tk-detail-deps"><strong>Blocked by:</strong> ';
+    html += t.blocked_by.map(id => '<span onclick="viewTicket(\\'' + escapeHtml(id) + '\\')">' + escapeHtml(id) + '</span>').join(', ');
+    html += '</div>';
+  }
+  if (t.blocks && t.blocks.length > 0) {
+    html += '<div class="tk-detail-deps"><strong>Blocks:</strong> ';
+    html += t.blocks.map(id => '<span onclick="viewTicket(\\'' + escapeHtml(id) + '\\')">' + escapeHtml(id) + '</span>').join(', ');
+    html += '</div>';
+  }
+
+  // -- Comments --
+  const comments = t.comments || [];
+  html += '<div class="tk-comments-header">Comments (' + comments.length + ')</div>';
+  comments.forEach(c => {
+    const ctime = new Date(c.timestamp * 1000).toLocaleString();
+    html += '<div class="tk-comment">'
+      + '<span class="tk-comment-author">' + escapeHtml(c.author) + '</span>'
+      + '<span class="tk-comment-time">' + ctime + '</span>'
+      + '<div class="tk-comment-text">' + escapeHtml(c.text) + '</div></div>';
+  });
+
+  // -- Comment input --
+  html += '<div class="tk-comment-input-area">';
+  html += '<textarea class="tk-comment-input" id="tk-comment-new" placeholder="Add a comment..."></textarea>';
+  html += '<button class="tk-comment-submit" onclick="tkAddComment(\\'' + t.id + '\\')">Comment</button>';
+  html += '</div>';
+
+  document.getElementById('ticket-detail-content').innerHTML = html;
+  document.getElementById('ticket-detail').classList.add('open');
+  document.getElementById('tickets-list').style.display = 'none';
+}
+
+document.getElementById('ticket-back-btn').addEventListener('click', () => {
+  document.getElementById('ticket-detail').classList.remove('open');
+  document.getElementById('tickets-list').style.display = '';
+  tkCurrentViewId = null;
+});
+
 // -- Init --
 loadChannels().then(() => {
   updateChannelHeader();
@@ -1050,6 +1536,7 @@ loadChannels().then(() => {
 });
 loadFolders();
 loadRepos();
+loadTickets();
 </script>
 </body>
 </html>"""
@@ -1078,6 +1565,9 @@ def create_app() -> Flask:
 
     _init_gitlab()
     print(f"GitLab storage ready: {GITLAB_DIR}  ({len(_gitlab_repos)} existing repos)")
+
+    _init_tickets()
+    print(f"Tickets storage ready: {TICKETS_DIR}  ({len(_tickets)} existing tickets)")
 
     @app.route("/")
     def index():
@@ -1536,6 +2026,159 @@ def create_app() -> Flask:
         # Return newest first
         commits.reverse()
         return jsonify(commits)
+
+    # -- Tickets API --
+
+    @app.route("/api/tickets", methods=["GET"])
+    def list_tickets():
+        status_filter = request.args.get("status")
+        assignee_filter = request.args.get("assignee")
+        with _tickets_lock:
+            tickets = list(_tickets.values())
+        if status_filter:
+            tickets = [t for t in tickets if t.get("status") == status_filter]
+        if assignee_filter:
+            tickets = [t for t in tickets if t.get("assignee") == assignee_filter]
+        return jsonify(tickets)
+
+    @app.route("/api/tickets", methods=["POST"])
+    def create_ticket():
+        data = request.get_json(force=True)
+        title = data.get("title", "").strip()
+        description = data.get("description", "")
+        priority = data.get("priority", "medium").strip()
+        assignee = data.get("assignee", "").strip()
+        author = data.get("author", "unknown").strip()
+        blocked_by = data.get("blocked_by", [])
+        if not title:
+            return jsonify({"error": "title required"}), 400
+        if priority not in ("low", "medium", "high", "critical"):
+            return jsonify({"error": "priority must be low/medium/high/critical"}), 400
+
+        now = time.time()
+        ticket_id = generate_ticket_id(title, now)
+
+        with _tickets_lock:
+            if ticket_id in _tickets:
+                # Unlikely collision — append a char
+                ticket_id = ticket_id + "X"
+
+            ticket = {
+                "id": ticket_id,
+                "title": title,
+                "description": description,
+                "status": "open",
+                "priority": priority,
+                "assignee": assignee,
+                "created_by": author,
+                "created_at": now,
+                "updated_at": now,
+                "comments": [],
+                "blocked_by": [],
+                "blocks": [],
+            }
+
+            # Set up dependencies
+            if blocked_by:
+                if isinstance(blocked_by, str):
+                    blocked_by = [b.strip() for b in blocked_by.split(",") if b.strip()]
+                for dep_id in blocked_by:
+                    if dep_id in _tickets:
+                        ticket["blocked_by"].append(dep_id)
+                        if ticket_id not in _tickets[dep_id].get("blocks", []):
+                            _tickets[dep_id].setdefault("blocks", []).append(ticket_id)
+
+            _tickets[ticket_id] = ticket
+            save_tickets_index(dict(_tickets))
+
+        _broadcast_tickets_event("created", ticket)
+        return jsonify(ticket), 201
+
+    @app.route("/api/tickets/<ticket_id>", methods=["GET"])
+    def get_ticket(ticket_id):
+        with _tickets_lock:
+            ticket = _tickets.get(ticket_id)
+        if ticket is None:
+            return jsonify({"error": "ticket not found"}), 404
+        return jsonify(ticket)
+
+    @app.route("/api/tickets/<ticket_id>", methods=["PUT"])
+    def update_ticket(ticket_id):
+        data = request.get_json(force=True)
+        with _tickets_lock:
+            ticket = _tickets.get(ticket_id)
+            if ticket is None:
+                return jsonify({"error": "ticket not found"}), 404
+
+            if "status" in data:
+                status = data["status"].strip()
+                if status not in ("open", "in_progress", "resolved", "closed"):
+                    return jsonify({"error": "invalid status"}), 400
+                ticket["status"] = status
+            if "assignee" in data:
+                ticket["assignee"] = data["assignee"].strip()
+            if "priority" in data:
+                priority = data["priority"].strip()
+                if priority in ("low", "medium", "high", "critical"):
+                    ticket["priority"] = priority
+
+            ticket["updated_at"] = time.time()
+            save_tickets_index(dict(_tickets))
+
+        _broadcast_tickets_event("updated", ticket)
+        return jsonify(ticket)
+
+    @app.route("/api/tickets/<ticket_id>/comment", methods=["POST"])
+    def comment_ticket(ticket_id):
+        data = request.get_json(force=True)
+        text = data.get("text", "").strip()
+        author = data.get("author", "unknown").strip()
+        if not text:
+            return jsonify({"error": "text required"}), 400
+
+        with _tickets_lock:
+            ticket = _tickets.get(ticket_id)
+            if ticket is None:
+                return jsonify({"error": "ticket not found"}), 404
+
+            comment = {
+                "author": author,
+                "text": text,
+                "timestamp": time.time(),
+            }
+            ticket.setdefault("comments", []).append(comment)
+            ticket["updated_at"] = time.time()
+            save_tickets_index(dict(_tickets))
+
+        _broadcast_tickets_event("commented", {"ticket_id": ticket_id, "comment": comment})
+        return jsonify(ticket), 201
+
+    @app.route("/api/tickets/<ticket_id>/depends", methods=["POST"])
+    def ticket_depends(ticket_id):
+        data = request.get_json(force=True)
+        blocked_by = data.get("blocked_by", "").strip()
+        if not blocked_by:
+            return jsonify({"error": "blocked_by required"}), 400
+
+        with _tickets_lock:
+            ticket = _tickets.get(ticket_id)
+            if ticket is None:
+                return jsonify({"error": "ticket not found"}), 404
+
+            dep_ids = [b.strip() for b in blocked_by.split(",") if b.strip()]
+            for dep_id in dep_ids:
+                if dep_id not in _tickets:
+                    continue
+                if dep_id not in ticket.get("blocked_by", []):
+                    ticket.setdefault("blocked_by", []).append(dep_id)
+                if ticket_id not in _tickets[dep_id].get("blocks", []):
+                    _tickets[dep_id].setdefault("blocks", []).append(ticket_id)
+
+            ticket["updated_at"] = time.time()
+            save_tickets_index(dict(_tickets))
+
+        _broadcast_tickets_event("depends_updated", ticket)
+        return jsonify(ticket)
 
     return app
 
