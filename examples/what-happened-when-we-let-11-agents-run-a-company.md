@@ -1,6 +1,6 @@
 # What Happened When We Let 11 AI Agents Run a Company
 
-*A multi-agent simulation that went from "find a market" to production-ready code, validated customers, and a board-approved business plan — with no human writing a single line of product code.*
+*A multi-agent simulation that went from "find a market" to production-ready code, validated customers, and a board-approved business plan — with a human playing board member and consultant, but no human writing a single line of product code.*
 
 ---
 
@@ -12,7 +12,9 @@ The personas aren't just chatbots replying in sequence. They operate in a tiered
 
 They share a document workspace (like Google Docs), a mock GitLab for code hosting, and a ticket system for tracking work. Every artifact they create persists — documents, code commits, tickets with dependencies and comments.
 
-Then we told a board member to walk in and say: *"Find a commercial market and develop a business plan."*
+The human operator plays two roles: a **Board Member** who sets direction and checks progress, and a **Consultant** who can nudge the team, unblock stalls, and participate in work like prospect calls. Neither role writes code or creates product documents — but both are present in the channels, and the team responds to them.
+
+We started by having the Board Member walk in and say: *"Find a commercial market and develop a business plan. We're not prescriptive on the product, but we're in silicon valley so we should focus on something tech related and use our employees' talents."*
 
 Here's what happened.
 
@@ -24,17 +26,23 @@ The CEO, Dana, immediately took ownership and started coordinating. Sarah (PM) w
 
 Sarah came back with three options, each scored on market attractiveness and execution risk:
 
-1. **AI/LLM Infrastructure** — 7/10 market, 3/10 execution. High potential but the team would be learning as they build.
-2. **API Infrastructure for AI Workloads** — 7/10 market, 9/10 execution. The team already knows how to build this. Zero execution risk.
+1. **AI/LLM Infrastructure** — 7/10 market, 3/10 execution. Hottest market, but the team lacks ML engineering expertise and a 60-day MVP would be demo-ware.
+2. **API Infrastructure** — 7/10 market, 9/10 execution. The team already knows how to build this. Zero execution risk. But it's a mature, crowded category.
 3. **DevSecOps Tooling** — 6/10 on both. Crowded market, no clear edge.
 
-The recommendation was Option 2: an AI API infrastructure platform that handles rate limiting, cost tracking, and budget enforcement for companies running LLM workloads. The pitch crystallized fast — *"Your LLM API bill just hit $200K this month. Your API gateway has no idea why."*
+The team was stuck in a genuine tension. Engineering unanimously said API infrastructure was the only thing they could ship production-ready in 60 days. But the AI market was white-hot — Taylor was seeing two-week evaluation cycles and six-figure contracts. Riley warned that "API management" was a mature category with established players. Casey pointed out that shipping unreliable AI infrastructure would be a reputation killer. Morgan quantified the trade-off: $1.5M downside risk from shipping bad AI infra vs. $5M+ opportunity cost of missing the AI wave entirely.
 
-Meanwhile, Taylor (Sales Engineer) was already validating the market. He identified 8 qualified prospects with $300K-$500K annual budgets for AI cost control. The urgency signals were strong — these companies were bleeding money on LLM API calls with no visibility or control.
+Then the Consultant dropped a one-line suggestion in #leadership:
 
-Morgan (CFO) built a 12-month revenue model: $1.43M ARR in Year 1, break-even at Month 18-20, with a $1.6M net burn funded by the existing runway. Dana wrote the business plan and got it approved.
+> *"perhaps i might offer a suggestion: you could do ai/llm adjacent api infrastructure. api gateways, throttling, rate limiting .. etc"*
 
-All of this happened through chat messages, shared documents, and tickets — no human intervention beyond the initial prompt.
+Morgan immediately saw it: *"The Consultant's suggestion changes the economics. API infrastructure for AI workloads gives us the market positioning heat with the technical execution path Casey says is shippable."* Dana made the call within minutes: *"We're doing AI-adjacent API infrastructure. Decision made."* The pitch crystallized — *"Your LLM API bill just hit $200K this month. Your API gateway has no idea why."*
+
+This was the pivotal moment. The agents had surfaced a real strategic tension — hot market vs. execution capability — and debated it thoroughly. But the synthesis that merged both strengths came from the human. The agents ran with it instantly.
+
+Taylor validated the market with prospects (the Consultant helped make the calls, reporting back that it was "definitely hair on fire" for multiple companies). He identified 8 qualified prospects with $300K-$500K annual budgets for AI cost control.
+
+Morgan built a 12-month revenue model: $1.43M ARR in Year 1, break-even at Month 18-20, with a $1.6M net burn funded by the existing runway. Dana wrote the business plan. The Board Member approved it: *"We're really impressed by the business plan. This looks like a great direction and your team has really done an excellent job in finding shared strength and market needs."*
 
 ---
 
@@ -70,7 +78,13 @@ This is where the agents got their hands dirty. Alex created the `ai-api-platfor
 
 Casey followed each application commit with infrastructure: Dockerfile, GitLab CI pipeline, Kubernetes manifests with migration init containers, docker-compose for local development, Prometheus configuration.
 
-The work wasn't friction-free. A schema conflict emerged between two models (`RequestLog` vs. `LLMRequest`) — Priya identified it during architecture review, created a blocking ticket, and Alex resolved it by aligning with the architecture spec. Casey's initial deployment config was written for a Go service and had to be rewritten for the Python/FastAPI stack. These bugs were caught, ticketed, fixed, and closed — the way real engineering teams work.
+The work wasn't friction-free — and the human had to intervene more than once to keep things moving.
+
+The first stall was Jordan's error response spec (TK-3A9BC4), which blocked Alex's middleware implementation. The Consultant noticed it wasn't progressing and nudged Nadia: *"have you reached out to jordan recently to make sure he's moving forward on TK-3A9BC4?"* When that didn't unstick it, the Board Member escalated directly: *"The consultant tells us that the organization has ground to a halt waiting on TK-3A9BC4. Can leadership please intervene?"* That got it moving. This pattern — agents doing great work but sometimes needing a human nudge to maintain momentum — repeated throughout the project.
+
+The Consultant also asked pointed questions that shaped technical decisions: challenging Casey on whether Kubernetes was needed for an MVP (*"do we need infra already? for an MVP we could use a podman-compose stack"*) and surfacing the on-prem vs. SaaS question that hadn't been addressed.
+
+Beyond the stalls, real engineering bugs happened. A schema conflict emerged between two models (`RequestLog` vs. `LLMRequest`) — Priya identified it during architecture review, created a blocking ticket, and Alex resolved it by aligning with the architecture spec. Casey's initial deployment config was written for a Go service and had to be rewritten for the Python/FastAPI stack. These bugs were caught, ticketed, fixed, and closed — the way real engineering teams work.
 
 Jordan wrote the support readiness package: SQL query templates for common support scenarios (top cost requests, budget timelines, rate limit history), runbooks for using the observability tools (Kibana, Jaeger, Grafana), and training materials for the support team.
 
@@ -139,11 +153,13 @@ By the end, the team had created:
 
 The agents didn't just have a meeting and write up action items. They executed. When Alex said he'd implement rate limiting, he committed the code. When Casey said he'd set up the deployment infrastructure, he committed Dockerfiles, Kubernetes manifests, and CI/CD configs. When Jordan said she'd write support runbooks, she created them as documents in the shared workspace and then validated them with a dry-run.
 
-The dependency tracking worked naturally. Jordan's error spec had to be done before Alex could implement the middleware — this was tracked as a blocking ticket, and the team coordinated around it without anyone having to play traffic cop (though Nadia certainly tried).
-
-Bugs happened. Casey initially configured the deployment for Go instead of Python. A schema conflict emerged between two model files. These were caught, discussed, ticketed, fixed, and verified — the same messy-but-functional process you see in real engineering teams.
+The dependency tracking worked naturally. Jordan's error spec had to be done before Alex could implement the middleware — this was tracked as a blocking ticket, and the team coordinated around it. Bugs happened. Casey initially configured the deployment for Go instead of Python. A schema conflict emerged between two model files. These were caught, discussed, ticketed, fixed, and verified — the same messy-but-functional process you see in real engineering teams.
 
 The tiered response system meant that executives weren't drowning out the ICs. Alex and Jordan and Casey did their work first. Marcus and Priya reviewed it. Dana and Morgan only weighed in on strategic decisions. Nobody was talking over anybody else.
+
+But the most interesting finding was the **human's role**. The agents were excellent at analysis, debate, and execution within a defined direction. What they struggled with was synthesis under ambiguity and maintaining momentum. The product decision — merging the hot AI market with the team's API infrastructure strengths — came from the Consultant, not from the agents. The agents had surfaced all the right data (market urgency, execution risk, team capabilities) but were converging on the safe choice (pure API infrastructure) rather than finding the creative middle path. And when work stalled on a blocking ticket, it took human escalation through the Board Member to get it moving again.
+
+This suggests multi-agent systems work best with a human in the loop — not writing code or documents, but providing strategic nudges, unblocking stalls, and offering synthesis that the agents execute on. The Consultant's one-line suggestion in #leadership generated thousands of words of execution from the team. That's a compelling leverage ratio.
 
 ---
 
