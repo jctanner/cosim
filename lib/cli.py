@@ -45,7 +45,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     chat_parser.add_argument(
         "--max-rounds", type=int, default=5,
-        help="Maximum discussion rounds per customer message (default: 5)",
+        help="Maximum discussion waves per trigger (default: 5)",
+    )
+    chat_parser.add_argument(
+        "--max-auto-rounds", type=int, default=0,
+        help="Maximum autonomous continuation rounds (0 = unlimited, default: 0)",
     )
     chat_parser.add_argument(
         "--poll-interval", type=float, default=5.0,

@@ -422,16 +422,19 @@ async def _run_loop(
     personas: list[dict],
     trigger_channels: set[str],
     max_waves: int,
-) -> None:
+) -> set[str]:
     """Run the event-driven response loop with tiered responses.
 
     Within each wave, agents respond in tiers (ICs first, then managers,
     then executives). Each tier sees the previous tier's responses before
     deciding whether to weigh in. Between waves, channels that received
     new messages become the next trigger set, up to max_waves.
+
+    Returns the set of channels that received agent posts (empty if all PASS).
     """
     persona_map = {p["name"]: p for p in personas}
     wave = 0
+    posted_channels: set[str] = set()
 
     while trigger_channels and wave < max_waves:
         wave += 1
@@ -513,6 +516,7 @@ async def _run_loop(
                         continue
                     client.post_message(persona["display_name"], content, channel=ch)
                     print(f"  {persona['display_name']}: posted to {ch} ({len(content)} chars)")
+                    posted_channels.add(ch)
                     if ch not in trigger_channels:
                         new_trigger_channels.add(ch)
 
@@ -520,6 +524,8 @@ async def _run_loop(
 
     if wave >= max_waves and trigger_channels:
         print(f"\n  Ripple limit reached ({max_waves} waves)")
+
+    return posted_channels
 
 
 async def run_orchestrator(args) -> None:
@@ -530,6 +536,8 @@ async def run_orchestrator(args) -> None:
     max_waves = getattr(args, "max_rounds", 3)
     poll_interval = getattr(args, "poll_interval", 5.0)
 
+    max_auto_rounds = getattr(args, "max_auto_rounds", 3)
+
     if not personas:
         print("Error: no valid personas selected")
         return
@@ -539,6 +547,7 @@ async def run_orchestrator(args) -> None:
     print(f"  Model: {model}")
     print(f"  Personas: {', '.join(p['display_name'] for p in personas)}")
     print(f"  Max waves: {max_waves}")
+    print(f"  Max autonomous rounds: {'unlimited' if max_auto_rounds == 0 else max_auto_rounds}")
     print(f"  Poll interval: {poll_interval}s")
 
     # Wait for server to be reachable
@@ -575,12 +584,44 @@ async def run_orchestrator(args) -> None:
             trigger_channels = {m.get("channel", "#general") for m in human_messages}
             print(f"\nNew human message(s) in {sorted(trigger_channels)}")
 
-            await _run_loop(client, pool, personas, trigger_channels, max_waves)
+            active_channels = await _run_loop(client, pool, personas, trigger_channels, max_waves)
 
             # Update last_seen_id to include any agent responses
             latest = client.get_messages()
             if latest:
                 last_seen_id = latest[-1]["id"]
+
+            # Autonomous continuation: let agents keep working
+            # as long as they're producing output
+            auto_round = 0
+            while active_channels:
+                if max_auto_rounds > 0 and auto_round >= max_auto_rounds:
+                    print(f"\n  Autonomous round limit reached ({max_auto_rounds})")
+                    break
+                auto_round += 1
+
+                # Brief pause — check for new human input first
+                await asyncio.sleep(1)
+                new_messages = client.get_messages(since=last_seen_id)
+                human_messages = [m for m in new_messages if not _is_agent_message(m)]
+                if human_messages:
+                    print(f"\nHuman input detected — breaking autonomous continuation")
+                    break
+
+                limit_str = f"/{max_auto_rounds}" if max_auto_rounds > 0 else ""
+                print(f"\n>>> Autonomous round {auto_round}{limit_str}"
+                      f" — agents continuing in {sorted(active_channels)}")
+
+                active_channels = await _run_loop(
+                    client, pool, personas, active_channels, max_waves,
+                )
+
+                latest = client.get_messages()
+                if latest:
+                    last_seen_id = latest[-1]["id"]
+
+            if auto_round > 0:
+                print(f"\nAgents quiesced after {auto_round} autonomous round(s)")
 
             print(f"\nWaiting for new messages (last_seen_id={last_seen_id})...")
     finally:
