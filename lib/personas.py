@@ -441,6 +441,9 @@ Full replacement content.
 Additional content appended to the end.
 <<<END_DOC>>>
 
+**Read a document's full content** (use after searching to get the complete text):
+<<<DOC:READ folder="shared" slug="document-slug"/>>>
+
 **Search documents** (optionally scoped to specific folders):
 <<<DOC:SEARCH query="search terms"/>>>
 <<<DOC:SEARCH query="search terms" folders="shared,engineering"/>>>

@@ -212,3 +212,94 @@ class ChatClient:
         )
         resp.raise_for_status()
         return resp.json()
+
+    # -- Tickets API --
+
+    def list_tickets(
+        self,
+        status: str | None = None,
+        assignee: str | None = None,
+    ) -> list[dict]:
+        """Return list of tickets, optionally filtered by status or assignee."""
+        params = {}
+        if status:
+            params["status"] = status
+        if assignee:
+            params["assignee"] = assignee
+        resp = requests.get(f"{self.base_url}/api/tickets", params=params, timeout=10)
+        resp.raise_for_status()
+        return resp.json()
+
+    def create_ticket(
+        self,
+        title: str,
+        description: str,
+        priority: str,
+        assignee: str,
+        author: str,
+        blocked_by: list[str] | None = None,
+    ) -> dict:
+        """Create a new ticket. Returns ticket dict."""
+        payload = {
+            "title": title,
+            "description": description,
+            "priority": priority,
+            "assignee": assignee,
+            "author": author,
+        }
+        if blocked_by:
+            payload["blocked_by"] = blocked_by
+        resp = requests.post(
+            f"{self.base_url}/api/tickets",
+            json=payload,
+            timeout=10,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def get_ticket(self, ticket_id: str) -> dict:
+        """Get a single ticket with comments."""
+        resp = requests.get(f"{self.base_url}/api/tickets/{ticket_id}", timeout=10)
+        resp.raise_for_status()
+        return resp.json()
+
+    def update_ticket(
+        self,
+        ticket_id: str,
+        author: str,
+        status: str | None = None,
+        assignee: str | None = None,
+    ) -> dict:
+        """Update ticket fields (status, assignee)."""
+        payload = {"author": author}
+        if status is not None:
+            payload["status"] = status
+        if assignee is not None:
+            payload["assignee"] = assignee
+        resp = requests.put(
+            f"{self.base_url}/api/tickets/{ticket_id}",
+            json=payload,
+            timeout=10,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def comment_ticket(self, ticket_id: str, text: str, author: str) -> dict:
+        """Add a comment to a ticket."""
+        resp = requests.post(
+            f"{self.base_url}/api/tickets/{ticket_id}/comment",
+            json={"text": text, "author": author},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def add_dependency(self, ticket_id: str, blocked_by: str) -> dict:
+        """Add a dependency to a ticket."""
+        resp = requests.post(
+            f"{self.base_url}/api/tickets/{ticket_id}/depends",
+            json={"blocked_by": blocked_by},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        return resp.json()
