@@ -39,6 +39,13 @@ _DOC_SEARCH_RE = re.compile(
     r'\s*/>>>',
 )
 
+_DOC_READ_RE = re.compile(
+    r'<<<DOC:READ\s+'
+    r'folder="([^"]+)"\s+'
+    r'slug="([^"]+)"'
+    r'\s*/>>>',
+)
+
 # -- Channel command regex --
 
 _CHANNEL_JOIN_RE = re.compile(r'<<<CHANNEL:JOIN\s+(#[\w-]+)\s*>>>')
@@ -75,6 +82,51 @@ _GITLAB_LOG_RE = re.compile(
     r'\s*/>>>',
 )
 
+# -- Tickets command regexes --
+
+_TICKETS_CREATE_RE = re.compile(
+    r'<<<TICKETS:CREATE\s+'
+    r'title="([^"]+)"'
+    r'(?:\s+assignee="([^"]*)")?'
+    r'(?:\s+priority="([^"]*)")?'
+    r'(?:\s+blocked_by="([^"]*)")?'
+    r'\s*>>>'
+    r'(.*?)'
+    r'<<<END_TICKETS>>>',
+    re.DOTALL,
+)
+
+_TICKETS_UPDATE_RE = re.compile(
+    r'<<<TICKETS:UPDATE\s+'
+    r'id="([^"]+)"'
+    r'(?:\s+status="([^"]*)")?'
+    r'(?:\s+assignee="([^"]*)")?'
+    r'\s*/>>>',
+)
+
+_TICKETS_COMMENT_RE = re.compile(
+    r'<<<TICKETS:COMMENT\s+'
+    r'id="([^"]+)"'
+    r'\s*>>>'
+    r'(.*?)'
+    r'<<<END_TICKETS>>>',
+    re.DOTALL,
+)
+
+_TICKETS_DEPENDS_RE = re.compile(
+    r'<<<TICKETS:DEPENDS\s+'
+    r'id="([^"]+)"\s+'
+    r'blocked_by="([^"]+)"'
+    r'\s*/>>>',
+)
+
+_TICKETS_LIST_RE = re.compile(
+    r'<<<TICKETS:LIST'
+    r'(?:\s+status="([^"]*)")?'
+    r'(?:\s+assignee="([^"]*)")?'
+    r'\s*/>>>',
+)
+
 # -- Multi-channel response marker --
 
 _CHANNEL_MARKER_RE = re.compile(r'^\[#([\w-]+)\]\s*$', re.MULTILINE)
@@ -107,8 +159,12 @@ def _extract_doc_commands(text: str) -> tuple[str, list[dict]]:
             cmd["folders"] = [f.strip() for f in match.group(2).split(",") if f.strip()]
         commands.append(cmd)
 
+    for match in _DOC_READ_RE.finditer(text):
+        commands.append({"action": "READ", "folder": match.group(1), "slug": match.group(2)})
+
     cleaned = _DOC_BLOCK_RE.sub("", text)
     cleaned = _DOC_SEARCH_RE.sub("", cleaned)
+    cleaned = _DOC_READ_RE.sub("", cleaned)
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
 
     return cleaned, commands
@@ -138,6 +194,9 @@ def _execute_doc_commands(
                 folders = cmd.get("folders")
                 result = client.search_docs(cmd["query"], folders=folders)
                 results.append({"action": "search", "ok": True, "query": cmd["query"], "results": result})
+            elif action == "READ":
+                result = client.get_doc(cmd["folder"], cmd["slug"])
+                results.append({"action": "read", "ok": True, **result})
         except Exception as e:
             results.append({"action": action.lower(), "ok": False, "error": str(e)})
     return results
@@ -157,6 +216,17 @@ def _format_search_results(search_data: dict) -> str:
         snippet = hit.get("snippet", hit.get("preview", ""))
         lines.append(f"  - {title} (slug: {slug}): {snippet}")
     return "\n".join(lines)
+
+
+def _format_doc_read_result(result: dict) -> str | None:
+    """Format a DOC:READ result as a system message with full content."""
+    if result.get("action") != "read":
+        return None
+    title = result.get("title", result.get("slug", "?"))
+    slug = result.get("slug", "?")
+    folder = result.get("folder", "shared")
+    content = result.get("content", "")
+    return f'[Document] {title} (folder: {folder}, slug: {slug}):\n\n{content}'
 
 
 def _parse_commit_files(body: str) -> list[dict]:
@@ -297,6 +367,133 @@ def _format_gitlab_results(result: dict) -> str | None:
     return None
 
 
+def _extract_tickets_commands(text: str) -> tuple[str, list[dict]]:
+    """Parse TICKETS commands from agent response text.
+
+    Returns (cleaned_text, commands_list).
+    """
+    commands = []
+
+    for match in _TICKETS_CREATE_RE.finditer(text):
+        cmd = {
+            "action": "CREATE",
+            "title": match.group(1),
+            "assignee": match.group(2) or "",
+            "priority": match.group(3) or "medium",
+            "description": match.group(5).strip(),
+        }
+        if match.group(4):
+            cmd["blocked_by"] = [b.strip() for b in match.group(4).split(",") if b.strip()]
+        commands.append(cmd)
+
+    for match in _TICKETS_UPDATE_RE.finditer(text):
+        cmd = {"action": "UPDATE", "id": match.group(1)}
+        if match.group(2):
+            cmd["status"] = match.group(2)
+        if match.group(3):
+            cmd["assignee"] = match.group(3)
+        commands.append(cmd)
+
+    for match in _TICKETS_COMMENT_RE.finditer(text):
+        commands.append({
+            "action": "COMMENT",
+            "id": match.group(1),
+            "text": match.group(2).strip(),
+        })
+
+    for match in _TICKETS_DEPENDS_RE.finditer(text):
+        commands.append({
+            "action": "DEPENDS",
+            "id": match.group(1),
+            "blocked_by": match.group(2),
+        })
+
+    for match in _TICKETS_LIST_RE.finditer(text):
+        cmd = {"action": "LIST"}
+        if match.group(1):
+            cmd["status"] = match.group(1)
+        if match.group(2):
+            cmd["assignee"] = match.group(2)
+        commands.append(cmd)
+
+    cleaned = _TICKETS_CREATE_RE.sub("", text)
+    cleaned = _TICKETS_UPDATE_RE.sub("", cleaned)
+    cleaned = _TICKETS_COMMENT_RE.sub("", cleaned)
+    cleaned = _TICKETS_DEPENDS_RE.sub("", cleaned)
+    cleaned = _TICKETS_LIST_RE.sub("", cleaned)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
+
+    return cleaned, commands
+
+
+def _execute_tickets_commands(
+    client: ChatClient,
+    commands: list[dict],
+    author: str,
+) -> list[dict]:
+    """Execute a list of parsed tickets commands via ChatClient."""
+    results = []
+    for cmd in commands:
+        action = cmd["action"]
+        try:
+            if action == "CREATE":
+                result = client.create_ticket(
+                    title=cmd["title"],
+                    description=cmd.get("description", ""),
+                    priority=cmd.get("priority", "medium"),
+                    assignee=cmd.get("assignee", ""),
+                    author=author,
+                    blocked_by=cmd.get("blocked_by"),
+                )
+                results.append({"action": "created", "ok": True, **result})
+            elif action == "UPDATE":
+                result = client.update_ticket(
+                    ticket_id=cmd["id"],
+                    author=author,
+                    status=cmd.get("status"),
+                    assignee=cmd.get("assignee"),
+                )
+                results.append({"action": "updated", "ok": True, **result})
+            elif action == "COMMENT":
+                result = client.comment_ticket(cmd["id"], cmd["text"], author)
+                results.append({"action": "commented", "ok": True, "id": cmd["id"]})
+            elif action == "DEPENDS":
+                result = client.add_dependency(cmd["id"], cmd["blocked_by"])
+                results.append({"action": "depends", "ok": True, **result})
+            elif action == "LIST":
+                result = client.list_tickets(
+                    status=cmd.get("status"),
+                    assignee=cmd.get("assignee"),
+                )
+                results.append({"action": "list", "ok": True, "tickets": result})
+        except Exception as e:
+            results.append({"action": action.lower(), "ok": False, "error": str(e)})
+    return results
+
+
+def _format_tickets_results(result: dict) -> str | None:
+    """Format a tickets LIST result as a system message string.
+
+    Returns None for write operations (created, updated, commented, depends).
+    """
+    if result.get("action") != "list":
+        return None
+
+    tickets = result.get("tickets", [])
+    if not tickets:
+        return "[Tickets] No tickets found."
+
+    lines = [f"[Tickets] {len(tickets)} ticket(s):"]
+    for t in tickets:
+        assignee = t.get("assignee") or "Unassigned"
+        blocked = f" (blocked by {', '.join(t.get('blocked_by', []))})" if t.get("blocked_by") else ""
+        lines.append(
+            f"  {t.get('id', '?')} [{t.get('status', '?')}] [{t.get('priority', '?')}] "
+            f"{t.get('title', '?')} — {assignee}{blocked}"
+        )
+    return "\n".join(lines)
+
+
 def _extract_channel_commands(text: str) -> tuple[str, list[str]]:
     """Parse <<<CHANNEL:JOIN #name>>> commands from text.
 
@@ -362,6 +559,11 @@ async def _process_agent_response(
                 msg_text = _format_search_results(r)
                 client.post_message("System", msg_text, channel="#general")
                 print(f"  {persona['display_name']}: doc search -> {len(r.get('results', []))} results")
+            elif r.get("action") == "read":
+                formatted = _format_doc_read_result(r)
+                if formatted:
+                    client.post_message("System", formatted, channel="#general")
+                    print(f"  {persona['display_name']}: doc read -> {r.get('slug', '?')}")
             elif r.get("ok"):
                 print(f"  {persona['display_name']}: doc {r['action']} -> {r.get('slug', r.get('title', '?'))}")
             else:
@@ -384,7 +586,23 @@ async def _process_agent_response(
             else:
                 print(f"  {persona['display_name']}: gitlab {r['action']} failed - {r.get('error', '?')}")
 
-    # 3. Extract channel join commands
+    # 3. Extract and execute tickets commands
+    cleaned, tickets_commands = _extract_tickets_commands(cleaned)
+
+    if tickets_commands:
+        author = persona["display_name"]
+        tk_results = _execute_tickets_commands(client, tickets_commands, author)
+        for r in tk_results:
+            formatted = _format_tickets_results(r)
+            if formatted:
+                client.post_message("System", formatted, channel="#general")
+                print(f"  {persona['display_name']}: tickets list -> {len(r.get('tickets', []))} tickets")
+            elif r.get("ok"):
+                print(f"  {persona['display_name']}: ticket {r['action']} -> {r.get('id', r.get('title', '?'))}")
+            else:
+                print(f"  {persona['display_name']}: ticket {r['action']} failed - {r.get('error', '?')}")
+
+    # 4. Extract channel join commands
     cleaned, channels_to_join = _extract_channel_commands(cleaned)
 
     for ch in channels_to_join:
@@ -394,11 +612,11 @@ async def _process_agent_response(
         except Exception as e:
             print(f"  {persona['display_name']}: failed to join {ch} - {e}")
 
-    # 4. Check for PASS
+    # 5. Check for PASS
     if cleaned.upper() == "PASS" or not cleaned:
         return {}
 
-    # 5. Parse multi-channel response
+    # 6. Parse multi-channel response
     return _parse_multi_channel_response(cleaned, default_channel)
 
 
@@ -480,6 +698,7 @@ async def _run_loop(
                 full_history = client.get_messages()
                 docs = client.list_docs()
                 repos = client.list_repos()
+                tickets = client.list_tickets()
 
                 # Collect all channels this agent is in
                 all_agent_channels = set()
@@ -494,6 +713,7 @@ async def _run_loop(
                     channels=all_agent_channels,
                     docs=docs,
                     repos=repos,
+                    tickets=tickets,
                 )
                 result = await pool.send(persona_key, prompt)
 
