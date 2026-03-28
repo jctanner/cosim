@@ -5,6 +5,7 @@ import asyncio
 from pathlib import Path
 
 from lib.chat_client import ChatClient
+from lib.response_schema import parse_json_response, normalize_commands, extract_messages
 from lib.personas import (
     get_active_personas,
     build_initial_prompt,
@@ -538,13 +539,95 @@ def _parse_multi_channel_response(text: str, default_channel: str) -> dict[str, 
     return result
 
 
-async def _process_agent_response(
+def _log_doc_results(client: ChatClient, persona: dict, results: list[dict]) -> None:
+    """Log and post doc command results."""
+    for r in results:
+        if r.get("action") == "search":
+            msg_text = _format_search_results(r)
+            client.post_message("System", msg_text, channel="#general")
+            print(f"  {persona['display_name']}: doc search -> {len(r.get('results', []))} results")
+        elif r.get("action") == "read":
+            formatted = _format_doc_read_result(r)
+            if formatted:
+                client.post_message("System", formatted, channel="#general")
+                print(f"  {persona['display_name']}: doc read -> {r.get('slug', '?')}")
+        elif r.get("ok"):
+            print(f"  {persona['display_name']}: doc {r['action']} -> {r.get('slug', r.get('title', '?'))}")
+        else:
+            print(f"  {persona['display_name']}: doc {r['action']} failed - {r.get('error', '?')}")
+
+
+def _log_gitlab_results(client: ChatClient, persona: dict, results: list[dict]) -> None:
+    """Log and post GitLab command results."""
+    for r in results:
+        formatted = _format_gitlab_results(r)
+        if formatted:
+            client.post_message("System", formatted, channel="#general")
+            print(f"  {persona['display_name']}: gitlab {r['action']} -> posted result")
+        elif r.get("ok"):
+            print(f"  {persona['display_name']}: gitlab {r['action']} -> {r.get('name', r.get('project', '?'))}")
+        else:
+            print(f"  {persona['display_name']}: gitlab {r['action']} failed - {r.get('error', '?')}")
+
+
+def _log_tickets_results(client: ChatClient, persona: dict, results: list[dict]) -> None:
+    """Log and post tickets command results."""
+    for r in results:
+        formatted = _format_tickets_results(r)
+        if formatted:
+            client.post_message("System", formatted, channel="#general")
+            print(f"  {persona['display_name']}: tickets list -> {len(r.get('tickets', []))} tickets")
+        elif r.get("ok"):
+            print(f"  {persona['display_name']}: ticket {r['action']} -> {r.get('id', r.get('title', '?'))}")
+        else:
+            print(f"  {persona['display_name']}: ticket {r['action']} failed - {r.get('error', '?')}")
+
+
+async def _process_json_response(
+    client: ChatClient,
+    parsed: dict,
+    persona: dict,
+    default_channel: str,
+) -> dict[str, str]:
+    """Process a parsed JSON agent response: execute commands, extract messages.
+
+    Returns dict[channel, text]. Empty dict if action is 'pass' or 'ready'.
+    """
+    author = persona["display_name"]
+
+    # 1. Normalize and execute commands
+    doc_cmds, gitlab_cmds, tickets_cmds, channels_to_join = normalize_commands(parsed)
+
+    if doc_cmds:
+        results = _execute_doc_commands(client, doc_cmds, author)
+        _log_doc_results(client, persona, results)
+
+    if gitlab_cmds:
+        gl_results = _execute_gitlab_commands(client, gitlab_cmds, author)
+        _log_gitlab_results(client, persona, gl_results)
+
+    if tickets_cmds:
+        tk_results = _execute_tickets_commands(client, tickets_cmds, author)
+        _log_tickets_results(client, persona, tk_results)
+
+    for ch in channels_to_join:
+        try:
+            client.join_channel(ch, persona["name"])
+            print(f"  {persona['display_name']}: joined {ch}")
+        except Exception as e:
+            print(f"  {persona['display_name']}: failed to join {ch} - {e}")
+
+    # 2. Extract channel-routed messages
+    return extract_messages(parsed, default_channel)
+
+
+async def _process_regex_response(
     client: ChatClient,
     response: str,
     persona: dict,
     default_channel: str,
 ) -> dict[str, str]:
-    """Process a raw agent response: extract commands, parse multi-channel.
+    """Process a raw agent response using regex parsing (legacy fallback).
 
     Returns dict[channel, cleaned_text]. Empty dict if PASS.
     """
@@ -554,20 +637,7 @@ async def _process_agent_response(
     if doc_commands:
         author = persona["display_name"]
         results = _execute_doc_commands(client, doc_commands, author)
-        for r in results:
-            if r.get("action") == "search":
-                msg_text = _format_search_results(r)
-                client.post_message("System", msg_text, channel="#general")
-                print(f"  {persona['display_name']}: doc search -> {len(r.get('results', []))} results")
-            elif r.get("action") == "read":
-                formatted = _format_doc_read_result(r)
-                if formatted:
-                    client.post_message("System", formatted, channel="#general")
-                    print(f"  {persona['display_name']}: doc read -> {r.get('slug', '?')}")
-            elif r.get("ok"):
-                print(f"  {persona['display_name']}: doc {r['action']} -> {r.get('slug', r.get('title', '?'))}")
-            else:
-                print(f"  {persona['display_name']}: doc {r['action']} failed - {r.get('error', '?')}")
+        _log_doc_results(client, persona, results)
 
     # 2. Extract and execute GitLab commands
     cleaned, gitlab_commands = _extract_gitlab_commands(cleaned)
@@ -575,16 +645,7 @@ async def _process_agent_response(
     if gitlab_commands:
         author = persona["display_name"]
         gl_results = _execute_gitlab_commands(client, gitlab_commands, author)
-        for r in gl_results:
-            formatted = _format_gitlab_results(r)
-            if formatted:
-                # Read-only results: post as System message
-                client.post_message("System", formatted, channel="#general")
-                print(f"  {persona['display_name']}: gitlab {r['action']} -> posted result")
-            elif r.get("ok"):
-                print(f"  {persona['display_name']}: gitlab {r['action']} -> {r.get('name', r.get('project', '?'))}")
-            else:
-                print(f"  {persona['display_name']}: gitlab {r['action']} failed - {r.get('error', '?')}")
+        _log_gitlab_results(client, persona, gl_results)
 
     # 3. Extract and execute tickets commands
     cleaned, tickets_commands = _extract_tickets_commands(cleaned)
@@ -592,15 +653,7 @@ async def _process_agent_response(
     if tickets_commands:
         author = persona["display_name"]
         tk_results = _execute_tickets_commands(client, tickets_commands, author)
-        for r in tk_results:
-            formatted = _format_tickets_results(r)
-            if formatted:
-                client.post_message("System", formatted, channel="#general")
-                print(f"  {persona['display_name']}: tickets list -> {len(r.get('tickets', []))} tickets")
-            elif r.get("ok"):
-                print(f"  {persona['display_name']}: ticket {r['action']} -> {r.get('id', r.get('title', '?'))}")
-            else:
-                print(f"  {persona['display_name']}: ticket {r['action']} failed - {r.get('error', '?')}")
+        _log_tickets_results(client, persona, tk_results)
 
     # 4. Extract channel join commands
     cleaned, channels_to_join = _extract_channel_commands(cleaned)
@@ -618,6 +671,24 @@ async def _process_agent_response(
 
     # 6. Parse multi-channel response
     return _parse_multi_channel_response(cleaned, default_channel)
+
+
+async def _process_agent_response(
+    client: ChatClient,
+    response: str,
+    persona: dict,
+    default_channel: str,
+) -> dict[str, str]:
+    """Process an agent response: try JSON first, fall back to regex parsing.
+
+    Returns dict[channel, cleaned_text]. Empty dict if PASS.
+    """
+    parsed = parse_json_response(response)
+    if parsed is not None:
+        print(f"  {persona['display_name']}: parsed as JSON (action={parsed.get('action')})")
+        return await _process_json_response(client, parsed, persona, default_channel)
+    else:
+        return await _process_regex_response(client, response, persona, default_channel)
 
 
 def _is_agent_message(msg: dict) -> bool:
