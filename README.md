@@ -1,8 +1,8 @@
 # Multi-Agent Organization
 
-A simulated software company where 10 AI personas collaborate through a Slack-like chat system. A human operator drops a message into a channel — a feature request, a customer escalation, a pricing question — and an entire organization responds: engineers dig into feasibility, the PM scopes requirements, sales positions the value, finance models the deal, and leadership makes the call. All in real time, all visible in a web UI.
+A simulated software company where 11 AI personas collaborate through a Slack-like chat system. A human operator drops a message into a channel — a feature request, a customer escalation, a pricing question — and an entire organization responds: engineers dig into feasibility, the PM scopes requirements, sales positions the value, finance models the deal, and leadership makes the call. All in real time, all visible in a web UI.
 
-Built on the Claude Agent SDK with persistent sessions per persona, a Flask chat server with SSE, a shared document workspace, and a mock GitLab for code hosting.
+Built on the Claude Agent SDK with persistent sessions per persona, a Flask chat server with SSE, a shared document workspace, a mock GitLab for code hosting, and a ticket tracking system.
 
 ## What It Looks Like
 
@@ -47,6 +47,7 @@ The web UI at `http://localhost:5000` shows a tabbed interface with Chat (multi-
 | **Morgan** | CFO | 3 | #general, #leadership, #sales |
 | **Riley** | Marketing | 2 | #general, #marketing, #sales, #sales-external |
 | **Casey** | DevOps Engineer | 1 | #general, #devops, #engineering, #support |
+| **Nadia** | Project Manager | 2 | #general, #engineering, #support, #leadership, #devops, #sales, #marketing |
 
 **Tiers** control response ordering. Tier 1 (ICs) responds first, closest to the work. Tier 2 (managers/leads) sees Tier 1's responses before deciding whether to weigh in. Tier 3 (executives) sees everything before making strategic calls. Within a tier, agents run sequentially so each sees what the previous agent said.
 
@@ -57,13 +58,13 @@ main.py
   |
   |-- server -----> Flask webapp (webapp.py)
   |                   REST API + SSE + Web UI
-  |                   In-memory: messages, channels, docs, gitlab repos
+  |                   In-memory: messages, channels, docs, repos, tickets
   |
   |-- chat -------> Orchestrator (orchestrator.py)
                       Poll for new messages
                       Trigger agents by channel membership
-                      Parse commands from agent responses
-                      Post responses back to channels
+                      Parse JSON responses (regex fallback)
+                      Execute commands, post messages to channels
                       |
                       +--> AgentPool (agent_runner.py)
                       |      One persistent ClaudeSDKClient per persona
@@ -74,11 +75,14 @@ main.py
                       |      HTTP client for the webapp REST API
                       |
                       +--> Personas (personas.py)
-                             Prompt builder: initial + per-turn
-                             Channel membership, doc index, repo index
+                      |      Prompt builder: initial + per-turn
+                      |      Channel membership, doc/repo/ticket index
+                      |
+                      +--> ResponseSchema (response_schema.py)
+                             JSON parser + command normalizer
 ```
 
-The server and orchestrator run as separate processes. The orchestrator polls for new human messages, determines which channels were triggered, and runs agents in tiered waves. Each agent gets a prompt containing the full chat history (filtered to their channels), a list of existing documents and repos, channel membership info, and an instruction to respond or PASS.
+The server and orchestrator run as separate processes. The orchestrator polls for new human messages, determines which channels were triggered, and runs agents in tiered waves. Each agent gets a prompt containing the full chat history (filtered to their channels), a list of existing documents, repos, and tickets, channel membership info, and an instruction to respond in structured JSON (or PASS).
 
 ## Quick Start
 
@@ -118,11 +122,12 @@ python main.py server [--port 5000] [--host 127.0.0.1]
 python main.py chat [--model sonnet|opus|haiku]
                      [--personas pm,senior,architect]
                      [--max-rounds 5]
+                     [--max-auto-rounds 0]
                      [--poll-interval 5.0]
                      [--server-url http://127.0.0.1:5000]
 ```
 
-Use `--personas` to run a subset of the team for faster iteration or lower cost.
+Use `--personas` to run a subset of the team for faster iteration or lower cost. `--max-auto-rounds` limits how many autonomous continuation rounds agents can run after the initial trigger (0 = unlimited).
 
 ## How It Works
 
@@ -133,58 +138,60 @@ Use `--personas` to run a subset of the team for faster iteration or lower cost.
 3. Agents in that channel are grouped by tier
 4. For each tier, agents run sequentially:
    - Full chat history is re-fetched (so each agent sees prior responses)
-   - A turn prompt is built with history, docs, repos, and channel membership
-   - The agent responds or says PASS
-   - Commands embedded in the response are extracted and executed
-   - The cleaned response is posted to the appropriate channel(s)
+   - A turn prompt is built with history, docs, repos, tickets, and channel membership
+   - The agent responds with a JSON object or passes
+   - The orchestrator parses the JSON, executes any commands, and posts messages to channels
+   - If JSON parsing fails, a regex-based fallback parser handles the response
 5. If agents posted to new channels, those become triggers for the next wave
 6. Waves repeat up to `--max-rounds`
+7. After waves complete, autonomous continuation runs until agents quiesce or `--max-auto-rounds` is reached
 
-### Agent Commands
+### Agent Response Format
 
-Agents can embed structured commands in their responses. The orchestrator extracts and executes them before posting the cleaned text.
+Agents respond with a single JSON object per turn. The orchestrator parses the JSON to extract commands and channel-routed messages.
 
-**Documents** (Google Docs-style shared workspace):
-```
-<<<DOC:CREATE folder="engineering" title="API Design">>>
-## Endpoints
-- GET /users
-- POST /users
-<<<END_DOC>>>
-
-<<<DOC:SEARCH query="rate limiting" folders="engineering,shared"/>>>
+```json
+{"action": "respond", "messages": [...], "commands": [...]}
+{"action": "pass"}
+{"action": "ready"}
 ```
 
-**GitLab** (simplified code hosting):
-```
-<<<GITLAB:REPO_CREATE name="api-service" description="Main API"/>>>
-
-<<<GITLAB:COMMIT project="api-service" message="Add rate limiting">>>
-FILE: config/limits.yaml
-default: 100/min
-FILE: src/middleware.py
-def rate_limit(request):
-    pass
-<<<END_GITLAB>>>
-
-<<<GITLAB:TREE project="api-service"/>>>
-<<<GITLAB:FILE_READ project="api-service" path="src/middleware.py"/>>>
-<<<GITLAB:LOG project="api-service"/>>>
+**Multi-channel messages** (post different content to different channels):
+```json
+{
+  "action": "respond",
+  "messages": [
+    {"channel": "#engineering", "text": "The implementation will need a new middleware layer."},
+    {"channel": "#sales-external", "text": "Yes, we support custom rate limits on Enterprise plans."}
+  ]
+}
 ```
 
-**Channel management**:
-```
-<<<CHANNEL:JOIN #devops>>>
+**Commands** (structured operations the orchestrator executes):
+```json
+{
+  "action": "respond",
+  "messages": [{"channel": "#general", "text": "I've set up the repo and created a ticket."}],
+  "commands": [
+    {"type": "doc", "action": "CREATE", "params": {"folder": "engineering", "title": "API Design", "content": "## Endpoints\n- GET /users\n- POST /users"}},
+    {"type": "gitlab", "action": "REPO_CREATE", "params": {"name": "api-service", "description": "Main API"}},
+    {"type": "gitlab", "action": "COMMIT", "params": {"project": "api-service", "message": "Add rate limiting", "files": [{"path": "config/limits.yaml", "content": "default: 100/min"}, {"path": "src/middleware.py", "content": "def rate_limit(request):\n    pass"}]}},
+    {"type": "tickets", "action": "CREATE", "params": {"title": "Implement rate limiting", "assignee": "Alex (Senior Eng)", "priority": "high", "description": "Add per-endpoint rate limits."}},
+    {"type": "channel", "action": "JOIN", "params": {"channel": "#devops"}}
+  ]
+}
 ```
 
-**Multi-channel responses** (post different content to different channels):
-```
-[#engineering]
-The implementation will need a new middleware layer.
+**Command types:**
 
-[#sales-external]
-Yes, we support custom rate limits on Enterprise plans.
-```
+| Type | Actions |
+|------|---------|
+| `doc` | `CREATE`, `UPDATE`, `APPEND`, `READ`, `SEARCH` |
+| `gitlab` | `REPO_CREATE`, `COMMIT`, `TREE`, `FILE_READ`, `LOG` |
+| `tickets` | `CREATE`, `UPDATE`, `COMMENT`, `DEPENDS`, `LIST` |
+| `channel` | `JOIN` |
+
+A regex-based fallback parser handles responses from agents that produce the legacy `<<<>>>` command format instead of JSON.
 
 ### Channels
 
@@ -240,15 +247,18 @@ Respond PASS if:
 ├── main.py                          # Entry point (server / chat)
 ├── pyproject.toml                   # Dependencies and metadata
 ├── .env                             # Vertex AI credentials (not committed)
+├── AGENT_LOOP.md                    # Detailed architecture documentation
 ├── lib/
 │   ├── cli.py                       # Argument parser
 │   ├── webapp.py                    # Flask server, REST API, SSE, web UI
-│   ├── orchestrator.py              # Event loop, command parsing, tiered execution
+│   ├── orchestrator.py              # Event loop, command execution, tiered dispatch
 │   ├── agent_runner.py              # Persistent Claude SDK sessions (AgentPool)
 │   ├── chat_client.py               # HTTP client for the webapp API
 │   ├── personas.py                  # Persona registry, prompt builder
+│   ├── response_schema.py           # JSON response parser + command normalizer
 │   ├── docs.py                      # Document storage utilities, folder access
-│   └── gitlab.py                    # GitLab mock storage utilities
+│   ├── gitlab.py                    # GitLab mock storage utilities
+│   └── tickets.py                   # Ticket storage + ID generation
 ├── .claude/skills/
 │   ├── product-manager/SKILL.md
 │   ├── engineering-manager/SKILL.md
@@ -259,9 +269,11 @@ Respond PASS if:
 │   ├── ceo/SKILL.md
 │   ├── cfo/SKILL.md
 │   ├── marketing/SKILL.md
-│   └── devops-engineer/SKILL.md
-├── docs/                            # Runtime — document storage
+│   ├── devops-engineer/SKILL.md
+│   └── project-manager-ops/SKILL.md
+├── docs/                            # Runtime — document storage (folders + index)
 ├── gitlab/                          # Runtime — git repo storage
+├── tickets/                         # Runtime — ticket storage
 ├── logs/                            # Runtime — agent session logs
 └── chat.log                         # Runtime — message persistence
 ```
@@ -304,6 +316,16 @@ Respond PASS if:
 | POST | `/api/gitlab/repos/<project>/commit` | Commit files (`{message, files, author}`) |
 | GET | `/api/gitlab/repos/<project>/log` | Commit history (newest first) |
 
+### Tickets
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/tickets` | List tickets (`?status=...`, `?assignee=...`) |
+| POST | `/api/tickets` | Create ticket (`{title, description, priority, assignee, author, blocked_by}`) |
+| GET | `/api/tickets/<id>` | Get a ticket |
+| PUT | `/api/tickets/<id>` | Update ticket status/assignee |
+| POST | `/api/tickets/<id>/comment` | Add a comment |
+| POST | `/api/tickets/<id>/depends` | Add a dependency |
+
 ### Folders
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -317,7 +339,8 @@ Respond PASS if:
 2. Add channel memberships in `DEFAULT_MEMBERSHIPS`
 3. Assign a response tier in `RESPONSE_TIERS`
 4. Create a skill file at `.claude/skills/<skill-name>/SKILL.md`
-5. Optionally add a personal folder in `lib/docs.py`
+5. Add folder access rules in `DEFAULT_FOLDER_ACCESS` in `lib/docs.py`
+6. Optionally add a personal folder in `DEFAULT_FOLDERS` in `lib/docs.py`
 
 ### Adding a Channel
 
