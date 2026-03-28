@@ -359,10 +359,16 @@ WEB_UI = """<!DOCTYPE html>
   .msg-projmgr .sender { color: #26c6da; }
   .msg-default .sender { color: #95a5a6; }
 
+  /* -- Persona bar -- */
+  #persona-bar { background: #121a30; padding: 6px 20px; border-top: 1px solid #0f3460;
+                 display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
   /* -- Input area -- */
   #input-area { background: #16213e; padding: 10px 20px; border-top: 1px solid #0f3460;
                 display: flex; gap: 8px; align-items: center; }
-  #sender-select { background: #1a1a2e; color: #e0e0e0; border: 1px solid #333;
+  #sender-name { background: #1a1a2e; color: #e0e0e0; border: 1px solid #333;
+                 padding: 8px 12px; border-radius: 8px; font-size: 14px; outline: none; }
+  #sender-name:focus { border-color: #e94560; }
+  #sender-role, #sender-role-custom { background: #1a1a2e; color: #e0e0e0; border: 1px solid #333;
                    padding: 8px 12px; border-radius: 8px; font-size: 14px; }
   #msg-input { flex: 1; background: #1a1a2e; color: #e0e0e0; border: 1px solid #333;
                padding: 10px 14px; border-radius: 8px; font-size: 14px; outline: none; }
@@ -387,10 +393,32 @@ WEB_UI = """<!DOCTYPE html>
   .folder-btn:hover { background: #1a1a3e; color: #e0e0e0; }
   .folder-btn.active { background: #1a1a3e; color: #fff; font-weight: 700; }
   #docs-main { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
-  #docs-toolbar { padding: 12px 20px; border-bottom: 1px solid #0f3460; background: #16213e; }
+  #docs-toolbar { padding: 12px 20px; border-bottom: 1px solid #0f3460; background: #16213e;
+                  display: flex; align-items: center; }
   #docs-search { width: 100%; max-width: 400px; background: #1a1a2e; color: #e0e0e0; border: 1px solid #333;
                  padding: 8px 12px; border-radius: 8px; font-size: 14px; outline: none; }
   #docs-search:focus { border-color: #e94560; }
+  #new-doc-btn { background: #e94560; color: white; border: none; padding: 8px 16px;
+                 border-radius: 8px; font-size: 13px; cursor: pointer; font-weight: 600;
+                 margin-left: 8px; white-space: nowrap; }
+  #new-doc-btn:hover { background: #c0392b; }
+  #doc-editor { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+  #doc-editor-header { display: flex; align-items: center; justify-content: space-between;
+                       padding: 10px 20px; border-bottom: 1px solid #0f3460; background: #16213e; }
+  #doc-editor-header button { background: transparent; color: #e0e0e0; border: 1px solid #333;
+                              padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; }
+  #doc-editor-save { background: #e94560 !important; border-color: #e94560 !important; font-weight: 600; }
+  #doc-editor-save:hover { background: #c0392b !important; }
+  #doc-editor-form { flex: 1; display: flex; flex-direction: column; gap: 10px; padding: 16px 20px; overflow-y: auto; }
+  #doc-editor-title { background: #1a1a2e; color: #e0e0e0; border: 1px solid #333;
+                      padding: 10px 14px; border-radius: 8px; font-size: 16px; font-weight: 700; outline: none; }
+  #doc-editor-title:focus { border-color: #e94560; }
+  #doc-editor-folder { background: #1a1a2e; color: #e0e0e0; border: 1px solid #333;
+                       padding: 8px 12px; border-radius: 8px; font-size: 14px; width: 200px; }
+  #doc-editor-content { flex: 1; background: #1a1a2e; color: #e0e0e0; border: 1px solid #333;
+                        padding: 14px; border-radius: 8px; font-size: 14px; outline: none;
+                        font-family: monospace; resize: none; min-height: 300px; }
+  #doc-editor-content:focus { border-color: #e94560; }
   #docs-list { flex: 1; overflow-y: auto; padding: 16px 20px; }
   .doc-card { background: #1a1a2e; border: 1px solid #333; border-radius: 8px; padding: 12px 16px;
               margin-bottom: 8px; cursor: pointer; transition: border-color 0.15s ease; }
@@ -598,11 +626,28 @@ WEB_UI = """<!DOCTYPE html>
         <div id="channel-members"></div>
       </div>
       <div id="messages-panel"></div>
-      <div id="input-area">
-        <select id="sender-select">
-          <option value="Consultant" selected>Consultant</option>
+      <div id="persona-bar">
+        <input id="sender-name" type="text" placeholder="Your name..." value="" style="width:120px" />
+        <select id="sender-role">
+          <option value="">No role</option>
+          <option value="Consultant">Consultant</option>
           <option value="Customer">Customer</option>
+          <option value="New Hire">New Hire</option>
+          <option value="Board Member">Board Member</option>
+          <option value="Intern">Intern</option>
+          <option value="Vendor">Vendor</option>
+          <option value="Investor">Investor</option>
+          <option value="Auditor">Auditor</option>
+          <option value="Competitor">Competitor</option>
+          <option value="Regulator">Regulator</option>
+          <option value="The Press">The Press</option>
+          <option value="Hacker">Hacker</option>
+          <option value="God">God</option>
+          <option value="custom">Custom...</option>
         </select>
+        <input id="sender-role-custom" type="text" placeholder="Custom role..." style="width:100px;display:none" />
+      </div>
+      <div id="input-area">
         <input id="msg-input" type="text" placeholder="Type a message..." autocomplete="off" />
         <button id="send-btn">Send</button>
         <button id="clear-btn" title="Clear chat">Clear</button>
@@ -627,6 +672,20 @@ WEB_UI = """<!DOCTYPE html>
     <div id="docs-main">
       <div id="docs-toolbar">
         <input id="docs-search" type="text" placeholder="Search documents..." autocomplete="off" />
+        <button id="new-doc-btn">+ New Document</button>
+      </div>
+      <div id="doc-editor" style="display:none">
+        <div id="doc-editor-header">
+          <button id="doc-editor-cancel">Cancel</button>
+          <span style="font-weight:700;font-size:14px">New Document</span>
+          <button id="doc-editor-save">Save</button>
+        </div>
+        <div id="doc-editor-form">
+          <input id="doc-editor-title" type="text" placeholder="Document title..." autocomplete="off" />
+          <select id="doc-editor-folder">
+          </select>
+          <textarea id="doc-editor-content" placeholder="Write your document content here (Markdown supported)..." rows="16"></textarea>
+        </div>
       </div>
       <div id="docs-list">
         <div id="docs-empty">No documents yet.</div>
@@ -771,7 +830,57 @@ WEB_UI = """<!DOCTYPE html>
 const messagesPanel = document.getElementById('messages-panel');
 const input = document.getElementById('msg-input');
 const sendBtn = document.getElementById('send-btn');
-const senderSelect = document.getElementById('sender-select');
+const senderName = document.getElementById('sender-name');
+const senderRole = document.getElementById('sender-role');
+const senderRoleCustom = document.getElementById('sender-role-custom');
+
+// Sticky name per role — remember the last name typed for each role
+const ROLE_NAMES_KEY = 'company-sim-role-names';
+
+function getRoleNames() {
+  try { return JSON.parse(localStorage.getItem(ROLE_NAMES_KEY)) || {}; } catch(e) { return {}; }
+}
+
+function saveNameForRole() {
+  const role = senderRole.value === 'custom' ? 'custom:' + senderRoleCustom.value.trim() : senderRole.value;
+  const names = getRoleNames();
+  names[role] = senderName.value.trim();
+  localStorage.setItem(ROLE_NAMES_KEY, JSON.stringify(names));
+}
+
+function recallNameForRole() {
+  const role = senderRole.value === 'custom' ? 'custom:' + senderRoleCustom.value.trim() : senderRole.value;
+  const names = getRoleNames();
+  if (role in names) senderName.value = names[role];
+}
+
+senderName.addEventListener('input', saveNameForRole);
+
+senderRole.addEventListener('change', () => {
+  if (senderRole.value === 'custom') {
+    senderRoleCustom.style.display = '';
+    senderRoleCustom.focus();
+  } else {
+    senderRoleCustom.style.display = 'none';
+  }
+  recallNameForRole();
+});
+
+senderRoleCustom.addEventListener('input', () => {
+  saveNameForRole();
+});
+
+// Restore name on page load
+recallNameForRole();
+
+function getSenderLabel() {
+  const name = senderName.value.trim() || 'Anonymous';
+  let role = senderRole.value;
+  if (role === 'custom') role = senderRoleCustom.value.trim();
+  if (!role) return name;
+  return name + ' (' + role + ')';
+}
+
 const channelTitle = document.getElementById('channel-title');
 const channelDesc = document.getElementById('channel-desc');
 const channelMembersEl = document.getElementById('channel-members');
@@ -805,6 +914,7 @@ const PERSONA_DISPLAY = {
   'projmgr': 'Nadia',
 };
 
+// Known human persona CSS classes from upstream
 const HUMAN_CLASS_MAP = {
   'Customer': 'msg-customer', 'Consultant': 'msg-customer',
   'Board Member': 'msg-board', 'Hacker': 'msg-hacker', 'God': 'msg-god',
@@ -812,12 +922,25 @@ const HUMAN_CLASS_MAP = {
   'Regulator': 'msg-regulator', 'Investor': 'msg-investor', 'The Press': 'msg-press',
 };
 
-function senderClass(sender) {
-  return HUMAN_CLASS_MAP[sender] || SENDER_CLASS_MAP[sender] || 'msg-default';
+const AGENT_NAMES = new Set(Object.keys(SENDER_CLASS_MAP));
+
+function isAgent(sender) {
+  return AGENT_NAMES.has(sender);
 }
 
-function isHumanSender(sender) {
-  return sender in HUMAN_CLASS_MAP;
+function senderClass(sender) {
+  // Check agent map first, then known human map, then default to customer
+  return SENDER_CLASS_MAP[sender] || HUMAN_CLASS_MAP[sender] || 'msg-customer';
+}
+
+// Generate a consistent color from a string (for human users)
+function hashColor(str) {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    hash = str.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  const hue = ((hash % 360) + 360) % 360;
+  return 'hsl(' + hue + ', 70%, 65%)';
 }
 
 function renderMarkdown(text) {
@@ -909,29 +1032,7 @@ function updateChannelHeader() {
 }
 
 function updateSenderDropdown() {
-  const ch = channelsData[currentChannel];
-  senderSelect.innerHTML = '';
-  if (ch && ch.is_external) {
-    senderSelect.innerHTML =
-        '<option value="Customer" selected>Customer</option>'
-      + '<option value="Consultant">Consultant</option>'
-      + '<option value="Investor">Investor</option>'
-      + '<option value="Competitor">Competitor</option>'
-      + '<option value="The Press">The Press</option>'
-      + '<option value="Regulator">Regulator</option>'
-      + '<option value="Hacker">Hacker</option>';
-  } else {
-    senderSelect.innerHTML =
-        '<option value="Consultant" selected>Consultant</option>'
-      + '<option value="Board Member">Board Member</option>'
-      + '<option value="Investor">Investor</option>'
-      + '<option value="Intern">Intern</option>'
-      + '<option value="God">God</option>'
-      + '<option value="Hacker">Hacker</option>'
-      + '<option value="Regulator">Regulator</option>'
-      + '<option value="The Press">The Press</option>'
-      + '<option value="Competitor">Competitor</option>';
-  }
+  // Sender controls are always visible — user picks name + role freely via persona bar
 }
 
 // -- Messages --
@@ -954,9 +1055,12 @@ function addMessage(msg) {
 function appendMessageEl(msg) {
   const div = document.createElement('div');
   const cls = senderClass(msg.sender);
-  div.className = 'msg ' + (isHumanSender(msg.sender) ? 'msg-customer' : 'msg-agent') + ' ' + cls;
+  const agent = isAgent(msg.sender);
+  div.className = 'msg ' + (agent ? 'msg-agent' : 'msg-customer') + ' ' + cls;
   const ts = new Date(msg.timestamp * 1000).toLocaleTimeString();
-  div.innerHTML = '<div class="sender">' + escapeHtml(msg.sender) + '</div>'
+  // For human senders, derive a unique color from their name
+  const senderStyle = agent ? '' : ' style="color:' + hashColor(msg.sender) + '"';
+  div.innerHTML = '<div class="sender"' + senderStyle + '>' + escapeHtml(msg.sender) + '</div>'
     + '<div class="content">' + renderMarkdown(msg.content) + '</div>'
     + '<div class="ts">' + ts + '</div>';
   messagesPanel.appendChild(div);
@@ -1003,7 +1107,7 @@ function connectSSE() {
 async function send() {
   const content = input.value.trim();
   if (!content) return;
-  const sender = senderSelect.value;
+  const sender = getSenderLabel();
   input.value = '';
   await fetch('/api/messages', {
     method: 'POST',
@@ -1135,6 +1239,60 @@ docsSearch.addEventListener('input', () => {
     const q = docsSearch.value.trim();
     loadDocs(q || undefined);
   }, 300);
+});
+
+// -- Doc editor --
+const docEditor = document.getElementById('doc-editor');
+const docEditorTitle = document.getElementById('doc-editor-title');
+const docEditorFolder = document.getElementById('doc-editor-folder');
+const docEditorContent = document.getElementById('doc-editor-content');
+
+document.getElementById('new-doc-btn').addEventListener('click', () => {
+  // Populate folder dropdown from sidebar folders
+  docEditorFolder.innerHTML = '';
+  const allFolders = foldersData.map(f => f.name).sort();
+  allFolders.forEach(f => {
+    const opt = document.createElement('option');
+    opt.value = f;
+    opt.textContent = f;
+    if (f === currentFolder || (!currentFolder && f === 'shared')) opt.selected = true;
+    docEditorFolder.appendChild(opt);
+  });
+  docEditorTitle.value = '';
+  docEditorContent.value = '';
+  docEditor.style.display = 'flex';
+  docsList.style.display = 'none';
+  document.getElementById('docs-toolbar').style.display = 'none';
+  docViewer.classList.remove('open');
+  docEditorTitle.focus();
+});
+
+document.getElementById('doc-editor-cancel').addEventListener('click', () => {
+  docEditor.style.display = 'none';
+  docsList.style.display = '';
+  document.getElementById('docs-toolbar').style.display = '';
+});
+
+document.getElementById('doc-editor-save').addEventListener('click', async () => {
+  const title = docEditorTitle.value.trim();
+  const content = docEditorContent.value;
+  const folder = docEditorFolder.value;
+  if (!title) { alert('Title is required'); return; }
+  const author = getSenderLabel();
+  const resp = await fetch('/api/docs', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({title, content, folder, author}),
+  });
+  if (!resp.ok) {
+    const err = await resp.json();
+    alert('Error: ' + (err.error || 'unknown'));
+    return;
+  }
+  docEditor.style.display = 'none';
+  docsList.style.display = '';
+  document.getElementById('docs-toolbar').style.display = '';
+  loadDocs();
 });
 
 // -- GitLab tab --
