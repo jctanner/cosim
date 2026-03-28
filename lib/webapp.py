@@ -1546,12 +1546,11 @@ def create_app() -> Flask:
     """Create and configure the Flask chat application."""
     app = Flask(__name__)
 
-    # Clear chat log on startup
-    with _lock:
-        _messages.clear()
+    # Load existing chat log on startup (if any)
     if CHAT_LOG.exists():
-        CHAT_LOG.unlink()
-    print("Chat log cleared on startup")
+        print(f"Preserving existing chat log: {CHAT_LOG}")
+    else:
+        print("No existing chat log found, starting fresh")
 
     # Initialize channels, folders, and docs
     _init_channels()
