@@ -903,6 +903,19 @@ WEB_UI = """<!DOCTYPE html>
     <div id="gitlab-sidebar">
       <div class="gitlab-sidebar-section">Repositories</div>
       <div id="gitlab-repo-list"></div>
+      <div style="padding:8px 10px">
+        <button id="gl-new-repo-btn" class="session-btn" style="width:100%;font-size:11px">+ New Repo</button>
+      </div>
+      <div id="gl-new-repo-form" style="display:none;padding:4px 10px 10px">
+        <input id="gl-new-repo-name" type="text" placeholder="repo-name" autocomplete="off"
+               style="width:100%;background:#111;color:#e0e0e0;border:1px solid #333;padding:5px 8px;border-radius:6px;font-size:12px;margin-bottom:6px;box-sizing:border-box" />
+        <input id="gl-new-repo-desc" type="text" placeholder="Description (optional)" autocomplete="off"
+               style="width:100%;background:#111;color:#e0e0e0;border:1px solid #333;padding:5px 8px;border-radius:6px;font-size:12px;margin-bottom:6px;box-sizing:border-box" />
+        <div style="display:flex;gap:4px">
+          <button id="gl-new-repo-cancel" class="session-btn" style="flex:1;font-size:11px">Cancel</button>
+          <button id="gl-new-repo-save" class="session-btn" style="flex:1;font-size:11px;background:#e94560;border-color:#e94560;color:#fff">Create</button>
+        </div>
+      </div>
     </div>
     <div id="gitlab-main">
       <div id="gitlab-header">
@@ -1826,6 +1839,46 @@ function renderCommits(commits) {
   });
   content.innerHTML = html;
 }
+
+// -- GitLab new repo --
+document.getElementById('gl-new-repo-btn').addEventListener('click', () => {
+  document.getElementById('gl-new-repo-form').style.display = '';
+  document.getElementById('gl-new-repo-btn').style.display = 'none';
+  document.getElementById('gl-new-repo-name').value = '';
+  document.getElementById('gl-new-repo-desc').value = '';
+  document.getElementById('gl-new-repo-name').focus();
+});
+
+document.getElementById('gl-new-repo-cancel').addEventListener('click', () => {
+  document.getElementById('gl-new-repo-form').style.display = 'none';
+  document.getElementById('gl-new-repo-btn').style.display = '';
+});
+
+document.getElementById('gl-new-repo-save').addEventListener('click', async () => {
+  const name = document.getElementById('gl-new-repo-name').value.trim();
+  if (!name) return;
+  const desc = document.getElementById('gl-new-repo-desc').value.trim();
+  const author = getSenderLabel();
+  const resp = await fetch('/api/gitlab/repos', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({name, description: desc, author}),
+  });
+  if (resp.ok) {
+    document.getElementById('gl-new-repo-form').style.display = 'none';
+    document.getElementById('gl-new-repo-btn').style.display = '';
+    loadRepos();
+    switchRepo(name);
+  } else {
+    const err = await resp.json();
+    alert('Error: ' + (err.error || 'unknown'));
+  }
+});
+
+document.getElementById('gl-new-repo-name').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') document.getElementById('gl-new-repo-save').click();
+  if (e.key === 'Escape') document.getElementById('gl-new-repo-cancel').click();
+});
 
 // -- Tickets tab --
 let tkAllTickets = [];
