@@ -519,7 +519,26 @@ Rules:
 Reply with a single JSON object. Format: {{"action": "respond", "messages": [...], "commands": [...]}}
 """
 
+    # Extract director messages for this agent (private back-channel)
+    director_ch = f"#director-{persona_key}"
+    director_msgs = [m for m in messages if m.get("channel") == director_ch]
+    director_section = ""
+    if director_msgs:
+        lines = []
+        for m in director_msgs:
+            lines.append(f"**{m['sender']}**: {m['content']}")
+        director_section = (
+            "## Scenario Director (Private)\n\n"
+            "The following messages are from the Scenario Director — a private back-channel "
+            "only you can see. Other agents cannot see these messages. "
+            "Follow any instructions given here. You may respond in this channel "
+            f"by posting to `{director_ch}`.\n\n"
+            + "\n\n".join(lines)
+        )
+
     parts = [f"## Chat History\n\n{history}"]
+    if director_section:
+        parts.append(director_section)
     if docs_section:
         parts.append(docs_section)
     if repos_section:

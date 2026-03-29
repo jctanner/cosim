@@ -747,6 +747,12 @@ async def _run_loop(
         # Collect unique agents to trigger, tracking which channel triggered them
         agents_to_run: dict[str, set[str]] = {}  # persona_key -> set of trigger channels
         for ch in trigger_channels:
+            # Director channels trigger the specific agent they're for
+            if ch.startswith("#director-"):
+                pk = ch.replace("#director-", "")
+                if pk in persona_map:
+                    agents_to_run.setdefault(pk, set()).add(ch)
+                continue
             members = memberships.get(ch, set())
             for persona_key in members:
                 if persona_key in persona_map:

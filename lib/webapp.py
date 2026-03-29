@@ -86,9 +86,23 @@ def _init_channels():
         _channels["#system"] = {
             "description": "System events and operator messages",
             "is_external": False,
+            "is_system": True,
             "created_at": now,
         }
         _channel_members["#system"] = set()
+
+        # Create director channels for each persona
+        for pk, p_info in PERSONAS.items():
+            ch_name = f"#director-{pk}"
+            display = p_info.get("display_name", pk)
+            _channels[ch_name] = {
+                "description": f"Private channel with {display}",
+                "is_external": False,
+                "is_director": True,
+                "director_persona": pk,
+                "created_at": now,
+            }
+            _channel_members[ch_name] = set()
 
         for persona_key, ch_set in DEFAULT_MEMBERSHIPS.items():
             for ch_name in ch_set:
@@ -739,6 +753,12 @@ WEB_UI = """<!DOCTYPE html>
       <hr class="sidebar-divider">
       <div class="sidebar-section">External</div>
       <div id="external-channels"></div>
+      <hr class="sidebar-divider">
+      <div class="sidebar-section">Scenario Director</div>
+      <div id="director-channels"></div>
+      <hr class="sidebar-divider">
+      <div class="sidebar-section">System</div>
+      <div id="system-channels"></div>
     </div>
     <div id="chat-area">
       <div id="channel-header">
@@ -1203,8 +1223,12 @@ async function loadChannels() {
 function renderSidebar() {
   const intContainer = document.getElementById('internal-channels');
   const extContainer = document.getElementById('external-channels');
+  const dirContainer = document.getElementById('director-channels');
+  const sysContainer = document.getElementById('system-channels');
   intContainer.innerHTML = '';
   extContainer.innerHTML = '';
+  dirContainer.innerHTML = '';
+  sysContainer.innerHTML = '';
 
   Object.keys(channelsData).sort().forEach(name => {
     const ch = channelsData[name];
@@ -1214,10 +1238,16 @@ function renderSidebar() {
     badge.className = 'unread-badge' + (unreadByChannel[name] > 0 && name !== currentChannel ? ' visible' : '');
     badge.textContent = unreadByChannel[name] || '';
     badge.id = 'badge-' + name.replace('#', '');
-    btn.innerHTML = '<span>' + escapeHtml(name) + '</span>';
+    // Show persona display name for director channels instead of raw channel name
+    const label = ch.is_director ? (PERSONA_DISPLAY[ch.director_persona] || name) : name;
+    btn.innerHTML = '<span>' + escapeHtml(label) + '</span>';
     btn.appendChild(badge);
     btn.addEventListener('click', () => switchChannel(name));
-    if (ch.is_external) {
+    if (ch.is_system) {
+      sysContainer.appendChild(btn);
+    } else if (ch.is_director) {
+      dirContainer.appendChild(btn);
+    } else if (ch.is_external) {
       extContainer.appendChild(btn);
     } else {
       intContainer.appendChild(btn);
@@ -1233,6 +1263,12 @@ function switchChannel(name) {
   renderMessages();
   loadMessages(name);
   updateSenderDropdown();
+  // Hide persona bar in director channels
+  const ch = channelsData[name];
+  const personaBar = document.getElementById('persona-bar');
+  if (personaBar) {
+    personaBar.style.display = (ch && ch.is_director) ? 'none' : '';
+  }
 }
 
 function updateChannelHeader() {
@@ -1372,7 +1408,8 @@ function connectSSE() {
 async function send() {
   const content = input.value.trim();
   if (!content) return;
-  const sender = getSenderLabel();
+  const ch = channelsData[currentChannel];
+  const sender = (ch && ch.is_director) ? 'Scenario Director' : getSenderLabel();
   input.value = '';
   await fetch('/api/messages', {
     method: 'POST',
@@ -2270,12 +2307,18 @@ def create_app() -> Flask:
             result = []
             for name, info in sorted(_channels.items()):
                 members = sorted(_channel_members.get(name, set()))
-                result.append({
+                entry = {
                     "name": name,
                     "description": info["description"],
                     "is_external": info["is_external"],
                     "members": members,
-                })
+                }
+                if info.get("is_system"):
+                    entry["is_system"] = True
+                if info.get("is_director"):
+                    entry["is_director"] = True
+                    entry["director_persona"] = info.get("director_persona", "")
+                result.append(entry)
         return jsonify(result)
 
     @app.route("/api/channels/<path:name>/join", methods=["POST"])
