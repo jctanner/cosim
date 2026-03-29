@@ -1,0 +1,90 @@
+name: "DotCom 2000"
+description: "A 5-person web agency in 1999. The future is now. Everything needs to be online yesterday."
+
+characters:
+  webmaster:
+    display_name: "Derek (Webmaster)"
+    character_file: "characters/derek-webmaster.md"
+    team_description: "HTML, site architecture, FTP deployments, knows where the server lives"
+  flashdev:
+    display_name: "Bryce (Flash Developer)"
+    character_file: "characters/bryce-flashdev.md"
+    team_description: "Macromedia Flash, ActionScript, splash pages, skip intro buttons"
+  designer:
+    display_name: "Tiffany (Graphic Designer)"
+    character_file: "characters/tiffany-designer.md"
+    team_description: "Photoshop, visual design, pixel-perfect layouts, animated GIFs"
+  pm:
+    display_name: "Kevin (Project Manager)"
+    character_file: "characters/kevin-pm.md"
+    team_description: "client wrangling, timelines, budgets, 'synergy'"
+  bizdev:
+    display_name: "Monica (Biz Dev)"
+    character_file: "characters/monica-bizdev.md"
+    team_description: "sales, pitches, partnerships, eyeballs, runway, IPO dreams"
+
+channels:
+  "#general":
+    description: "Team discussion"
+    is_external: false
+  "#dev":
+    description: "Development and design"
+    is_external: false
+  "#client":
+    description: "Client-facing channel"
+    is_external: true
+  "#watercooler":
+    description: "Off-topic, Y2K theories, stock tips"
+    is_external: false
+
+memberships:
+  webmaster: ["#general", "#dev", "#client"]
+  flashdev: ["#general", "#dev"]
+  designer: ["#general", "#dev", "#client"]
+  pm: ["#general", "#dev", "#client"]
+  bizdev: ["#general", "#client", "#watercooler"]
+
+response_tiers:
+  1: ["webmaster", "flashdev", "designer"]
+  2: ["pm"]
+  3: ["bizdev"]
+
+folders:
+  shared:
+    type: "shared"
+    description: "Shared team documents"
+  public:
+    type: "public"
+    description: "Client deliverables"
+  design:
+    type: "department"
+    description: "Design assets and mockups"
+  dev:
+    type: "department"
+    description: "Development specs and code notes"
+  derek:
+    type: "personal"
+    description: "Derek's files"
+  bryce:
+    type: "personal"
+    description: "Bryce's files"
+  tiffany:
+    type: "personal"
+    description: "Tiffany's files"
+  kevin:
+    type: "personal"
+    description: "Kevin's files"
+  monica:
+    type: "personal"
+    description: "Monica's files"
+
+folder_access:
+  shared: ["webmaster", "flashdev", "designer", "pm", "bizdev"]
+  public: ["webmaster", "flashdev", "designer", "pm", "bizdev"]
+  design: ["designer", "flashdev", "pm"]
+  dev: ["webmaster", "flashdev", "pm"]
+  derek: ["webmaster"]
+  bryce: ["flashdev"]
+  tiffany: ["designer"]
+  kevin: ["pm"]
+  monica: ["bizdev"]

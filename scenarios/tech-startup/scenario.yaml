@@ -1,0 +1,175 @@
+name: "Tech Startup"
+description: "An 11-person engineering organization at a tech startup"
+
+characters:
+  pm:
+    display_name: "Sarah (PM)"
+    character_file: "characters/sarah-pm.md"
+    team_description: "product requirements, prioritization, scope"
+  engmgr:
+    display_name: "Marcus (Eng Manager)"
+    character_file: "characters/marcus-engmgr.md"
+    team_description: "capacity, staffing, delivery timelines"
+  architect:
+    display_name: "Priya (Architect)"
+    character_file: "characters/priya-architect.md"
+    team_description: "system design, technical feasibility"
+  senior:
+    display_name: "Alex (Senior Eng)"
+    character_file: "characters/alex-senior.md"
+    team_description: "implementation details, edge cases, testing"
+  support:
+    display_name: "Jordan (Support Eng)"
+    character_file: "characters/jordan-support.md"
+    team_description: "customer experience, documentation, support model"
+  sales:
+    display_name: "Taylor (Sales Eng)"
+    character_file: "characters/taylor-sales.md"
+    team_description: "customer-facing, competitive positioning, deal qualification"
+  ceo:
+    display_name: "Dana (CEO)"
+    character_file: "characters/dana-ceo.md"
+    team_description: "business strategy, revenue growth, deal-closing authority"
+  cfo:
+    display_name: "Morgan (CFO)"
+    character_file: "characters/morgan-cfo.md"
+    team_description: "financial strategy, deal economics, pricing, P&L"
+  marketing:
+    display_name: "Riley (Marketing)"
+    character_file: "characters/riley-marketing.md"
+    team_description: "brand positioning, content strategy, demand generation"
+  devops:
+    display_name: "Casey (DevOps)"
+    character_file: "characters/casey-devops.md"
+    team_description: "CI/CD pipelines, infrastructure, deployment automation, reliability"
+  projmgr:
+    display_name: "Nadia (Project Mgr)"
+    character_file: "characters/nadia-projmgr.md"
+    team_description: "ticket hygiene, standup enforcement, blocker resolution, execution tracking"
+
+channels:
+  "#general":
+    description: "Company-wide discussion"
+    is_external: false
+  "#engineering":
+    description: "Engineering team"
+    is_external: false
+  "#sales":
+    description: "Sales team"
+    is_external: false
+  "#support":
+    description: "Support team"
+    is_external: false
+  "#leadership":
+    description: "Executive leadership"
+    is_external: false
+  "#marketing":
+    description: "Marketing team"
+    is_external: false
+  "#devops":
+    description: "DevOps & infrastructure"
+    is_external: false
+  "#sales-external":
+    description: "Customer-facing sales channel"
+    is_external: true
+  "#support-external":
+    description: "Customer-facing support channel"
+    is_external: true
+
+memberships:
+  pm: ["#general", "#engineering", "#sales", "#support", "#leadership", "#marketing", "#devops"]
+  engmgr: ["#general", "#engineering", "#support", "#devops"]
+  architect: ["#general", "#engineering"]
+  senior: ["#general", "#engineering"]
+  support: ["#general", "#engineering", "#support", "#support-external"]
+  sales: ["#general", "#sales", "#sales-external", "#marketing"]
+  ceo: ["#general", "#leadership", "#sales", "#marketing"]
+  cfo: ["#general", "#leadership", "#sales"]
+  marketing: ["#general", "#marketing", "#sales", "#sales-external"]
+  devops: ["#general", "#devops", "#engineering", "#support"]
+  projmgr: ["#general", "#engineering", "#support", "#leadership", "#devops", "#sales", "#marketing"]
+
+response_tiers:
+  1: ["senior", "support", "sales", "devops"]
+  2: ["engmgr", "architect", "pm", "marketing", "projmgr"]
+  3: ["ceo", "cfo"]
+
+folders:
+  shared:
+    type: "shared"
+    description: "Shared team documents"
+  public:
+    type: "public"
+    description: "Customer-visible documents"
+  engineering:
+    type: "department"
+    description: "Engineering department"
+  sales:
+    type: "department"
+    description: "Sales department"
+  support:
+    type: "department"
+    description: "Support department"
+  leadership:
+    type: "department"
+    description: "Leadership team"
+  marketing:
+    type: "department"
+    description: "Marketing department"
+  devops:
+    type: "department"
+    description: "DevOps department"
+  sarah:
+    type: "personal"
+    description: "Sarah's private folder"
+  marcus:
+    type: "personal"
+    description: "Marcus's private folder"
+  priya:
+    type: "personal"
+    description: "Priya's private folder"
+  alex:
+    type: "personal"
+    description: "Alex's private folder"
+  jordan:
+    type: "personal"
+    description: "Jordan's private folder"
+  taylor:
+    type: "personal"
+    description: "Taylor's private folder"
+  dana:
+    type: "personal"
+    description: "Dana's private folder"
+  morgan:
+    type: "personal"
+    description: "Morgan's private folder"
+  riley:
+    type: "personal"
+    description: "Riley's private folder"
+  casey:
+    type: "personal"
+    description: "Casey's private folder"
+  nadia:
+    type: "personal"
+    description: "Nadia's private folder"
+
+folder_access:
+  shared: ["pm", "engmgr", "architect", "senior", "support", "sales", "ceo", "cfo", "marketing", "devops", "projmgr"]
+  public: ["pm", "engmgr", "architect", "senior", "support", "sales", "ceo", "cfo", "marketing", "devops", "projmgr"]
+  engineering: ["pm", "engmgr", "architect", "senior", "devops", "projmgr"]
+  sales: ["pm", "sales", "ceo", "cfo"]
+  support: ["pm", "engmgr", "support", "devops", "projmgr"]
+  leadership: ["pm", "ceo", "cfo", "projmgr"]
+  marketing: ["pm", "marketing", "sales", "ceo", "projmgr"]
+  devops: ["pm", "engmgr", "devops", "projmgr"]
+  sarah: ["pm"]
+  marcus: ["engmgr"]
+  priya: ["architect"]
+  alex: ["senior"]
+  jordan: ["support"]
+  taylor: ["sales"]
+  dana: ["ceo"]
+  morgan: ["cfo"]
+  riley: ["marketing"]
+  casey: ["devops"]
+  nadia: ["projmgr"]
