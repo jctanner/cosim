@@ -17,7 +17,7 @@ from lib.personas import (
 )
 from lib.agent_runner import AgentPool
 
-LOG_DIR = Path(__file__).parent.parent / "logs"
+LOG_DIR = Path(__file__).parent.parent / "var" / "logs"
 
 def _get_agent_display_names() -> set[str]:
     """Get agent display names dynamically (PERSONAS populated after scenario load)."""

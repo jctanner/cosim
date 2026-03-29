@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 
 
-TICKETS_DIR = Path(__file__).parent.parent / "tickets"
+TICKETS_DIR = Path(__file__).parent.parent / "var" / "tickets"
 
 
 def init_tickets_storage():

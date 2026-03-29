@@ -8,12 +8,13 @@ from pathlib import Path
 
 
 BASE_DIR = Path(__file__).parent.parent
-INSTANCES_DIR = BASE_DIR / "instances"
-CHAT_LOG = BASE_DIR / "chat.log"
-DOCS_DIR = BASE_DIR / "docs"
-GITLAB_DIR = BASE_DIR / "gitlab"
-TICKETS_DIR = BASE_DIR / "tickets"
-LOGS_DIR = BASE_DIR / "logs"
+VAR_DIR = BASE_DIR / "var"
+INSTANCES_DIR = VAR_DIR / "instances"
+CHAT_LOG = VAR_DIR / "chat.log"
+DOCS_DIR = VAR_DIR / "docs"
+GITLAB_DIR = VAR_DIR / "gitlab"
+TICKETS_DIR = VAR_DIR / "tickets"
+LOGS_DIR = VAR_DIR / "logs"
 
 # Current session state
 _current_session: dict = {
@@ -103,7 +104,7 @@ def save_session(name: str | None = None) -> dict:
         shutil.copy2(CHAT_LOG, instance_dir / "chat.log")
 
     for dirname in ["docs", "gitlab", "tickets", "logs"]:
-        src = BASE_DIR / dirname
+        src = VAR_DIR / dirname
         if src.exists():
             shutil.copytree(src, instance_dir / dirname)
 
@@ -155,7 +156,7 @@ def load_session(instance_name: str) -> dict:
     for dirname in ["docs", "gitlab", "tickets", "logs"]:
         src = instance_dir / dirname
         if src.exists():
-            shutil.copytree(src, BASE_DIR / dirname)
+            shutil.copytree(src, VAR_DIR / dirname)
 
     # Restore agent thoughts
     thoughts_path = instance_dir / "thoughts.json"

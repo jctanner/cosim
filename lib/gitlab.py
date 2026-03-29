@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 
 
-GITLAB_DIR = Path(__file__).parent.parent / "gitlab"
+GITLAB_DIR = Path(__file__).parent.parent / "var" / "gitlab"
 
 
 def init_gitlab_storage():
