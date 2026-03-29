@@ -3097,7 +3097,7 @@ def create_app() -> Flask:
         with _orchestrator_lock:
             orch = dict(_orchestrator_status)
             # Mark as disconnected if no heartbeat in 15 seconds
-            if orch["last_heartbeat"] == 0 or time.time() - orch["last_heartbeat"] > 15:
+            if orch["last_heartbeat"] == 0 or time.time() - orch["last_heartbeat"] > 30:
                 orch["state"] = "disconnected"
         return jsonify({
             "server": "running",
@@ -3162,7 +3162,7 @@ def create_app() -> Flask:
             agent_states = _orchestrator_status.get("agents", {})
             orch_state = _orchestrator_status.get("state", "disconnected")
             last_hb = _orchestrator_status.get("last_heartbeat", 0)
-        orch_connected = last_hb > 0 and (time.time() - last_hb < 15)
+        orch_connected = last_hb > 0 and (time.time() - last_hb < 30)
         with _agent_online_lock:
             for key, p in PERSONAS.items():
                 channels = sorted(DEFAULT_MEMBERSHIPS.get(key, set()))

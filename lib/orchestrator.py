@@ -1244,6 +1244,10 @@ async def run_orchestrator(args) -> None:
             if auto_round > 0:
                 print(f"\nAgents quiesced after {auto_round} autonomous round(s)")
 
+            # Ensure ready state is broadcast after all processing
+            agents = _build_agent_status(personas, pool)
+            client.send_heartbeat("ready", scenario_name, agents)
+
             print(f"\nWaiting for new messages (last_seen_id={last_seen_id})...")
     finally:
         try:
