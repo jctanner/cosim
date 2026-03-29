@@ -409,6 +409,10 @@ WEB_UI = """<!DOCTYPE html>
   .npc-status-dot.ready { background: #2ecc71; }
   .npc-status-dot.starting { background: #f39c12; animation: pulse 1s ease-in-out infinite; }
   .npc-status-dot.responding { background: #3498db; animation: pulse 0.5s ease-in-out infinite; }
+  .npc-status-dot.writing-docs { background: #9b59b6; animation: pulse 0.8s ease-in-out infinite; }
+  .npc-status-dot.committing-code { background: #e67e22; animation: pulse 0.8s ease-in-out infinite; }
+  .npc-status-dot.managing-tickets { background: #1abc9c; animation: pulse 0.8s ease-in-out infinite; }
+  .npc-status-dot.processing-commands { background: #f39c12; animation: pulse 0.8s ease-in-out infinite; }
   .npc-status-dot.offline { background: #666; }
   .npc-status-dot.disconnected { background: #444; }
   .npc-status-dot.unknown { background: #444; }
@@ -2130,17 +2134,21 @@ async function loadNPCs() {
 }
 
 const LIVE_STATE_LABELS = {
-  ready: 'Ready', starting: 'Starting...', responding: 'Responding...',
-  offline: 'Out of Office', disconnected: 'Disconnected', unknown: 'Unknown',
+  ready: 'Ready', starting: 'Starting...', responding: 'Thinking...',
+  'writing docs': 'Writing docs...', 'committing code': 'Committing code...',
+  'managing tickets': 'Managing tickets...', 'processing commands': 'Processing...',
+  'posting': 'Posting...', offline: 'Out of Office', disconnected: 'Disconnected',
+  unknown: 'Unknown',
 };
 
 function createNPCCard(npc) {
   const card = document.createElement('div');
   const ls = npc.live_state || 'unknown';
+  const lsCss = ls.replace(/ /g, '-');
   card.className = 'npc-card' + (npc.online ? '' : ' offline');
   card.innerHTML =
     '<div class="npc-card-header">' +
-      '<span class="npc-status-dot ' + ls + '"></span>' +
+      '<span class="npc-status-dot ' + lsCss + '"></span>' +
       '<span class="npc-card-name">' + escapeHtml(npc.display_name) + '</span>' +
       '<span class="npc-card-state">' + (LIVE_STATE_LABELS[ls] || ls) + '</span>' +
     '</div>' +
@@ -3254,6 +3262,13 @@ def create_app() -> Flask:
             return jsonify({"error": "instance required"}), 400
         try:
             meta = load_session(instance_name)
+            # Load the scenario config so channels/personas/folders are populated
+            scenario = meta.get("scenario")
+            if scenario:
+                from lib.scenario_loader import load_scenario as _load_scenario
+                _load_scenario(scenario)
+                set_scenario(scenario)
+            _reinitialize()
             # Apply saved memberships on top of defaults
             memberships = get_memberships_from_instance(instance_name)
             if memberships:
@@ -3261,9 +3276,7 @@ def create_app() -> Flask:
                     for ch, members in memberships.items():
                         if ch in _channel_members:
                             _channel_members[ch] = set(members)
-            _reinitialize()
             # Signal orchestrator to restart with this session's scenario
-            scenario = meta.get("scenario", get_current_session().get("scenario"))
             with _command_lock:
                 _orchestrator_command["action"] = "restart"
                 _orchestrator_command["scenario"] = scenario
