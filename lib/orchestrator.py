@@ -595,6 +595,7 @@ async def _process_json_response(
     parsed: dict,
     persona: dict,
     default_channel: str,
+    on_activity=None,
 ) -> dict[str, str]:
     """Process a parsed JSON agent response: execute commands, extract messages.
 
@@ -606,14 +607,20 @@ async def _process_json_response(
     doc_cmds, gitlab_cmds, tickets_cmds, channels_to_join = normalize_commands(parsed)
 
     if doc_cmds:
+        if on_activity:
+            on_activity("writing docs")
         results = _execute_doc_commands(client, doc_cmds, author)
         _log_doc_results(client, persona, results)
 
     if gitlab_cmds:
+        if on_activity:
+            on_activity("committing code")
         gl_results = _execute_gitlab_commands(client, gitlab_cmds, author)
         _log_gitlab_results(client, persona, gl_results)
 
     if tickets_cmds:
+        if on_activity:
+            on_activity("managing tickets")
         tk_results = _execute_tickets_commands(client, tickets_cmds, author)
         _log_tickets_results(client, persona, tk_results)
 
@@ -685,6 +692,7 @@ async def _process_agent_response(
     response: str,
     persona: dict,
     default_channel: str,
+    on_activity=None,
 ) -> dict[str, str]:
     """Process an agent response: try JSON first, fall back to regex parsing.
 
@@ -693,7 +701,7 @@ async def _process_agent_response(
     parsed = parse_json_response(response)
     if parsed is not None:
         print(f"  {persona['display_name']}: parsed as JSON (action={parsed.get('action')})")
-        return await _process_json_response(client, parsed, persona, default_channel)
+        return await _process_json_response(client, parsed, persona, default_channel, on_activity)
     else:
         return await _process_regex_response(client, response, persona, default_channel)
 
@@ -718,6 +726,7 @@ async def _run_loop(
     personas: list[dict],
     trigger_channels: set[str],
     max_waves: int,
+    scenario_name: str = "",
 ) -> set[str]:
     """Run the event-driven response loop with tiered responses.
 
@@ -830,7 +839,7 @@ async def _run_loop(
 
                 result = await pool.send(pk, prompt)
 
-                # Clear typing indicators and reset agent status
+                # Clear typing indicators
                 for ch in all_agent_channels:
                     client.set_typing(display_name, ch, active=False)
 
@@ -858,6 +867,9 @@ async def _run_loop(
                                       "Processing messages...")
 
                 if not result["success"]:
+                    agents_status = _build_agent_status(personas, pool)
+                    client.send_heartbeat("responding", scenario_name, agents_status,
+                                          "Processing messages...")
                     print(f"  {display_name}: failed, skipping")
                     continue
 
@@ -1189,7 +1201,11 @@ async def run_orchestrator(args) -> None:
             trigger_channels = {m.get("channel", "#general") for m in human_messages}
             print(f"\nNew human message(s) in {sorted(trigger_channels)}")
 
-            active_channels = await _run_loop(client, pool, personas, trigger_channels, max_waves)
+            active_channels = await _run_loop(client, pool, personas, trigger_channels, max_waves, scenario_name)
+
+            # Reset all agents to ready after processing
+            agents = _build_agent_status(personas, pool)
+            client.send_heartbeat("ready", scenario_name, agents)
 
             # Update last_seen_id to include any agent responses
             latest = client.get_messages()
@@ -1218,7 +1234,7 @@ async def run_orchestrator(args) -> None:
                       f" — agents continuing in {sorted(active_channels)}")
 
                 active_channels = await _run_loop(
-                    client, pool, personas, active_channels, max_waves,
+                    client, pool, personas, active_channels, max_waves, scenario_name,
                 )
 
                 latest = client.get_messages()
