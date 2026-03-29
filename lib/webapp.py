@@ -894,8 +894,28 @@ WEB_UI = """<!DOCTYPE html>
         </div>
         <div id="doc-editor-form">
           <input id="doc-editor-title" type="text" placeholder="Document title..." autocomplete="off" />
-          <select id="doc-editor-folder">
-          </select>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <select id="doc-editor-folder">
+            </select>
+            <span style="font-size:11px;color:#555">Author:</span>
+            <input id="doc-author-name" type="text" placeholder="Your name..." style="width:120px;background:#111;color:#e0e0e0;border:1px solid #333;padding:5px 8px;border-radius:6px;font-size:12px" />
+            <select id="doc-author-role" style="background:#111;color:#e0e0e0;border:1px solid #333;padding:5px 8px;border-radius:6px;font-size:12px">
+              <option value="">No role</option>
+              <option value="Consultant">Consultant</option>
+              <option value="Customer">Customer</option>
+              <option value="New Hire">New Hire</option>
+              <option value="Board Member">Board Member</option>
+              <option value="Intern">Intern</option>
+              <option value="Vendor">Vendor</option>
+              <option value="Investor">Investor</option>
+              <option value="Auditor">Auditor</option>
+              <option value="Competitor">Competitor</option>
+              <option value="Regulator">Regulator</option>
+              <option value="The Press">The Press</option>
+              <option value="Hacker">Hacker</option>
+              <option value="God">God</option>
+            </select>
+          </div>
           <textarea id="doc-editor-content" placeholder="Write your document content here (Markdown supported)..." rows="16"></textarea>
         </div>
       </div>
@@ -906,8 +926,45 @@ WEB_UI = """<!DOCTYPE html>
         <div id="doc-viewer-header">
           <button id="doc-back-btn">Back</button>
           <span id="doc-viewer-title"></span>
+          <div style="margin-left:auto;display:flex;gap:6px">
+            <button id="doc-history-btn" class="session-btn" style="font-size:11px">History</button>
+            <button id="doc-edit-btn" class="session-btn" style="font-size:11px">Edit</button>
+          </div>
         </div>
-        <div id="doc-viewer-content"></div>
+        <div id="doc-viewer-body" style="display:flex;flex:1;min-height:0;overflow:hidden">
+          <div id="doc-viewer-content" style="flex:1;overflow-y:auto"></div>
+          <div id="doc-history-panel" style="display:none;width:220px;min-width:220px;border-left:1px solid #333;background:#121a30;overflow-y:auto">
+            <div style="padding:8px 12px;font-size:11px;font-weight:700;color:#555;text-transform:uppercase;letter-spacing:0.5px">Version History</div>
+            <div id="doc-history-list"></div>
+          </div>
+        </div>
+        <div id="doc-edit-area" style="display:none;flex:1;min-height:0;flex-direction:column;padding:12px 20px;gap:8px">
+          <div style="display:flex;gap:8px;align-items:center">
+            <span style="font-size:11px;color:#555">Editing as:</span>
+            <input id="doc-edit-author-name" type="text" placeholder="Your name..." style="width:120px;background:#111;color:#e0e0e0;border:1px solid #333;padding:5px 8px;border-radius:6px;font-size:12px" />
+            <select id="doc-edit-author-role" style="background:#111;color:#e0e0e0;border:1px solid #333;padding:5px 8px;border-radius:6px;font-size:12px">
+              <option value="">No role</option>
+              <option value="Consultant">Consultant</option>
+              <option value="Customer">Customer</option>
+              <option value="New Hire">New Hire</option>
+              <option value="Board Member">Board Member</option>
+              <option value="Intern">Intern</option>
+              <option value="Vendor">Vendor</option>
+              <option value="Investor">Investor</option>
+              <option value="Auditor">Auditor</option>
+              <option value="Competitor">Competitor</option>
+              <option value="Regulator">Regulator</option>
+              <option value="The Press">The Press</option>
+              <option value="Hacker">Hacker</option>
+              <option value="God">God</option>
+            </select>
+            <div style="margin-left:auto;display:flex;gap:6px">
+              <button id="doc-edit-cancel" class="session-btn" style="font-size:11px">Cancel</button>
+              <button id="doc-edit-save" class="session-btn" style="font-size:11px;background:#e94560;border-color:#e94560;color:#fff">Save</button>
+            </div>
+          </div>
+          <textarea id="doc-edit-textarea" style="flex:1;background:#111;color:#e0e0e0;border:1px solid #333;padding:14px;border-radius:8px;font-size:14px;font-family:monospace;resize:none;outline:none"></textarea>
+        </div>
       </div>
     </div>
   </div>
@@ -1631,31 +1688,131 @@ function renderDocList(docs) {
     const card = document.createElement('div');
     card.className = 'doc-card';
     const folder = doc.folder || 'shared';
+    const author = doc.created_by || '';
+    const created = doc.created_at ? new Date(doc.created_at * 1000).toLocaleString() : '';
+    const updated = doc.updated_at && doc.updated_at !== doc.created_at ? new Date(doc.updated_at * 1000).toLocaleString() : '';
+    const editedBy = doc.updated_by || '';
+    let dateLine = created ? 'Created ' + created : '';
+    if (updated) dateLine += (dateLine ? ' | ' : '') + 'Edited ' + updated + (editedBy ? ' by ' + escapeHtml(editedBy) : '');
     card.innerHTML = '<div class="doc-card-meta">'
       + '<span class="doc-card-folder">' + escapeHtml(folder) + '</span>'
+      + (author ? '<span style="font-size:11px;color:#888">' + escapeHtml(author) + '</span>' : '')
       + '</div>'
       + '<div class="doc-card-title">' + escapeHtml(doc.title || doc.slug) + '</div>'
+      + (dateLine ? '<div style="font-size:10px;color:#555;margin-bottom:4px">' + dateLine + '</div>' : '')
       + '<div class="doc-card-preview">' + escapeHtml(doc.preview || '') + '</div>';
     card.addEventListener('click', () => viewDoc(folder, doc.slug));
     docsList.appendChild(card);
   });
 }
 
+let _currentDoc = null; // {folder, slug, content, ...}
+
 async function viewDoc(folder, slug) {
   const resp = await fetch('/api/docs/' + encodeURIComponent(folder) + '/' + encodeURIComponent(slug));
   if (!resp.ok) return;
-  const doc = await resp.json();
-  docViewerTitle.textContent = doc.title || doc.slug;
-  docViewerContent.innerHTML = renderMarkdown(doc.content || '');
+  _currentDoc = await resp.json();
+  _currentDoc.folder = folder;
+  _currentDoc.slug = slug;
+  const createdBy = _currentDoc.created_by || '';
+  const updatedBy = _currentDoc.updated_by || '';
+  const createdAt = _currentDoc.created_at ? new Date(_currentDoc.created_at * 1000).toLocaleString() : '';
+  const updatedAt = _currentDoc.updated_at ? new Date(_currentDoc.updated_at * 1000).toLocaleString() : '';
+  let meta = createdBy ? 'Created by ' + createdBy : '';
+  if (createdAt) meta += (meta ? ' on ' : '') + createdAt;
+  if (updatedBy && updatedBy !== createdBy) meta += ' | Edited by ' + updatedBy + ' on ' + updatedAt;
+  else if (updatedAt && updatedAt !== createdAt) meta += ' | Updated ' + updatedAt;
+  docViewerTitle.innerHTML = escapeHtml(_currentDoc.title || _currentDoc.slug) +
+    (meta ? '<div style="font-size:11px;color:#888;font-weight:400;margin-top:2px">' + escapeHtml(meta) + '</div>' : '');
+  document.getElementById('doc-viewer-content').innerHTML = renderMarkdown(_currentDoc.content || '');
+  document.getElementById('doc-viewer-body').style.display = 'flex';
+  document.getElementById('doc-edit-area').style.display = 'none';
   docViewer.classList.add('open');
   docsList.style.display = 'none';
   document.getElementById('docs-toolbar').style.display = 'none';
+  // Auto-show history panel
+  loadDocHistory();
 }
 
 docBackBtn.addEventListener('click', () => {
   docViewer.classList.remove('open');
   docsList.style.display = '';
   document.getElementById('docs-toolbar').style.display = '';
+  _currentDoc = null;
+});
+
+// Edit button
+document.getElementById('doc-edit-btn').addEventListener('click', () => {
+  if (!_currentDoc) return;
+  document.getElementById('doc-edit-textarea').value = _currentDoc.content || '';
+  document.getElementById('doc-edit-author-name').value = senderName.value;
+  document.getElementById('doc-edit-author-role').value = senderRole.value || '';
+  document.getElementById('doc-viewer-body').style.display = 'none';
+  document.getElementById('doc-edit-area').style.display = 'flex';
+});
+
+document.getElementById('doc-edit-cancel').addEventListener('click', () => {
+  document.getElementById('doc-edit-area').style.display = 'none';
+  document.getElementById('doc-viewer-body').style.display = 'flex';
+});
+
+document.getElementById('doc-edit-save').addEventListener('click', async () => {
+  if (!_currentDoc) return;
+  const content = document.getElementById('doc-edit-textarea').value;
+  const editName = document.getElementById('doc-edit-author-name').value.trim() || 'Anonymous';
+  const editRole = document.getElementById('doc-edit-author-role').value;
+  const author = editRole ? editName + ' (' + editRole + ')' : editName;
+  const resp = await fetch('/api/docs/' + encodeURIComponent(_currentDoc.folder) + '/' + encodeURIComponent(_currentDoc.slug), {
+    method: 'PUT',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({content, author}),
+  });
+  if (resp.ok) {
+    // Reload the doc
+    await viewDoc(_currentDoc.folder, _currentDoc.slug);
+  } else {
+    const err = await resp.json();
+    alert('Error: ' + (err.error || 'unknown'));
+  }
+});
+
+// History panel
+async function loadDocHistory() {
+  if (!_currentDoc) return;
+  const panel = document.getElementById('doc-history-panel');
+  const list = document.getElementById('doc-history-list');
+  list.innerHTML = '<div style="padding:8px 12px;font-size:11px;color:#888">Loading...</div>';
+  panel.style.display = '';
+  const resp = await fetch('/api/docs/' + encodeURIComponent(_currentDoc.folder) + '/' + encodeURIComponent(_currentDoc.slug) + '/history');
+  const history = await resp.json();
+  list.innerHTML = '';
+  if (!history.length) {
+    list.innerHTML = '<div style="padding:8px 12px;font-size:11px;color:#888">No version history</div>';
+    return;
+  }
+  history.forEach((v, i) => {
+    const item = document.createElement('div');
+    item.className = 'thought-item' + (i === 0 ? ' active' : '');
+    const ts = new Date(v.updated_at * 1000);
+    const label = v.is_current ? 'Current' : 'v' + (history.length - i);
+    item.innerHTML = '<div class="thought-item-time">' + escapeHtml(label) + ' - ' + ts.toLocaleString() + '</div>' +
+      '<div class="thought-item-preview">' + escapeHtml(v.updated_by || 'unknown') + '</div>';
+    item.addEventListener('click', () => {
+      document.querySelectorAll('#doc-history-list .thought-item').forEach(el => el.classList.remove('active'));
+      item.classList.add('active');
+      document.getElementById('doc-viewer-content').innerHTML = renderMarkdown(v.content || '');
+    });
+    list.appendChild(item);
+  });
+}
+
+document.getElementById('doc-history-btn').addEventListener('click', () => {
+  const panel = document.getElementById('doc-history-panel');
+  if (panel.style.display !== 'none') {
+    panel.style.display = 'none';
+  } else {
+    loadDocHistory();
+  }
 });
 
 let docsSearchTimer = null;
@@ -1686,6 +1843,9 @@ document.getElementById('new-doc-btn').addEventListener('click', () => {
   });
   docEditorTitle.value = '';
   docEditorContent.value = '';
+  // Pre-fill author from persona bar
+  document.getElementById('doc-author-name').value = senderName.value;
+  document.getElementById('doc-author-role').value = senderRole.value || '';
   docEditor.style.display = 'flex';
   docsList.style.display = 'none';
   document.getElementById('docs-toolbar').style.display = 'none';
@@ -1704,7 +1864,9 @@ document.getElementById('doc-editor-save').addEventListener('click', async () =>
   const content = docEditorContent.value;
   const folder = docEditorFolder.value;
   if (!title) { alert('Title is required'); return; }
-  const author = getSenderLabel();
+  const docName = document.getElementById('doc-author-name').value.trim() || 'Anonymous';
+  const docRole = document.getElementById('doc-author-role').value;
+  const author = docRole ? docName + ' (' + docRole + ')' : docName;
   const resp = await fetch('/api/docs', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
@@ -2922,14 +3084,48 @@ def create_app() -> Flask:
                 return jsonify({"error": "not found"}), 404
 
             doc_path = DOCS_DIR / folder / f"{slug}.txt"
+
+            # Save current content as a version before overwriting
+            old_content = ""
+            if doc_path.exists():
+                old_content = doc_path.read_text(encoding="utf-8", errors="replace")
+            if "history" not in meta:
+                meta["history"] = []
+            meta["history"].append({
+                "content": old_content,
+                "updated_by": meta.get("updated_by", meta.get("created_by", "unknown")),
+                "updated_at": meta.get("updated_at", meta.get("created_at", 0)),
+            })
+
             doc_path.write_text(content, encoding="utf-8")
             meta["updated_at"] = time.time()
+            meta["updated_by"] = author
             meta["size"] = len(content.encode("utf-8"))
             meta["preview"] = content[:100]
             _save_index()
 
         _broadcast_doc_event("updated", meta)
         return jsonify(meta)
+
+    @app.route("/api/docs/<folder>/<slug>/history", methods=["GET"])
+    def get_doc_history(folder, slug):
+        with _docs_lock:
+            meta = _docs_index.get(slug)
+        if meta is None or meta.get("folder") != folder:
+            return jsonify({"error": "not found"}), 404
+        history = meta.get("history", [])
+        # Add current version as the first entry
+        doc_path = DOCS_DIR / folder / f"{slug}.txt"
+        current_content = ""
+        if doc_path.exists():
+            current_content = doc_path.read_text(encoding="utf-8", errors="replace")
+        current = {
+            "content": current_content,
+            "updated_by": meta.get("updated_by", meta.get("created_by", "unknown")),
+            "updated_at": meta.get("updated_at", meta.get("created_at", 0)),
+            "is_current": True,
+        }
+        return jsonify([current] + list(reversed(history)))
 
     @app.route("/api/docs/<folder>/<slug>/append", methods=["POST"])
     def append_doc(folder, slug):
