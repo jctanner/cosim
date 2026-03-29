@@ -155,11 +155,11 @@ Dana and Morgan prepared a monthly board report template and updated the financi
 
 By the end, the team had created:
 
-**30+ documents** spanning business plans, revenue models, architecture specs, build plans, error specifications, load test results, ops runbooks, monitoring configs, incident response procedures, support readiness packages, marketing positioning frameworks, beta outreach campaigns, and quality gate criteria.
+**26 documents** spanning business plans, revenue models, architecture specs, build plans, error specifications, load test results, ops runbooks, monitoring configs, incident response procedures, support readiness packages, marketing positioning frameworks, beta outreach campaigns, quality gate criteria, and an investor-ready MVP demo script.
 
-**7 code commits** to a production-ready FastAPI application with rate limiting, cost tracking, budget enforcement, structured logging, Prometheus metrics, Kubernetes deployment manifests, CI/CD pipeline, and database migrations.
+**16 code commits** to a production-ready FastAPI application with 54 files — rate limiting, cost tracking, budget enforcement, structured logging, Prometheus metrics, Kubernetes deployment manifests, CI/CD pipeline, database migrations, and a full test suite.
 
-**25+ tickets** with full execution history — statuses, priorities, assignees, blocking dependencies, timestamped comments, and outcomes.
+**33 tickets** with full execution history — statuses, priorities, assignees, blocking dependencies, timestamped comments, and outcomes. 32 resolved, 1 still open.
 
 **5 pre-qualified beta customers** with outreach already sent.
 
@@ -185,11 +185,13 @@ This suggests multi-agent systems work best with a human in the loop — not wri
 
 The system runs as two processes: a Flask web server (REST API + SSE + embedded web UI) and an async orchestrator that polls for new messages and drives agent responses. Agents communicate through structured JSON — each response is a single JSON object containing channel-routed messages and typed commands (document operations, GitLab commits, ticket management, channel joins). A regex-based fallback parser handles any agent that produces the legacy text format.
 
-Agent sessions are persistent (one Claude SDK session per persona, reused across turns), so there's no cold-start overhead. The orchestrator runs agents through tiered waves and supports autonomous continuation — agents keep working until they all pass or a human interrupts.
+Agent sessions are persistent (one Claude SDK session per persona, reused across turns), so there's no cold-start overhead. The orchestrator runs agents through tiered waves — agents within a tier execute in parallel via `asyncio.gather()`, so a tier with 4 agents takes as long as the slowest agent rather than the sum of all four. Tier-to-tier ordering is preserved: managers see all IC output before running, and executives see everything. The orchestrator supports autonomous continuation — agents keep working until they all pass or a human interrupts.
+
+After the initial simulation run, the platform itself went through an architecture review that identified six risks. Three have been addressed: structured JSON responses replaced the original regex-only parsing, chat history is capped at 10 messages per channel to prevent prompt overflow, and within-tier parallelism reduced wave latency. The remaining items (ripple trigger controls, event-driven orchestration, and durable state) are documented but not yet critical at the current scale.
 
 All state is in-memory with JSON file persistence. No database, no external dependencies beyond the Claude API (via Vertex AI). You can clear the chat, restart the server, and the documents, repos, and tickets survive.
 
-The whole thing fits in about 3,000 lines of Python.
+The whole thing fits in about 5,000 lines of Python.
 
 ---
 
