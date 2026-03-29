@@ -13,6 +13,7 @@ CHAT_LOG = BASE_DIR / "chat.log"
 DOCS_DIR = BASE_DIR / "docs"
 GITLAB_DIR = BASE_DIR / "gitlab"
 TICKETS_DIR = BASE_DIR / "tickets"
+LOGS_DIR = BASE_DIR / "logs"
 
 # Current session state
 _current_session: dict = {
@@ -64,7 +65,7 @@ def _clear_runtime_dirs() -> None:
     """Remove runtime data directories and chat log."""
     if CHAT_LOG.exists():
         CHAT_LOG.unlink()
-    for d in [DOCS_DIR, GITLAB_DIR, TICKETS_DIR]:
+    for d in [DOCS_DIR, GITLAB_DIR, TICKETS_DIR, LOGS_DIR]:
         if d.exists():
             shutil.rmtree(d)
 
@@ -101,7 +102,7 @@ def save_session(name: str | None = None) -> dict:
     if CHAT_LOG.exists():
         shutil.copy2(CHAT_LOG, instance_dir / "chat.log")
 
-    for dirname in ["docs", "gitlab", "tickets"]:
+    for dirname in ["docs", "gitlab", "tickets", "logs"]:
         src = BASE_DIR / dirname
         if src.exists():
             shutil.copytree(src, instance_dir / dirname)
@@ -151,7 +152,7 @@ def load_session(instance_name: str) -> dict:
     if chat_src.exists():
         shutil.copy2(chat_src, CHAT_LOG)
 
-    for dirname in ["docs", "gitlab", "tickets"]:
+    for dirname in ["docs", "gitlab", "tickets", "logs"]:
         src = instance_dir / dirname
         if src.exists():
             shutil.copytree(src, BASE_DIR / dirname)
