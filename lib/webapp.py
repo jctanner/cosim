@@ -19,8 +19,8 @@ from lib.session import (
 from lib.scenario_loader import list_scenarios
 
 
-CHAT_LOG = Path(__file__).parent.parent / "chat.log"
-DOCS_DIR = Path(__file__).parent.parent / "docs"
+CHAT_LOG = Path(__file__).parent.parent / "var" / "chat.log"
+DOCS_DIR = Path(__file__).parent.parent / "var" / "docs"
 
 # In-memory state
 _messages: list[dict] = []
