@@ -3140,9 +3140,20 @@ def create_app() -> Flask:
 
             doc_path = DOCS_DIR / folder / f"{slug}.txt"
             existing = doc_path.read_text(encoding="utf-8", errors="replace")
+
+            # Save current content as a version before appending
+            if "history" not in meta:
+                meta["history"] = []
+            meta["history"].append({
+                "content": existing,
+                "updated_by": meta.get("updated_by", meta.get("created_by", "unknown")),
+                "updated_at": meta.get("updated_at", meta.get("created_at", 0)),
+            })
+
             new_content = existing + "\n" + content
             doc_path.write_text(new_content, encoding="utf-8")
             meta["updated_at"] = time.time()
+            meta["updated_by"] = author
             meta["size"] = len(new_content.encode("utf-8"))
             meta["preview"] = new_content[:100]
             _save_index()
