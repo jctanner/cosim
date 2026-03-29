@@ -1322,6 +1322,7 @@ document.querySelectorAll('.header-tab').forEach(tab => {
     tab.classList.add('active');
     document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
     document.getElementById(target + '-pane').classList.add('active');
+    if (target === 'chat') { renderSidebar(); renderMessages(); }
     if (target === 'docs') loadDocs();
     if (target === 'gitlab') loadRepos();
     if (target === 'tickets') loadTickets();
