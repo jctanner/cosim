@@ -450,6 +450,7 @@ def build_turn_prompt(
     docs: list[dict] | None = None,
     repos: list[dict] | None = None,
     tickets: list[dict] | None = None,
+    offline_agents: set[str] | None = None,
 ) -> str:
     """Build a lean per-turn prompt for a persistent session.
 
@@ -536,7 +537,20 @@ Reply with a single JSON object. Format: {{"action": "respond", "messages": [...
             + "\n\n".join(lines)
         )
 
+    # Build offline notice
+    offline_section = ""
+    if offline_agents:
+        offline_names = [PERSONAS[k]["display_name"] for k in offline_agents if k in PERSONAS]
+        if offline_names:
+            offline_section = (
+                "## Out of Office\n\n"
+                f"**Currently out of office:** {', '.join(sorted(offline_names))}\n\n"
+                "Do not expect responses from them. Do not defer work to them or suggest they handle something."
+            )
+
     parts = [f"## Chat History\n\n{history}"]
+    if offline_section:
+        parts.append(offline_section)
     if director_section:
         parts.append(director_section)
     if docs_section:

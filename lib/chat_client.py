@@ -304,6 +304,17 @@ class ChatClient:
         resp.raise_for_status()
         return resp.json()
 
+    # -- NPC status --
+
+    def get_npcs(self) -> list[dict]:
+        """Return list of NPC dicts with online/offline status."""
+        try:
+            resp = requests.get(f"{self.base_url}/api/npcs", timeout=10)
+            resp.raise_for_status()
+            return resp.json()
+        except Exception:
+            return []
+
     # -- Typing indicators --
 
     def set_typing(self, sender: str, channel: str, active: bool = True):

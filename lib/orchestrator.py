@@ -744,19 +744,32 @@ async def _run_loop(
         # Get current memberships from server
         memberships = _get_channel_memberships(client)
 
+        # Get online/offline status
+        npcs = client.get_npcs()
+        offline_keys = {n["key"] for n in npcs if not n.get("online", True)}
+
         # Collect unique agents to trigger, tracking which channel triggered them
         agents_to_run: dict[str, set[str]] = {}  # persona_key -> set of trigger channels
         for ch in trigger_channels:
             # Director channels trigger the specific agent they're for
             if ch.startswith("#director-"):
                 pk = ch.replace("#director-", "")
-                if pk in persona_map:
+                if pk in persona_map and pk not in offline_keys:
                     agents_to_run.setdefault(pk, set()).add(ch)
+                elif pk in offline_keys:
+                    print(f"  Skipping {persona_map.get(pk, {}).get('display_name', pk)}: out of office")
                 continue
             members = memberships.get(ch, set())
             for persona_key in members:
                 if persona_key in persona_map:
+                    if persona_key in offline_keys:
+                        continue
                     agents_to_run.setdefault(persona_key, set()).add(ch)
+
+        if offline_keys:
+            offline_names = [persona_map[k]["display_name"] for k in offline_keys if k in persona_map]
+            if offline_names:
+                print(f"  Out of office: {', '.join(offline_names)}")
 
         if not agents_to_run:
             print("  No agents to trigger in these channels")
@@ -802,9 +815,9 @@ async def _run_loop(
                     docs=docs,
                     repos=repos,
                     tickets=tickets,
+                    offline_agents=offline_keys,
                 )
-
-                # Show typing indicator in all channels this agent is in
+                # Show typing indicator and update agent status
                 display_name = persona["display_name"]
                 for ch in all_agent_channels:
                     client.set_typing(display_name, ch, active=True)
@@ -817,7 +830,7 @@ async def _run_loop(
 
                 result = await pool.send(pk, prompt)
 
-                # Clear typing indicators
+                # Clear typing indicators and reset agent status
                 for ch in all_agent_channels:
                     client.set_typing(display_name, ch, active=False)
 
