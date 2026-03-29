@@ -86,6 +86,7 @@ class AgentPool:
                 one-time role prompt for a persona.
             on_progress: optional callable(i, total, persona_key, display_name, state)
                 called before ("starting") and after ("ready") each agent.
+                Return True from the callback to abort startup early.
         """
         self._log_dir.mkdir(parents=True, exist_ok=True)
 
@@ -94,10 +95,16 @@ class AgentPool:
         for i, (key, persona) in enumerate(self._personas.items(), 1):
             print(f"  Starting ({i}/{total}): {persona['display_name']}...", end="", flush=True)
             if on_progress:
-                on_progress(i, total, key, persona["display_name"], "starting")
+                if on_progress(i, total, key, persona["display_name"], "starting"):
+                    print(f" ABORTED")
+                    print(f"Startup interrupted at {i}/{total}")
+                    return
             await self._open_session(key, build_initial_prompt)
             if on_progress:
-                on_progress(i, total, key, persona["display_name"], "ready")
+                if on_progress(i, total, key, persona["display_name"], "ready"):
+                    print(f" ABORTED after ready")
+                    print(f"Startup interrupted at {i}/{total}")
+                    return
         print(f"All {len(self._clients)}/{total} sessions ready")
 
     async def _open_session(self, persona_key: str, build_initial_prompt) -> None:
