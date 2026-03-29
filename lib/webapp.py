@@ -53,6 +53,10 @@ _gitlab_lock = threading.Lock()
 _tickets: dict[str, dict] = {}
 _tickets_lock = threading.Lock()
 
+# Agent online/offline state: persona_key -> True (online) / False (offline)
+_agent_online: dict[str, bool] = {}
+_agent_online_lock = threading.Lock()
+
 # Orchestrator status (updated via heartbeat from orchestrator process)
 _orchestrator_status: dict = {
     "state": "disconnected",  # disconnected, starting, ready, responding, restarting
@@ -286,6 +290,14 @@ def _init_tickets():
         _tickets.update(index)
 
 
+def _init_agent_online():
+    """Initialize agent online/offline state from PERSONAS."""
+    with _agent_online_lock:
+        _agent_online.clear()
+        for key in PERSONAS:
+            _agent_online[key] = True
+
+
 def _load_chat_log():
     """Load messages from chat.log into _messages."""
     with _lock:
@@ -312,6 +324,7 @@ def _reinitialize():
     _init_docs()
     _init_gitlab()
     _init_tickets()
+    _init_agent_online()
     _load_chat_log()
 
 
@@ -373,6 +386,46 @@ WEB_UI = """<!DOCTYPE html>
   .status-dot.responding { background: #3498db; animation: pulse 0.5s ease-in-out infinite; }
   .status-dot.restarting { background: #e94560; animation: pulse 0.8s ease-in-out infinite; }
   @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+  /* -- NPCs tab -- */
+  #npcs-pane { padding: 0; flex-direction: row; }
+  #npcs-sidebar { width: 200px; min-width: 200px; background: #121a30; border-right: 1px solid #0f3460;
+                  display: flex; flex-direction: column; overflow-y: auto; padding: 8px 0; }
+  #npcs-main { flex: 1; overflow-y: auto; padding: 20px; }
+  #npcs-content { max-width: 1000px; }
+  #npcs-empty { color: #666; text-align: center; padding: 40px; }
+  .npc-tier-section { margin-bottom: 24px; }
+  .npc-tier-header { font-size: 13px; font-weight: 700; text-transform: uppercase;
+                     letter-spacing: 1px; color: #888; margin-bottom: 10px;
+                     padding-bottom: 6px; border-bottom: 1px solid #333; }
+  .npc-tier-grid { display: flex; flex-wrap: wrap; gap: 12px; }
+  .npc-card { background: #1a1a2e; border: 1px solid #333; border-radius: 10px;
+              padding: 14px 16px; flex: 1 1 160px; max-width: 220px; min-width: 160px;
+              transition: border-color 0.15s; }
+  .npc-card:hover { border-color: #555; }
+  .npc-card.offline { opacity: 0.6; }
+  .npc-card-header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .npc-status-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+  .npc-status-dot.ready { background: #2ecc71; }
+  .npc-status-dot.starting { background: #f39c12; animation: pulse 1s ease-in-out infinite; }
+  .npc-status-dot.responding { background: #3498db; animation: pulse 0.5s ease-in-out infinite; }
+  .npc-status-dot.offline { background: #666; }
+  .npc-status-dot.disconnected { background: #444; }
+  .npc-status-dot.unknown { background: #444; }
+  .npc-card-state { font-size: 10px; color: #666; margin-left: auto; }
+  .npc-card-name { font-size: 14px; font-weight: 700; color: #e0e0e0; }
+  .npc-card-desc { font-size: 11px; color: #888; margin-bottom: 8px; line-height: 1.4; }
+  .npc-card-section-label { font-size: 10px; font-weight: 600; text-transform: uppercase;
+                           letter-spacing: 0.5px; color: #555; margin-bottom: 3px; margin-top: 6px; }
+  .npc-card-tags { margin-bottom: 4px; line-height: 1.8; }
+  .npc-tag { background: #111; color: #888; padding: 1px 6px; border-radius: 4px; font-size: 11px;
+             margin-right: 3px; display: inline-block; }
+  .npc-tag-folder { border-left: 2px solid #3498db; }
+  .npc-toggle-btn { width: 100%; background: transparent; border: 1px solid #333;
+                    color: #888; padding: 5px; border-radius: 6px; font-size: 11px;
+                    cursor: pointer; transition: all 0.15s; }
+  .npc-toggle-btn:hover { border-color: #e94560; color: #e94560; }
+  .npc-toggle-btn.is-online:hover { border-color: #f39c12; color: #f39c12; }
 
   /* -- Modal overlay -- */
   .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7);
@@ -732,6 +785,7 @@ WEB_UI = """<!DOCTYPE html>
   <button class="header-tab" data-tab="docs">Docs</button>
   <button class="header-tab" data-tab="gitlab">GitLab</button>
   <button class="header-tab" data-tab="tickets">Tickets</button>
+  <button class="header-tab" data-tab="npcs">NPCs</button>
   <div id="session-controls">
     <span id="orch-status" title="Orchestrator status">
       <span id="orch-dot" class="status-dot disconnected"></span>
@@ -963,6 +1017,21 @@ WEB_UI = """<!DOCTYPE html>
           </select>
         </div>
         <div id="ticket-detail-content"></div>
+      </div>
+    </div>
+  </div>
+  <!-- NPCs tab -->
+  <div id="npcs-pane" class="tab-pane">
+    <div id="npcs-sidebar">
+      <div class="sidebar-section">Scenario</div>
+      <div id="npcs-scenario-info" style="padding:8px 14px;font-size:12px;color:#888;">No scenario loaded</div>
+      <hr class="sidebar-divider">
+      <div class="sidebar-section">Summary</div>
+      <div id="npcs-summary" style="padding:8px 14px;font-size:12px;color:#888;"></div>
+    </div>
+    <div id="npcs-main">
+      <div id="npcs-content">
+        <div id="npcs-empty">No scenario loaded. Click New to start a session.</div>
       </div>
     </div>
   </div>
@@ -1203,6 +1272,7 @@ document.querySelectorAll('.header-tab').forEach(tab => {
     if (target === 'docs') loadDocs();
     if (target === 'gitlab') loadRepos();
     if (target === 'tickets') loadTickets();
+    if (target === 'npcs') loadNPCs();
   });
 });
 
@@ -2000,6 +2070,101 @@ loadFolders();
 loadRepos();
 loadTickets();
 
+// -- NPCs tab --
+
+const TIER_LABELS = {1: 'Tier 1 — ICs', 2: 'Tier 2 — Managers', 3: 'Tier 3 — Executives'};
+
+async function loadNPCs() {
+  const container = document.getElementById('npcs-content');
+  const empty = document.getElementById('npcs-empty');
+  const resp = await fetch('/api/npcs');
+  const npcs = await resp.json();
+  // Update sidebar summary
+  const summaryEl = document.getElementById('npcs-summary');
+  const scenarioEl = document.getElementById('npcs-scenario-info');
+  if (npcs.length === 0) {
+    container.innerHTML = '';
+    container.appendChild(empty);
+    empty.style.display = 'block';
+    summaryEl.textContent = '';
+    scenarioEl.textContent = 'No scenario loaded';
+    return;
+  }
+  const readyCount = npcs.filter(n => n.live_state === 'ready').length;
+  const startingCount = npcs.filter(n => n.live_state === 'starting').length;
+  const respondingCount = npcs.filter(n => n.live_state === 'responding').length;
+  const oooCount = npcs.filter(n => !n.online).length;
+  const disconnectedCount = npcs.filter(n => n.online && n.live_state === 'disconnected').length;
+  scenarioEl.innerHTML = '<strong>' + npcs.length + ' agents</strong>';
+  let summaryHtml = '';
+  if (readyCount > 0) summaryHtml += '<div style="color:#2ecc71">Ready: ' + readyCount + '</div>';
+  if (respondingCount > 0) summaryHtml += '<div style="color:#3498db">Responding: ' + respondingCount + '</div>';
+  if (startingCount > 0) summaryHtml += '<div style="color:#f39c12">Starting: ' + startingCount + '</div>';
+  if (oooCount > 0) summaryHtml += '<div style="color:#888">Out of office: ' + oooCount + '</div>';
+  if (disconnectedCount > 0) summaryHtml += '<div style="color:#555">Disconnected: ' + disconnectedCount + '</div>';
+  if (!summaryHtml) summaryHtml = '<div style="color:#555">No agents active</div>';
+  summaryEl.innerHTML = summaryHtml;
+  // Group by tier
+  const tiers = {};
+  npcs.forEach(npc => {
+    const t = npc.tier || 0;
+    if (!tiers[t]) tiers[t] = [];
+    tiers[t].push(npc);
+  });
+  container.innerHTML = '';
+  Object.keys(tiers).sort().forEach(tierNum => {
+    const section = document.createElement('div');
+    section.className = 'npc-tier-section';
+    const header = document.createElement('div');
+    header.className = 'npc-tier-header';
+    header.textContent = TIER_LABELS[tierNum] || ('Tier ' + tierNum);
+    section.appendChild(header);
+    const grid = document.createElement('div');
+    grid.className = 'npc-tier-grid';
+    tiers[tierNum].forEach(npc => {
+      grid.appendChild(createNPCCard(npc));
+    });
+    section.appendChild(grid);
+    container.appendChild(section);
+  });
+}
+
+const LIVE_STATE_LABELS = {
+  ready: 'Ready', starting: 'Starting...', responding: 'Responding...',
+  offline: 'Out of Office', disconnected: 'Disconnected', unknown: 'Unknown',
+};
+
+function createNPCCard(npc) {
+  const card = document.createElement('div');
+  const ls = npc.live_state || 'unknown';
+  card.className = 'npc-card' + (npc.online ? '' : ' offline');
+  card.innerHTML =
+    '<div class="npc-card-header">' +
+      '<span class="npc-status-dot ' + ls + '"></span>' +
+      '<span class="npc-card-name">' + escapeHtml(npc.display_name) + '</span>' +
+      '<span class="npc-card-state">' + (LIVE_STATE_LABELS[ls] || ls) + '</span>' +
+    '</div>' +
+    '<div class="npc-card-desc">' + escapeHtml(npc.team_description) + '</div>' +
+    '<div class="npc-card-section-label">Channels</div>' +
+    '<div class="npc-card-tags">' +
+      npc.channels.map(ch => '<span class="npc-tag">' + escapeHtml(ch) + '</span>').join('') +
+    '</div>' +
+    '<div class="npc-card-section-label">Doc Folders</div>' +
+    '<div class="npc-card-tags">' +
+      (npc.folders || []).map(f => '<span class="npc-tag npc-tag-folder">' + escapeHtml(f) + '</span>').join('') +
+    '</div>';
+  const btn = document.createElement('button');
+  btn.className = 'npc-toggle-btn' + (npc.online ? ' is-online' : '');
+  btn.textContent = npc.online ? 'Set Out of Office' : 'Bring Online';
+  btn.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    await fetch('/api/npcs/' + encodeURIComponent(npc.key) + '/toggle', {method: 'POST'});
+    loadNPCs();
+  });
+  card.appendChild(btn);
+  return card;
+}
+
 // -- Orchestrator status polling --
 
 const orchDot = document.getElementById('orch-dot');
@@ -2023,6 +2188,8 @@ async function pollStatus() {
     orchDot.className = 'status-dot ' + state;
     const msg = status.orchestrator.message;
     orchLabel.textContent = msg || STATUS_LABELS[state] || state;
+    // Auto-refresh NPC tab if it's visible
+    if (currentTab === 'npcs') loadNPCs();
   } catch(e) {
     orchDot.className = 'status-dot disconnected';
     orchLabel.textContent = 'Server error';
@@ -2075,6 +2242,7 @@ async function reloadAllState() {
   loadDocs();
   loadRepos();
   loadTickets();
+  loadNPCs();
 }
 
 // -- New Session Modal --
@@ -2291,6 +2459,8 @@ def create_app() -> Flask:
 
     _init_tickets()
     print(f"Tickets storage ready: {TICKETS_DIR}  ({len(_tickets)} existing tickets)")
+
+    _init_agent_online()
 
     _load_chat_log()
     print(f"Chat log: {len(_messages)} messages loaded")
@@ -2972,6 +3142,71 @@ def create_app() -> Flask:
         }
         _broadcast(event)
         return jsonify({"ok": True})
+
+    # -- NPC API --
+
+    @app.route("/api/npcs", methods=["GET"])
+    def list_npcs():
+        from lib.personas import PERSONAS, RESPONSE_TIERS, PERSONA_TIER, DEFAULT_MEMBERSHIPS
+        from lib.docs import get_accessible_folders
+        result = []
+        with _orchestrator_lock:
+            agent_states = _orchestrator_status.get("agents", {})
+            orch_state = _orchestrator_status.get("state", "disconnected")
+            last_hb = _orchestrator_status.get("last_heartbeat", 0)
+        orch_connected = last_hb > 0 and (time.time() - last_hb < 15)
+        with _agent_online_lock:
+            for key, p in PERSONAS.items():
+                channels = sorted(DEFAULT_MEMBERSHIPS.get(key, set()))
+                folders = sorted(get_accessible_folders(key))
+                toggled_online = _agent_online.get(key, True)
+                # Determine live state from orchestrator heartbeat
+                agent_info = agent_states.get(key, {})
+                if not orch_connected:
+                    live_state = "disconnected"
+                elif not toggled_online:
+                    live_state = "offline"
+                else:
+                    live_state = agent_info.get("state", "unknown")
+                result.append({
+                    "key": key,
+                    "display_name": p["display_name"],
+                    "team_description": p.get("team_description", ""),
+                    "tier": PERSONA_TIER.get(key, 0),
+                    "channels": channels,
+                    "folders": folders,
+                    "online": toggled_online,
+                    "live_state": live_state,
+                })
+        return jsonify(result)
+
+    @app.route("/api/npcs/<key>/toggle", methods=["POST"])
+    def toggle_npc(key):
+        from lib.personas import PERSONAS
+        if key not in PERSONAS:
+            return jsonify({"error": f"unknown agent: {key}"}), 404
+        display_name = PERSONAS[key]["display_name"]
+        with _agent_online_lock:
+            current = _agent_online.get(key, True)
+            _agent_online[key] = not current
+            new_state = _agent_online[key]
+        # Post system message
+        if new_state:
+            msg = f"{display_name} is back online"
+        else:
+            msg = f"{display_name} is now out of office"
+        with _lock:
+            sys_msg = {
+                "id": len(_messages) + 1,
+                "sender": "System",
+                "content": msg,
+                "channel": "#system",
+                "timestamp": time.time(),
+            }
+            _messages.append(sys_msg)
+        _persist_message(sys_msg)
+        _broadcast(sys_msg)
+        return jsonify({"key": key, "online": new_state, "display_name": display_name})
 
     # -- Personas API --
 
