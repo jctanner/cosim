@@ -76,6 +76,13 @@ def _get_channel_memberships() -> dict[str, list[str]]:
         return {ch: sorted(members) for ch, members in _channel_members.items()}
 
 
+def _get_agent_thoughts() -> dict[str, dict]:
+    """Get current agent thoughts from webapp."""
+    from lib.webapp import _agent_thoughts, _agent_thoughts_lock
+    with _agent_thoughts_lock:
+        return dict(_agent_thoughts)
+
+
 def save_session(name: str | None = None) -> dict:
     """Save current state to an instance directory. Returns metadata."""
     scenario = _current_session["scenario"]
@@ -102,6 +109,11 @@ def save_session(name: str | None = None) -> dict:
     # Save channel memberships
     memberships = _get_channel_memberships()
     (instance_dir / "memberships.json").write_text(json.dumps(memberships, indent=2))
+
+    # Save agent thoughts
+    thoughts = _get_agent_thoughts()
+    if thoughts:
+        (instance_dir / "thoughts.json").write_text(json.dumps(thoughts, indent=2))
 
     # Write metadata
     now = time.time()
@@ -143,6 +155,18 @@ def load_session(instance_name: str) -> dict:
         src = instance_dir / dirname
         if src.exists():
             shutil.copytree(src, BASE_DIR / dirname)
+
+    # Restore agent thoughts
+    thoughts_path = instance_dir / "thoughts.json"
+    if thoughts_path.exists():
+        try:
+            from lib.webapp import _agent_thoughts, _agent_thoughts_lock
+            thoughts = json.loads(thoughts_path.read_text())
+            with _agent_thoughts_lock:
+                _agent_thoughts.clear()
+                _agent_thoughts.update(thoughts)
+        except Exception:
+            pass
 
     # Update current session tracking
     _current_session["scenario"] = meta.get("scenario", _current_session["scenario"])

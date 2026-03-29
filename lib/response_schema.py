@@ -22,35 +22,56 @@ _CODE_FENCE_RE = re.compile(
 def parse_json_response(text: str) -> dict | None:
     """Attempt to parse agent text as a JSON response.
 
-    Strips markdown code fences if present. Returns None if the text
-    is not valid JSON or lacks a valid 'action' field (triggers regex
-    fallback in the orchestrator).
+    Strips markdown code fences if present. Tries multiple strategies
+    to extract valid JSON. Returns None if no valid JSON with a valid
+    'action' field can be found (triggers regex fallback in the orchestrator).
     """
     text = text.strip()
     if not text:
         return None
 
-    # Strip markdown code fences
+    # Strategy 1: Strip markdown code fences
     fence_match = _CODE_FENCE_RE.match(text)
     if fence_match:
         text = fence_match.group(1).strip()
 
-    # Quick check: must start with {
-    if not text.startswith("{"):
-        return None
+    # Strategy 2: Try direct parse
+    parsed = _try_parse_json(text)
+    if parsed:
+        return parsed
 
+    # Strategy 3: Find first { and last } — extract the JSON object
+    first_brace = text.find("{")
+    last_brace = text.rfind("}")
+    if first_brace >= 0 and last_brace > first_brace:
+        candidate = text[first_brace:last_brace + 1]
+        parsed = _try_parse_json(candidate)
+        if parsed:
+            return parsed
+
+    # Strategy 4: Look for code fences anywhere in the text (not just wrapping it)
+    fence_search = re.search(r'```(?:json)?\s*\n(.*?)\n\s*```', text, re.DOTALL)
+    if fence_search:
+        parsed = _try_parse_json(fence_search.group(1).strip())
+        if parsed:
+            return parsed
+
+    return None
+
+
+def _try_parse_json(text: str) -> dict | None:
+    """Try to parse text as JSON with a valid action field."""
+    if not text or not text.startswith("{"):
+        return None
     try:
         parsed = json.loads(text)
     except (json.JSONDecodeError, ValueError):
         return None
-
     if not isinstance(parsed, dict):
         return None
-
     action = parsed.get("action")
     if action not in _VALID_ACTIONS:
         return None
-
     return parsed
 
 
