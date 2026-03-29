@@ -57,6 +57,10 @@ _tickets_lock = threading.Lock()
 _agent_online: dict[str, bool] = {}
 _agent_online_lock = threading.Lock()
 
+# Agent thoughts: persona_key -> list of {thinking, response, timestamp}
+_agent_thoughts: dict[str, list[dict]] = {}
+_agent_thoughts_lock = threading.Lock()
+
 # Orchestrator status (updated via heartbeat from orchestrator process)
 _orchestrator_status: dict = {
     "state": "disconnected",  # disconnected, starting, ready, responding, restarting
@@ -430,6 +434,15 @@ WEB_UI = """<!DOCTYPE html>
                     cursor: pointer; transition: all 0.15s; }
   .npc-toggle-btn:hover { border-color: #e94560; color: #e94560; }
   .npc-toggle-btn.is-online:hover { border-color: #f39c12; color: #f39c12; }
+  .npc-detail-tab { transition: all 0.15s; }
+  .npc-detail-tab.active { background: #e94560; border-color: #e94560; color: #fff; }
+  .thought-item { padding: 8px 12px; cursor: pointer; border-bottom: 1px solid #1a1a2e;
+                  font-size: 11px; color: #888; transition: background 0.1s; }
+  .thought-item:hover { background: #1a1a3e; }
+  .thought-item.active { background: #1a1a3e; color: #e0e0e0; border-left: 3px solid #e94560; }
+  .thought-item-time { color: #555; font-size: 10px; }
+  .thought-item-preview { color: #888; margin-top: 2px; overflow: hidden;
+                          text-overflow: ellipsis; white-space: nowrap; }
 
   /* -- Modal overlay -- */
   .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7);
@@ -1106,6 +1119,29 @@ WEB_UI = """<!DOCTYPE html>
     <div class="modal-actions">
       <button class="modal-btn-cancel" id="load-session-cancel">Cancel</button>
       <button class="modal-btn-primary" id="load-session-confirm" disabled>Load</button>
+    </div>
+  </div>
+</div>
+
+<!-- NPC Detail Modal -->
+<div class="modal-overlay" id="npc-detail-modal">
+  <div class="modal" style="width:80vw;max-width:1000px;height:75vh;display:flex;flex-direction:column">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+      <h2 id="npc-detail-title" style="margin:0"></h2>
+      <button class="modal-btn-cancel" id="npc-detail-close">Close</button>
+    </div>
+    <div style="display:flex;gap:8px;margin-bottom:12px">
+      <button class="session-btn npc-detail-tab active" data-npc-tab="thoughts">Thoughts</button>
+      <button class="session-btn npc-detail-tab" data-npc-tab="prompt">Prompt</button>
+    </div>
+    <div id="npc-detail-thoughts" style="flex:1;min-height:0;display:flex;gap:0;border-radius:8px;overflow:hidden;border:1px solid #333">
+      <div id="npc-thoughts-list" style="width:200px;min-width:200px;background:#121a30;overflow-y:auto;border-right:1px solid #333">
+      </div>
+      <div id="npc-thoughts-content" style="flex:1;overflow-y:auto;background:#111;padding:16px;font-size:13px;color:#ccc;white-space:pre-wrap;font-family:monospace;line-height:1.5">
+        No thoughts recorded yet.
+      </div>
+    </div>
+    <div id="npc-detail-prompt" style="flex:1;min-height:0;overflow-y:auto;background:#111;border-radius:8px;padding:16px;font-size:13px;color:#ccc;white-space:pre-wrap;font-family:monospace;line-height:1.5;display:none">
     </div>
   </div>
 </div>
@@ -2223,8 +2259,108 @@ function createNPCCard(npc) {
     loadNPCs();
   });
   card.appendChild(btn);
+  card.style.cursor = 'pointer';
+  card.addEventListener('click', (e) => {
+    if (e.target === btn) return;  // don't open detail when clicking toggle
+    openNPCDetail(npc.key, npc.display_name);
+  });
   return card;
 }
+
+// -- NPC detail modal --
+
+let _npcDetailKey = null;
+let _npcDetailTab = 'thoughts';
+let _npcThoughtsData = [];
+
+async function openNPCDetail(key, displayName) {
+  _npcDetailKey = key;
+  _npcDetailTab = 'thoughts';
+  document.getElementById('npc-detail-title').textContent = displayName;
+  document.querySelectorAll('.npc-detail-tab').forEach(t => {
+    t.classList.toggle('active', t.dataset.npcTab === 'thoughts');
+  });
+  switchNPCDetailTab('thoughts');
+  await loadNPCThoughts();
+  openModal('npc-detail-modal');
+}
+
+function switchNPCDetailTab(tab) {
+  _npcDetailTab = tab;
+  document.getElementById('npc-detail-thoughts').style.display = tab === 'thoughts' ? 'flex' : 'none';
+  document.getElementById('npc-detail-prompt').style.display = tab === 'prompt' ? '' : 'none';
+}
+
+async function loadNPCThoughts() {
+  const list = document.getElementById('npc-thoughts-list');
+  const content = document.getElementById('npc-thoughts-content');
+  list.innerHTML = '';
+  content.textContent = 'Loading...';
+  const resp = await fetch('/api/npcs/' + encodeURIComponent(_npcDetailKey) + '/thoughts');
+  _npcThoughtsData = await resp.json();
+  if (!_npcThoughtsData.length) {
+    content.textContent = 'No thoughts recorded yet. This agent has not responded to any messages.';
+    return;
+  }
+  // Render list items (newest first)
+  const reversed = [..._npcThoughtsData].reverse();
+  reversed.forEach((t, i) => {
+    const idx = _npcThoughtsData.length - 1 - i;
+    const item = document.createElement('div');
+    item.className = 'thought-item' + (i === 0 ? ' active' : '');
+    item.dataset.idx = idx;
+    const ts = new Date(t.timestamp * 1000);
+    const timeStr = ts.toLocaleTimeString();
+    const dateStr = ts.toLocaleDateString();
+    const preview = (t.thinking || t.response || '').substring(0, 60).replace(/[\\n\\r]+/g, ' ');
+    item.innerHTML = '<div class="thought-item-time">' + dateStr + ' ' + timeStr + '</div>' +
+      '<div class="thought-item-preview">' + escapeHtml(preview) + '</div>';
+    item.addEventListener('click', () => selectThought(idx));
+    list.appendChild(item);
+  });
+  // Select the newest
+  selectThought(_npcThoughtsData.length - 1);
+}
+
+function selectThought(idx) {
+  const content = document.getElementById('npc-thoughts-content');
+  const t = _npcThoughtsData[idx];
+  if (!t) return;
+  // Update active state in list
+  document.querySelectorAll('.thought-item').forEach(el => {
+    el.classList.toggle('active', parseInt(el.dataset.idx) === idx);
+  });
+  const ts = new Date(t.timestamp * 1000).toLocaleString();
+  let text = '=== Internal Thinking ===  ' + ts + '\\n\\n';
+  text += t.thinking || '(no thinking captured)';
+  text += '\\n\\n=== Response ===\\n\\n';
+  text += t.response || '(no response)';
+  content.textContent = text;
+}
+
+async function loadNPCPrompt() {
+  const body = document.getElementById('npc-detail-prompt');
+  body.textContent = 'Loading...';
+  const resp = await fetch('/api/npcs/' + encodeURIComponent(_npcDetailKey) + '/prompt');
+  const data = await resp.json();
+  body.textContent = data.content || data.error || 'No prompt found.';
+}
+
+document.querySelectorAll('.npc-detail-tab').forEach(tab => {
+  tab.addEventListener('click', async () => {
+    _npcDetailTab = tab.dataset.npcTab;
+    document.querySelectorAll('.npc-detail-tab').forEach(t => {
+      t.classList.toggle('active', t.dataset.npcTab === _npcDetailTab);
+    });
+    switchNPCDetailTab(_npcDetailTab);
+    if (_npcDetailTab === 'thoughts') await loadNPCThoughts();
+    else if (_npcDetailTab === 'prompt') await loadNPCPrompt();
+  });
+});
+
+document.getElementById('npc-detail-close').addEventListener('click', () => {
+  closeModal('npc-detail-modal');
+});
 
 // -- Orchestrator status polling --
 
@@ -3268,6 +3404,38 @@ def create_app() -> Flask:
         _persist_message(sys_msg)
         _broadcast(sys_msg)
         return jsonify({"key": key, "online": new_state, "display_name": display_name})
+
+    # -- Agent thoughts API --
+
+    @app.route("/api/npcs/<key>/thoughts", methods=["GET"])
+    def get_agent_thoughts(key):
+        with _agent_thoughts_lock:
+            thoughts = list(_agent_thoughts.get(key, []))
+        return jsonify(thoughts)
+
+    @app.route("/api/npcs/<key>/thoughts", methods=["POST"])
+    def post_agent_thoughts(key):
+        data = request.get_json(force=True)
+        entry = {
+            "thinking": data.get("thinking", ""),
+            "response": data.get("response", ""),
+            "timestamp": time.time(),
+        }
+        with _agent_thoughts_lock:
+            _agent_thoughts.setdefault(key, []).append(entry)
+        return jsonify({"ok": True})
+
+    @app.route("/api/npcs/<key>/prompt", methods=["GET"])
+    def get_agent_prompt(key):
+        """Return the character file content for this agent."""
+        from lib.personas import PERSONAS, load_persona_instructions
+        if key not in PERSONAS:
+            return jsonify({"error": "unknown agent"}), 404
+        try:
+            content = load_persona_instructions(key)
+            return jsonify({"key": key, "content": content})
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
 
     # -- Personas API --
 

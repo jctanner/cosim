@@ -874,6 +874,11 @@ async def _run_loop(
                     continue
 
                 response = result["response_text"].strip()
+                thinking = result.get("thinking_text", "")
+
+                # Post agent thoughts to the server
+                if thinking or response:
+                    client.post_thoughts(persona_key, thinking, response)
 
                 # Update status during command processing
                 def _update_agent_activity(activity, _pk=persona_key, _dn=display_name):

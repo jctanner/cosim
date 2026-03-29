@@ -42,13 +42,18 @@ def format_duration(seconds: float) -> str:
     return " ".join(parts)
 
 
-def _extract_response_text(msg, response_parts: list[str]) -> None:
+def _extract_response_text(msg, response_parts: list[str],
+                           thinking_parts: list[str] | None = None) -> None:
     """Extract text from an SDK message into response_parts list."""
     type_name = type(msg).__name__
     if type_name == "AssistantMessage":
         for block in msg.content:
-            if type(block).__name__ == "TextBlock":
+            block_type = type(block).__name__
+            if block_type == "TextBlock":
                 response_parts.append(block.text)
+            elif block_type == "ThinkingBlock" and thinking_parts is not None:
+                if hasattr(block, "thinking") and block.thinking:
+                    thinking_parts.append(block.thinking)
     elif type_name == "ResultMessage":
         # Handle structured_output (JSON mode) if present
         if hasattr(msg, "structured_output") and msg.structured_output:
@@ -174,6 +179,7 @@ class AgentPool:
 
         start_time = time.monotonic()
         response_parts = []
+        thinking_parts = []
 
         try:
             await client.query(prompt)
@@ -182,10 +188,11 @@ class AgentPool:
                     with open(log_file, "a") as f:
                         f.write(f"{msg}\n")
                         f.flush()
-                _extract_response_text(msg, response_parts)
+                _extract_response_text(msg, response_parts, thinking_parts)
 
             elapsed = time.monotonic() - start_time
             response_text = "\n".join(response_parts).strip()
+            thinking_text = "\n\n".join(thinking_parts).strip()
 
             if log_file:
                 with open(log_file, "a") as f:
@@ -197,6 +204,7 @@ class AgentPool:
                 "name": name,
                 "success": True,
                 "response_text": response_text,
+                "thinking_text": thinking_text,
                 "duration_seconds": elapsed,
             }
 

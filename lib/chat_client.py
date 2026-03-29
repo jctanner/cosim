@@ -304,6 +304,19 @@ class ChatClient:
         resp.raise_for_status()
         return resp.json()
 
+    # -- Agent thoughts --
+
+    def post_thoughts(self, persona_key: str, thinking: str, response: str):
+        """Post agent's internal thoughts to the server."""
+        try:
+            requests.post(
+                f"{self.base_url}/api/npcs/{persona_key}/thoughts",
+                json={"thinking": thinking, "response": response},
+                timeout=5,
+            )
+        except Exception:
+            pass
+
     # -- NPC status --
 
     def get_npcs(self) -> list[dict]:
