@@ -117,15 +117,19 @@ The server and orchestrator run as separate processes. The orchestrator polls fo
 ### CLI Options
 
 ```
-python main.py server [--port 5000] [--host 127.0.0.1]
+python main.py server [--scenario tech-startup]
+                      [--port 5000] [--host 127.0.0.1]
 
-python main.py chat [--model sonnet|opus|haiku]
+python main.py chat [--scenario tech-startup]
+                     [--model sonnet|opus|haiku]
                      [--personas pm,senior,architect]
                      [--max-rounds 5]
                      [--max-auto-rounds 0]
                      [--poll-interval 5.0]
                      [--server-url http://127.0.0.1:5000]
 ```
+
+Use `--scenario` to load a different scenario (default: `tech-startup`). Scenarios are defined in `scenarios/<name>/scenario.yaml` with per-character markdown files in `scenarios/<name>/characters/`.
 
 Use `--personas` to run a subset of the team for faster iteration or lower cost. `--max-auto-rounds` limits how many autonomous continuation rounds agents can run after the initial trigger (0 = unlimited).
 
@@ -254,23 +258,17 @@ Respond PASS if:
 │   ├── orchestrator.py              # Event loop, command execution, tiered dispatch
 │   ├── agent_runner.py              # Persistent Claude SDK sessions (AgentPool)
 │   ├── chat_client.py               # HTTP client for the webapp API
-│   ├── personas.py                  # Persona registry, prompt builder
+│   ├── personas.py                  # Persona registry, prompt builder (config loaded from scenario)
+│   ├── scenario_loader.py           # Reads scenario.yaml, populates module-level config
 │   ├── response_schema.py           # JSON response parser + command normalizer
 │   ├── docs.py                      # Document storage utilities, folder access
 │   ├── gitlab.py                    # GitLab mock storage utilities
 │   └── tickets.py                   # Ticket storage + ID generation
-├── .claude/skills/
-│   ├── product-manager/SKILL.md
-│   ├── engineering-manager/SKILL.md
-│   ├── software-architect/SKILL.md
-│   ├── senior-engineer/SKILL.md
-│   ├── support-engineer/SKILL.md
-│   ├── sales-engineer/SKILL.md
-│   ├── ceo/SKILL.md
-│   ├── cfo/SKILL.md
-│   ├── marketing/SKILL.md
-│   ├── devops-engineer/SKILL.md
-│   └── project-manager-ops/SKILL.md
+├── scenarios/
+│   └── tech-startup/                # Default scenario
+│       ├── scenario.yaml            # Channels, tiers, folders, character refs
+│       └── characters/              # Per-character role prompts (.md)
+├── .claude/skills/                  # Claude Code skill definitions (also used as legacy prompts)
 ├── docs/                            # Runtime — document storage (folders + index)
 ├── gitlab/                          # Runtime — git repo storage
 ├── tickets/                         # Runtime — ticket storage

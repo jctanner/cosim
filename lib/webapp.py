@@ -12,6 +12,11 @@ from lib.docs import slugify, DEFAULT_FOLDERS, DEFAULT_FOLDER_ACCESS
 from lib.personas import DEFAULT_CHANNELS, DEFAULT_MEMBERSHIPS, PERSONAS
 from lib.gitlab import GITLAB_DIR, init_gitlab_storage, load_repos_index, save_repos_index, generate_commit_id
 from lib.tickets import TICKETS_DIR, init_tickets_storage, load_tickets_index, save_tickets_index, generate_ticket_id
+from lib.session import (
+    save_session, load_session, new_session, list_sessions,
+    get_current_session, set_scenario, get_memberships_from_instance,
+)
+from lib.scenario_loader import list_scenarios
 
 
 CHAT_LOG = Path(__file__).parent.parent / "chat.log"
@@ -48,6 +53,28 @@ _gitlab_lock = threading.Lock()
 _tickets: dict[str, dict] = {}
 _tickets_lock = threading.Lock()
 
+# Agent online/offline state: persona_key -> True (online) / False (offline)
+_agent_online: dict[str, bool] = {}
+_agent_online_lock = threading.Lock()
+
+# Agent thoughts: persona_key -> list of {thinking, response, timestamp}
+_agent_thoughts: dict[str, list[dict]] = {}
+_agent_thoughts_lock = threading.Lock()
+
+# Orchestrator status (updated via heartbeat from orchestrator process)
+_orchestrator_status: dict = {
+    "state": "disconnected",  # disconnected, starting, ready, responding, restarting
+    "scenario": None,
+    "agents": {},             # persona_key -> {state, display_name}
+    "last_heartbeat": 0,
+    "message": "",
+}
+_orchestrator_lock = threading.Lock()
+
+# Control signal for orchestrator (checked on each poll)
+_orchestrator_command: dict = {"action": None}  # None, "restart", "shutdown"
+_command_lock = threading.Lock()
+
 
 def _init_channels():
     """Initialize channels and memberships from persona defaults."""
@@ -59,6 +86,28 @@ def _init_channels():
             _channels[ch_name] = {
                 "description": ch_info["description"],
                 "is_external": ch_info["is_external"],
+                "created_at": now,
+            }
+            _channel_members[ch_name] = set()
+
+        # Always create #system channel for operator messages (no agent membership)
+        _channels["#system"] = {
+            "description": "System events and operator messages",
+            "is_external": False,
+            "is_system": True,
+            "created_at": now,
+        }
+        _channel_members["#system"] = set()
+
+        # Create director channels for each persona
+        for pk, p_info in PERSONAS.items():
+            ch_name = f"#director-{pk}"
+            display = p_info.get("display_name", pk)
+            _channels[ch_name] = {
+                "description": f"Private channel with {display}",
+                "is_external": False,
+                "is_director": True,
+                "director_persona": pk,
                 "created_at": now,
             }
             _channel_members[ch_name] = set()
@@ -245,6 +294,44 @@ def _init_tickets():
         _tickets.update(index)
 
 
+def _init_agent_online():
+    """Initialize agent online/offline state from PERSONAS."""
+    with _agent_online_lock:
+        _agent_online.clear()
+        for key in PERSONAS:
+            _agent_online[key] = True
+
+
+def _load_chat_log():
+    """Load messages from chat.log into _messages."""
+    with _lock:
+        _messages.clear()
+    if not CHAT_LOG.exists():
+        return
+    with open(CHAT_LOG) as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                msg = json.loads(line)
+                with _lock:
+                    _messages.append(msg)
+            except json.JSONDecodeError:
+                pass
+
+
+def _reinitialize():
+    """Re-initialize all subsystems from disk state."""
+    _init_channels()
+    _init_folders()
+    _init_docs()
+    _init_gitlab()
+    _init_tickets()
+    _init_agent_online()
+    _load_chat_log()
+
+
 def _broadcast_tickets_event(action: str, data: dict):
     """Send a tickets_event through the existing SSE subscribers."""
     payload = {"type": "tickets_event", "action": action}
@@ -285,6 +372,113 @@ WEB_UI = """<!DOCTYPE html>
                 border-bottom: 2px solid transparent; transition: all 0.15s ease; }
   .header-tab:hover { color: #e0e0e0; }
   .header-tab.active { color: #e94560; border-bottom-color: #e94560; }
+  #session-controls { margin-left: auto; display: flex; align-items: center; gap: 6px; padding: 8px 0; }
+  .session-btn { background: transparent; color: #888; border: 1px solid #333; padding: 6px 12px;
+                 border-radius: 6px; font-size: 12px; cursor: pointer; font-weight: 600; }
+  .session-btn:hover { border-color: #e94560; color: #e94560; }
+  #session-load-select { background: #1a1a2e; color: #888; border: 1px solid #333; padding: 6px 8px;
+                         border-radius: 6px; font-size: 12px; max-width: 200px; }
+  #orch-status { display: flex; align-items: center; gap: 5px; margin-right: 8px;
+                 padding: 4px 10px; border: 1px solid #333; border-radius: 6px; }
+  #orch-label { font-size: 11px; color: #888; }
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  .status-dot.disconnected { background: #666; }
+  .status-dot.waiting { background: #f39c12; }
+  .status-dot.connecting { background: #f39c12; animation: pulse 1s ease-in-out infinite; }
+  .status-dot.starting { background: #f39c12; animation: pulse 1s ease-in-out infinite; }
+  .status-dot.ready { background: #2ecc71; }
+  .status-dot.responding { background: #3498db; animation: pulse 0.5s ease-in-out infinite; }
+  .status-dot.restarting { background: #e94560; animation: pulse 0.8s ease-in-out infinite; }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+  /* -- NPCs tab -- */
+  #npcs-pane { padding: 0; flex-direction: row; }
+  #npcs-sidebar { width: 200px; min-width: 200px; background: #121a30; border-right: 1px solid #0f3460;
+                  display: flex; flex-direction: column; overflow-y: auto; padding: 8px 0; }
+  #npcs-main { flex: 1; overflow-y: auto; padding: 20px; }
+  #npcs-content { max-width: 1000px; }
+  #npcs-empty { color: #666; text-align: center; padding: 40px; }
+  .npc-tier-section { margin-bottom: 24px; }
+  .npc-tier-header { font-size: 13px; font-weight: 700; text-transform: uppercase;
+                     letter-spacing: 1px; color: #888; margin-bottom: 10px;
+                     padding-bottom: 6px; border-bottom: 1px solid #333; }
+  .npc-tier-grid { display: flex; flex-wrap: wrap; gap: 12px; }
+  .npc-card { background: #1a1a2e; border: 1px solid #333; border-radius: 10px;
+              padding: 14px 16px; flex: 1 1 160px; max-width: 220px; min-width: 160px;
+              transition: border-color 0.15s; }
+  .npc-card:hover { border-color: #555; }
+  .npc-card.offline { opacity: 0.6; }
+  .npc-card-header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .npc-status-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+  .npc-status-dot.ready { background: #2ecc71; }
+  .npc-status-dot.starting { background: #f39c12; animation: pulse 1s ease-in-out infinite; }
+  .npc-status-dot.responding { background: #3498db; animation: pulse 0.5s ease-in-out infinite; }
+  .npc-status-dot.writing-docs { background: #9b59b6; animation: pulse 0.8s ease-in-out infinite; }
+  .npc-status-dot.committing-code { background: #e67e22; animation: pulse 0.8s ease-in-out infinite; }
+  .npc-status-dot.managing-tickets { background: #1abc9c; animation: pulse 0.8s ease-in-out infinite; }
+  .npc-status-dot.processing-commands { background: #f39c12; animation: pulse 0.8s ease-in-out infinite; }
+  .npc-status-dot.offline { background: #666; }
+  .npc-status-dot.disconnected { background: #444; }
+  .npc-status-dot.unknown { background: #444; }
+  .npc-card-state { font-size: 10px; color: #666; margin-left: auto; }
+  .npc-card-name { font-size: 14px; font-weight: 700; color: #e0e0e0; }
+  .npc-card-desc { font-size: 11px; color: #888; margin-bottom: 8px; line-height: 1.4; }
+  .npc-card-section-label { font-size: 10px; font-weight: 600; text-transform: uppercase;
+                           letter-spacing: 0.5px; color: #555; margin-bottom: 3px; margin-top: 6px; }
+  .npc-card-tags { margin-bottom: 4px; line-height: 1.8; }
+  .npc-tag { background: #111; color: #888; padding: 1px 6px; border-radius: 4px; font-size: 11px;
+             margin-right: 3px; display: inline-block; }
+  .npc-tag-folder { border-left: 2px solid #3498db; }
+  .npc-toggle-btn { width: 100%; background: transparent; border: 1px solid #333;
+                    color: #888; padding: 5px; border-radius: 6px; font-size: 11px;
+                    cursor: pointer; transition: all 0.15s; }
+  .npc-toggle-btn:hover { border-color: #e94560; color: #e94560; }
+  .npc-toggle-btn.is-online:hover { border-color: #f39c12; color: #f39c12; }
+  .npc-detail-tab { transition: all 0.15s; }
+  .npc-detail-tab.active { background: #e94560; border-color: #e94560; color: #fff; }
+  .thought-item { padding: 8px 12px; cursor: pointer; border-bottom: 1px solid #1a1a2e;
+                  font-size: 11px; color: #888; transition: background 0.1s; }
+  .thought-item:hover { background: #1a1a3e; }
+  .thought-item.active { background: #1a1a3e; color: #e0e0e0; border-left: 3px solid #e94560; }
+  .thought-item-time { color: #555; font-size: 10px; }
+  .thought-item-preview { color: #888; margin-top: 2px; overflow: hidden;
+                          text-overflow: ellipsis; white-space: nowrap; }
+
+  /* -- Modal overlay -- */
+  .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7);
+                   z-index: 1000; align-items: center; justify-content: center; }
+  .modal-overlay.open { display: flex; }
+  .modal { background: #1a1a2e; border: 1px solid #333; border-radius: 12px;
+           padding: 24px; min-width: 380px; max-width: 500px; box-shadow: 0 8px 32px rgba(0,0,0,0.5); }
+  .modal h2 { margin: 0 0 16px; font-size: 16px; color: #e94560; }
+  .modal-field { margin-bottom: 14px; }
+  .modal-field label { display: block; font-size: 12px; color: #888; margin-bottom: 4px; font-weight: 600;
+                       text-transform: uppercase; letter-spacing: 0.5px; }
+  .modal-field input, .modal-field select, .modal-field textarea {
+    width: 100%; background: #111; color: #e0e0e0; border: 1px solid #333; padding: 8px 12px;
+    border-radius: 8px; font-size: 14px; outline: none; box-sizing: border-box; }
+  .modal-field input:focus, .modal-field select:focus, .modal-field textarea:focus { border-color: #e94560; }
+  .modal-field textarea { resize: vertical; min-height: 60px; font-family: inherit; }
+  .modal-field .field-hint { font-size: 11px; color: #555; margin-top: 4px; }
+  .modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 18px; }
+  .modal-btn-primary { background: #e94560; color: #fff; border: none; padding: 8px 20px;
+                       border-radius: 8px; cursor: pointer; font-size: 13px; font-weight: 600; }
+  .modal-btn-primary:hover { background: #c0392b; }
+  .modal-btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+  .modal-btn-cancel { background: transparent; color: #888; border: 1px solid #333; padding: 8px 20px;
+                      border-radius: 8px; cursor: pointer; font-size: 13px; }
+  .modal-btn-cancel:hover { border-color: #e94560; color: #e94560; }
+  .modal-status { font-size: 12px; color: #4fc3f7; margin-top: 10px; min-height: 16px; }
+
+  /* -- Loading overlay -- */
+  #loading-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.8);
+                     z-index: 2000; align-items: center; justify-content: center; flex-direction: column; gap: 12px; }
+  #loading-overlay.open { display: flex; }
+  #loading-overlay .spinner { width: 32px; height: 32px; border: 3px solid #333;
+                              border-top-color: #e94560; border-radius: 50%;
+                              animation: spin 0.8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  #loading-text { color: #e0e0e0; font-size: 14px; }
 
   #main-layout { flex: 1; display: flex; overflow: hidden; }
 
@@ -608,6 +802,18 @@ WEB_UI = """<!DOCTYPE html>
   <button class="header-tab" data-tab="docs">Docs</button>
   <button class="header-tab" data-tab="gitlab">GitLab</button>
   <button class="header-tab" data-tab="tickets">Tickets</button>
+  <button class="header-tab" data-tab="npcs">NPCs</button>
+  <div id="session-controls">
+    <span id="orch-status" title="Orchestrator status">
+      <span id="orch-dot" class="status-dot disconnected"></span>
+      <span id="orch-label">Disconnected</span>
+    </span>
+    <button id="session-new-btn" class="session-btn" title="New session">New</button>
+    <button id="session-save-btn" class="session-btn" title="Save session">Save</button>
+    <select id="session-load-select" title="Load session">
+      <option value="" disabled selected>Load...</option>
+    </select>
+  </div>
 </div>
 <div id="main-layout">
   <!-- Chat tab: sidebar + chat area -->
@@ -618,6 +824,12 @@ WEB_UI = """<!DOCTYPE html>
       <hr class="sidebar-divider">
       <div class="sidebar-section">External</div>
       <div id="external-channels"></div>
+      <hr class="sidebar-divider">
+      <div class="sidebar-section">Scenario Director</div>
+      <div id="director-channels"></div>
+      <hr class="sidebar-divider">
+      <div class="sidebar-section">System</div>
+      <div id="system-channels"></div>
     </div>
     <div id="chat-area">
       <div id="channel-header">
@@ -682,8 +894,28 @@ WEB_UI = """<!DOCTYPE html>
         </div>
         <div id="doc-editor-form">
           <input id="doc-editor-title" type="text" placeholder="Document title..." autocomplete="off" />
-          <select id="doc-editor-folder">
-          </select>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <select id="doc-editor-folder">
+            </select>
+            <span style="font-size:11px;color:#555">Author:</span>
+            <input id="doc-author-name" type="text" placeholder="Your name..." style="width:120px;background:#111;color:#e0e0e0;border:1px solid #333;padding:5px 8px;border-radius:6px;font-size:12px" />
+            <select id="doc-author-role" style="background:#111;color:#e0e0e0;border:1px solid #333;padding:5px 8px;border-radius:6px;font-size:12px">
+              <option value="">No role</option>
+              <option value="Consultant">Consultant</option>
+              <option value="Customer">Customer</option>
+              <option value="New Hire">New Hire</option>
+              <option value="Board Member">Board Member</option>
+              <option value="Intern">Intern</option>
+              <option value="Vendor">Vendor</option>
+              <option value="Investor">Investor</option>
+              <option value="Auditor">Auditor</option>
+              <option value="Competitor">Competitor</option>
+              <option value="Regulator">Regulator</option>
+              <option value="The Press">The Press</option>
+              <option value="Hacker">Hacker</option>
+              <option value="God">God</option>
+            </select>
+          </div>
           <textarea id="doc-editor-content" placeholder="Write your document content here (Markdown supported)..." rows="16"></textarea>
         </div>
       </div>
@@ -694,8 +926,45 @@ WEB_UI = """<!DOCTYPE html>
         <div id="doc-viewer-header">
           <button id="doc-back-btn">Back</button>
           <span id="doc-viewer-title"></span>
+          <div style="margin-left:auto;display:flex;gap:6px">
+            <button id="doc-history-btn" class="session-btn" style="font-size:11px">History</button>
+            <button id="doc-edit-btn" class="session-btn" style="font-size:11px">Edit</button>
+          </div>
         </div>
-        <div id="doc-viewer-content"></div>
+        <div id="doc-viewer-body" style="display:flex;flex:1;min-height:0;overflow:hidden">
+          <div id="doc-viewer-content" style="flex:1;overflow-y:auto"></div>
+          <div id="doc-history-panel" style="display:none;width:220px;min-width:220px;border-left:1px solid #333;background:#121a30;overflow-y:auto">
+            <div style="padding:8px 12px;font-size:11px;font-weight:700;color:#555;text-transform:uppercase;letter-spacing:0.5px">Version History</div>
+            <div id="doc-history-list"></div>
+          </div>
+        </div>
+        <div id="doc-edit-area" style="display:none;flex:1;min-height:0;flex-direction:column;padding:12px 20px;gap:8px">
+          <div style="display:flex;gap:8px;align-items:center">
+            <span style="font-size:11px;color:#555">Editing as:</span>
+            <input id="doc-edit-author-name" type="text" placeholder="Your name..." style="width:120px;background:#111;color:#e0e0e0;border:1px solid #333;padding:5px 8px;border-radius:6px;font-size:12px" />
+            <select id="doc-edit-author-role" style="background:#111;color:#e0e0e0;border:1px solid #333;padding:5px 8px;border-radius:6px;font-size:12px">
+              <option value="">No role</option>
+              <option value="Consultant">Consultant</option>
+              <option value="Customer">Customer</option>
+              <option value="New Hire">New Hire</option>
+              <option value="Board Member">Board Member</option>
+              <option value="Intern">Intern</option>
+              <option value="Vendor">Vendor</option>
+              <option value="Investor">Investor</option>
+              <option value="Auditor">Auditor</option>
+              <option value="Competitor">Competitor</option>
+              <option value="Regulator">Regulator</option>
+              <option value="The Press">The Press</option>
+              <option value="Hacker">Hacker</option>
+              <option value="God">God</option>
+            </select>
+            <div style="margin-left:auto;display:flex;gap:6px">
+              <button id="doc-edit-cancel" class="session-btn" style="font-size:11px">Cancel</button>
+              <button id="doc-edit-save" class="session-btn" style="font-size:11px;background:#e94560;border-color:#e94560;color:#fff">Save</button>
+            </div>
+          </div>
+          <textarea id="doc-edit-textarea" style="flex:1;background:#111;color:#e0e0e0;border:1px solid #333;padding:14px;border-radius:8px;font-size:14px;font-family:monospace;resize:none;outline:none"></textarea>
+        </div>
       </div>
     </div>
   </div>
@@ -704,6 +973,19 @@ WEB_UI = """<!DOCTYPE html>
     <div id="gitlab-sidebar">
       <div class="gitlab-sidebar-section">Repositories</div>
       <div id="gitlab-repo-list"></div>
+      <div style="padding:8px 10px">
+        <button id="gl-new-repo-btn" class="session-btn" style="width:100%;font-size:11px">+ New Repo</button>
+      </div>
+      <div id="gl-new-repo-form" style="display:none;padding:4px 10px 10px">
+        <input id="gl-new-repo-name" type="text" placeholder="repo-name" autocomplete="off"
+               style="width:100%;background:#111;color:#e0e0e0;border:1px solid #333;padding:5px 8px;border-radius:6px;font-size:12px;margin-bottom:6px;box-sizing:border-box" />
+        <input id="gl-new-repo-desc" type="text" placeholder="Description (optional)" autocomplete="off"
+               style="width:100%;background:#111;color:#e0e0e0;border:1px solid #333;padding:5px 8px;border-radius:6px;font-size:12px;margin-bottom:6px;box-sizing:border-box" />
+        <div style="display:flex;gap:4px">
+          <button id="gl-new-repo-cancel" class="session-btn" style="flex:1;font-size:11px">Cancel</button>
+          <button id="gl-new-repo-save" class="session-btn" style="flex:1;font-size:11px;background:#e94560;border-color:#e94560;color:#fff">Create</button>
+        </div>
+      </div>
     </div>
     <div id="gitlab-main">
       <div id="gitlab-header">
@@ -825,7 +1107,108 @@ WEB_UI = """<!DOCTYPE html>
       </div>
     </div>
   </div>
+  <!-- NPCs tab -->
+  <div id="npcs-pane" class="tab-pane">
+    <div id="npcs-sidebar">
+      <div class="sidebar-section">Scenario</div>
+      <div id="npcs-scenario-info" style="padding:8px 14px;font-size:12px;color:#888;">No scenario loaded</div>
+      <hr class="sidebar-divider">
+      <div class="sidebar-section">Summary</div>
+      <div id="npcs-summary" style="padding:8px 14px;font-size:12px;color:#888;"></div>
+    </div>
+    <div id="npcs-main">
+      <div id="npcs-content">
+        <div id="npcs-empty">No scenario loaded. Click New to start a session.</div>
+      </div>
+    </div>
+  </div>
 </div>
+
+<!-- New Session Modal -->
+<div class="modal-overlay" id="new-session-modal">
+  <div class="modal">
+    <h2>New Session</h2>
+    <div class="modal-field">
+      <label>Scenario</label>
+      <select id="new-session-scenario"></select>
+      <div class="field-hint" id="new-session-scenario-desc"></div>
+    </div>
+    <div class="modal-field">
+      <label>Session Name (optional)</label>
+      <input id="new-session-name" type="text" placeholder="e.g. consulting-run" autocomplete="off" />
+      <div class="field-hint">Leave blank to auto-generate from scenario + date</div>
+    </div>
+    <div class="modal-status" id="new-session-status"></div>
+    <div class="modal-actions">
+      <button class="modal-btn-cancel" id="new-session-cancel">Cancel</button>
+      <button class="modal-btn-primary" id="new-session-confirm">Create</button>
+    </div>
+  </div>
+</div>
+
+<!-- Save Session Modal -->
+<div class="modal-overlay" id="save-session-modal">
+  <div class="modal">
+    <h2>Save Session</h2>
+    <div class="modal-field">
+      <label>Session Name (optional)</label>
+      <input id="save-session-name" type="text" placeholder="e.g. before-demo" autocomplete="off" />
+      <div class="field-hint">Leave blank to auto-generate from scenario + date</div>
+    </div>
+    <div class="modal-status" id="save-session-status"></div>
+    <div class="modal-actions">
+      <button class="modal-btn-cancel" id="save-session-cancel">Cancel</button>
+      <button class="modal-btn-primary" id="save-session-confirm">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- Load Session Modal -->
+<div class="modal-overlay" id="load-session-modal">
+  <div class="modal">
+    <h2>Load Session</h2>
+    <div class="modal-field">
+      <label>Saved Sessions</label>
+      <select id="load-session-select" size="6" style="height:auto"></select>
+    </div>
+    <div id="load-session-detail" style="font-size:12px;color:#888;min-height:30px;margin-bottom:8px"></div>
+    <div class="modal-status" id="load-session-status"></div>
+    <div class="modal-actions">
+      <button class="modal-btn-cancel" id="load-session-cancel">Cancel</button>
+      <button class="modal-btn-primary" id="load-session-confirm" disabled>Load</button>
+    </div>
+  </div>
+</div>
+
+<!-- NPC Detail Modal -->
+<div class="modal-overlay" id="npc-detail-modal">
+  <div class="modal" style="width:80vw;max-width:1000px;height:75vh;display:flex;flex-direction:column">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+      <h2 id="npc-detail-title" style="margin:0"></h2>
+      <button class="modal-btn-cancel" id="npc-detail-close">Close</button>
+    </div>
+    <div style="display:flex;gap:8px;margin-bottom:12px">
+      <button class="session-btn npc-detail-tab active" data-npc-tab="thoughts">Thoughts</button>
+      <button class="session-btn npc-detail-tab" data-npc-tab="prompt">Prompt</button>
+    </div>
+    <div id="npc-detail-thoughts" style="flex:1;min-height:0;display:flex;gap:0;border-radius:8px;overflow:hidden;border:1px solid #333">
+      <div id="npc-thoughts-list" style="width:200px;min-width:200px;background:#121a30;overflow-y:auto;border-right:1px solid #333">
+      </div>
+      <div id="npc-thoughts-content" style="flex:1;overflow-y:auto;background:#111;padding:16px;font-size:13px;color:#ccc;white-space:pre-wrap;font-family:monospace;line-height:1.5">
+        No thoughts recorded yet.
+      </div>
+    </div>
+    <div id="npc-detail-prompt" style="flex:1;min-height:0;overflow-y:auto;background:#111;border-radius:8px;padding:16px;font-size:13px;color:#ccc;white-space:pre-wrap;font-family:monospace;line-height:1.5;display:none">
+    </div>
+  </div>
+</div>
+
+<!-- Loading Overlay -->
+<div id="loading-overlay">
+  <div class="spinner"></div>
+  <div id="loading-text">Loading...</div>
+</div>
+
 <script>
 const messagesPanel = document.getElementById('messages-panel');
 const input = document.getElementById('msg-input');
@@ -892,29 +1275,47 @@ let messagesByChannel = {};
 let unreadByChannel = {};
 let seenIds = new Set();
 
-const SENDER_CLASS_MAP = {
-  'Sarah (PM)': 'msg-pm',
-  'Marcus (Eng Manager)': 'msg-engmgr',
-  'Priya (Architect)': 'msg-architect',
-  'Alex (Senior Eng)': 'msg-senior',
-  'Jordan (Support Eng)': 'msg-support',
-  'Taylor (Sales Eng)': 'msg-sales',
-  'Dana (CEO)': 'msg-ceo',
-  'Morgan (CFO)': 'msg-cfo',
-  'Riley (Marketing)': 'msg-marketing',
-  'Casey (DevOps)': 'msg-devops',
-  'Nadia (Project Mgr)': 'msg-projmgr',
-};
+// Agent persona maps — loaded dynamically from /api/personas
+let SENDER_CLASS_MAP = {};
+let PERSONA_DISPLAY = {};
+let AGENT_NAMES = new Set();
 
-const PERSONA_DISPLAY = {
-  'pm': 'Sarah (PM)', 'engmgr': 'Marcus (Eng Mgr)', 'architect': 'Priya',
-  'senior': 'Alex', 'support': 'Jordan', 'sales': 'Taylor',
-  'ceo': 'Dana', 'cfo': 'Morgan',
-  'marketing': 'Riley', 'devops': 'Casey',
-  'projmgr': 'Nadia',
-};
+// Color palette for agent personas (assigned round-robin on load)
+const AGENT_COLORS = [
+  '#e94560', '#f39c12', '#9b59b6', '#2ecc71', '#1abc9c',
+  '#e67e22', '#f1c40f', '#3498db', '#e056a0', '#00bcd4', '#ff6b6b',
+];
 
-// Known human persona CSS classes from upstream
+async function loadPersonas() {
+  const resp = await fetch('/api/personas');
+  const personas = await resp.json();
+  SENDER_CLASS_MAP = {};
+  PERSONA_DISPLAY = {};
+  const keys = Object.keys(personas);
+  keys.forEach((key, i) => {
+    const p = personas[key];
+    const cls = 'msg-agent-' + i;
+    SENDER_CLASS_MAP[p.display_name] = cls;
+    PERSONA_DISPLAY[key] = p.display_name;
+  });
+  AGENT_NAMES = new Set(Object.keys(SENDER_CLASS_MAP));
+
+  // Inject dynamic CSS for agent colors
+  let styleEl = document.getElementById('agent-colors-style');
+  if (!styleEl) {
+    styleEl = document.createElement('style');
+    styleEl.id = 'agent-colors-style';
+    document.head.appendChild(styleEl);
+  }
+  let css = '';
+  keys.forEach((key, i) => {
+    const color = AGENT_COLORS[i % AGENT_COLORS.length];
+    css += '.msg-agent-' + i + ' .sender { color: ' + color + '; } ';
+  });
+  styleEl.textContent = css;
+}
+
+// Known human persona CSS classes
 const HUMAN_CLASS_MAP = {
   'Customer': 'msg-customer', 'Consultant': 'msg-customer',
   'Board Member': 'msg-board', 'Hacker': 'msg-hacker', 'God': 'msg-god',
@@ -922,15 +1323,28 @@ const HUMAN_CLASS_MAP = {
   'Regulator': 'msg-regulator', 'Investor': 'msg-investor', 'The Press': 'msg-press',
 };
 
-const AGENT_NAMES = new Set(Object.keys(SENDER_CLASS_MAP));
-
 function isAgent(sender) {
-  return AGENT_NAMES.has(sender);
+  if (AGENT_NAMES.has(sender)) return true;
+  if (sender === 'System') return true;
+  // For messages from other scenarios — if sender isn't a known human role, treat as agent
+  if (HUMAN_CLASS_MAP[sender]) return false;
+  // Check if it looks like "Name (Role)" pattern used by agents vs "Name (Role)" used by humans
+  // Human senders come from getSenderLabel() and use roles from the role dropdown
+  // Agent senders come from persona display_name which is set in scenario config
+  // If it's not in AGENT_NAMES and not in HUMAN_CLASS_MAP, check the role dropdown values
+  const humanRoles = ['Consultant','Customer','New Hire','Board Member','Intern','Vendor',
+    'Investor','Auditor','Competitor','Regulator','The Press','Hacker','God'];
+  for (const role of humanRoles) {
+    if (sender.endsWith('(' + role + ')')) return false;
+  }
+  // If sender has parens and isn't a known human role, likely an agent from another scenario
+  if (sender.includes('(') && sender.includes(')')) return true;
+  // Bare name with no parens — human with no role selected
+  return false;
 }
 
 function senderClass(sender) {
-  // Check agent map first, then known human map, then default to customer
-  return SENDER_CLASS_MAP[sender] || HUMAN_CLASS_MAP[sender] || 'msg-customer';
+  return SENDER_CLASS_MAP[sender] || HUMAN_CLASS_MAP[sender] || (isAgent(sender) ? 'msg-agent' : 'msg-customer');
 }
 
 // Generate a consistent color from a string (for human users)
@@ -965,9 +1379,11 @@ document.querySelectorAll('.header-tab').forEach(tab => {
     tab.classList.add('active');
     document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
     document.getElementById(target + '-pane').classList.add('active');
+    if (target === 'chat') { renderSidebar(); renderMessages(); }
     if (target === 'docs') loadDocs();
     if (target === 'gitlab') loadRepos();
     if (target === 'tickets') loadTickets();
+    if (target === 'npcs') loadNPCs();
   });
 });
 
@@ -988,8 +1404,12 @@ async function loadChannels() {
 function renderSidebar() {
   const intContainer = document.getElementById('internal-channels');
   const extContainer = document.getElementById('external-channels');
+  const dirContainer = document.getElementById('director-channels');
+  const sysContainer = document.getElementById('system-channels');
   intContainer.innerHTML = '';
   extContainer.innerHTML = '';
+  dirContainer.innerHTML = '';
+  sysContainer.innerHTML = '';
 
   Object.keys(channelsData).sort().forEach(name => {
     const ch = channelsData[name];
@@ -999,10 +1419,16 @@ function renderSidebar() {
     badge.className = 'unread-badge' + (unreadByChannel[name] > 0 && name !== currentChannel ? ' visible' : '');
     badge.textContent = unreadByChannel[name] || '';
     badge.id = 'badge-' + name.replace('#', '');
-    btn.innerHTML = '<span>' + escapeHtml(name) + '</span>';
+    // Show persona display name for director channels instead of raw channel name
+    const label = ch.is_director ? (PERSONA_DISPLAY[ch.director_persona] || name) : name;
+    btn.innerHTML = '<span>' + escapeHtml(label) + '</span>';
     btn.appendChild(badge);
     btn.addEventListener('click', () => switchChannel(name));
-    if (ch.is_external) {
+    if (ch.is_system) {
+      sysContainer.appendChild(btn);
+    } else if (ch.is_director) {
+      dirContainer.appendChild(btn);
+    } else if (ch.is_external) {
       extContainer.appendChild(btn);
     } else {
       intContainer.appendChild(btn);
@@ -1018,6 +1444,12 @@ function switchChannel(name) {
   renderMessages();
   loadMessages(name);
   updateSenderDropdown();
+  // Hide persona bar in director channels
+  const ch = channelsData[name];
+  const personaBar = document.getElementById('persona-bar');
+  if (personaBar) {
+    personaBar.style.display = (ch && ch.is_director) ? 'none' : '';
+  }
 }
 
 function updateChannelHeader() {
@@ -1072,7 +1504,51 @@ function renderMessages() {
   messagesPanel.innerHTML = '';
   const msgs = messagesByChannel[currentChannel] || [];
   msgs.forEach(appendMessageEl);
+  renderTypingIndicators();
 }
+
+// -- Typing indicators --
+const _typingState = {};  // channel -> {sender -> timestamp}
+
+function handleTypingIndicator(data) {
+  const ch = data.channel || '#general';
+  if (!_typingState[ch]) _typingState[ch] = {};
+  if (data.active) {
+    _typingState[ch][data.sender] = Date.now();
+  } else {
+    delete _typingState[ch][data.sender];
+  }
+  if (ch === currentChannel) renderTypingIndicators();
+}
+
+function renderTypingIndicators() {
+  let el = document.getElementById('typing-indicator');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'typing-indicator';
+    el.style.cssText = 'padding:4px 20px;font-size:12px;color:#888;font-style:italic;min-height:18px;';
+    messagesPanel.parentNode.insertBefore(el, messagesPanel.nextSibling);
+  }
+  const typers = _typingState[currentChannel] || {};
+  // Clean stale entries (older than 60s)
+  const now = Date.now();
+  for (const [sender, ts] of Object.entries(typers)) {
+    if (now - ts > 60000) delete typers[sender];
+  }
+  const names = Object.keys(typers);
+  if (names.length === 0) {
+    el.textContent = '';
+  } else if (names.length === 1) {
+    el.textContent = names[0] + ' is thinking...';
+  } else if (names.length === 2) {
+    el.textContent = names[0] + ' and ' + names[1] + ' are thinking...';
+  } else {
+    el.textContent = names.slice(0, -1).join(', ') + ', and ' + names[names.length-1] + ' are thinking...';
+  }
+}
+
+// Clean stale typing indicators every 10s
+setInterval(() => { if (currentTab === 'chat') renderTypingIndicators(); }, 10000);
 
 async function loadMessages(channel) {
   let url = '/api/messages';
@@ -1100,6 +1576,8 @@ function connectSSE() {
         loadTickets();
         if (tkCurrentViewId) viewTicket(tkCurrentViewId);
       }
+    } else if (data.type === 'typing') {
+      handleTypingIndicator(data);
     } else {
       addMessage(data);
     }
@@ -1111,7 +1589,8 @@ function connectSSE() {
 async function send() {
   const content = input.value.trim();
   if (!content) return;
-  const sender = getSenderLabel();
+  const ch = channelsData[currentChannel];
+  const sender = (ch && ch.is_director) ? 'Scenario Director' : getSenderLabel();
   input.value = '';
   await fetch('/api/messages', {
     method: 'POST',
@@ -1209,31 +1688,131 @@ function renderDocList(docs) {
     const card = document.createElement('div');
     card.className = 'doc-card';
     const folder = doc.folder || 'shared';
+    const author = doc.created_by || '';
+    const created = doc.created_at ? new Date(doc.created_at * 1000).toLocaleString() : '';
+    const updated = doc.updated_at && doc.updated_at !== doc.created_at ? new Date(doc.updated_at * 1000).toLocaleString() : '';
+    const editedBy = doc.updated_by || '';
+    let dateLine = created ? 'Created ' + created : '';
+    if (updated) dateLine += (dateLine ? ' | ' : '') + 'Edited ' + updated + (editedBy ? ' by ' + escapeHtml(editedBy) : '');
     card.innerHTML = '<div class="doc-card-meta">'
       + '<span class="doc-card-folder">' + escapeHtml(folder) + '</span>'
+      + (author ? '<span style="font-size:11px;color:#888">' + escapeHtml(author) + '</span>' : '')
       + '</div>'
       + '<div class="doc-card-title">' + escapeHtml(doc.title || doc.slug) + '</div>'
+      + (dateLine ? '<div style="font-size:10px;color:#555;margin-bottom:4px">' + dateLine + '</div>' : '')
       + '<div class="doc-card-preview">' + escapeHtml(doc.preview || '') + '</div>';
     card.addEventListener('click', () => viewDoc(folder, doc.slug));
     docsList.appendChild(card);
   });
 }
 
+let _currentDoc = null; // {folder, slug, content, ...}
+
 async function viewDoc(folder, slug) {
   const resp = await fetch('/api/docs/' + encodeURIComponent(folder) + '/' + encodeURIComponent(slug));
   if (!resp.ok) return;
-  const doc = await resp.json();
-  docViewerTitle.textContent = doc.title || doc.slug;
-  docViewerContent.innerHTML = renderMarkdown(doc.content || '');
+  _currentDoc = await resp.json();
+  _currentDoc.folder = folder;
+  _currentDoc.slug = slug;
+  const createdBy = _currentDoc.created_by || '';
+  const updatedBy = _currentDoc.updated_by || '';
+  const createdAt = _currentDoc.created_at ? new Date(_currentDoc.created_at * 1000).toLocaleString() : '';
+  const updatedAt = _currentDoc.updated_at ? new Date(_currentDoc.updated_at * 1000).toLocaleString() : '';
+  let meta = createdBy ? 'Created by ' + createdBy : '';
+  if (createdAt) meta += (meta ? ' on ' : '') + createdAt;
+  if (updatedBy && updatedBy !== createdBy) meta += ' | Edited by ' + updatedBy + ' on ' + updatedAt;
+  else if (updatedAt && updatedAt !== createdAt) meta += ' | Updated ' + updatedAt;
+  docViewerTitle.innerHTML = escapeHtml(_currentDoc.title || _currentDoc.slug) +
+    (meta ? '<div style="font-size:11px;color:#888;font-weight:400;margin-top:2px">' + escapeHtml(meta) + '</div>' : '');
+  document.getElementById('doc-viewer-content').innerHTML = renderMarkdown(_currentDoc.content || '');
+  document.getElementById('doc-viewer-body').style.display = 'flex';
+  document.getElementById('doc-edit-area').style.display = 'none';
   docViewer.classList.add('open');
   docsList.style.display = 'none';
   document.getElementById('docs-toolbar').style.display = 'none';
+  // Auto-show history panel
+  loadDocHistory();
 }
 
 docBackBtn.addEventListener('click', () => {
   docViewer.classList.remove('open');
   docsList.style.display = '';
   document.getElementById('docs-toolbar').style.display = '';
+  _currentDoc = null;
+});
+
+// Edit button
+document.getElementById('doc-edit-btn').addEventListener('click', () => {
+  if (!_currentDoc) return;
+  document.getElementById('doc-edit-textarea').value = _currentDoc.content || '';
+  document.getElementById('doc-edit-author-name').value = senderName.value;
+  document.getElementById('doc-edit-author-role').value = senderRole.value || '';
+  document.getElementById('doc-viewer-body').style.display = 'none';
+  document.getElementById('doc-edit-area').style.display = 'flex';
+});
+
+document.getElementById('doc-edit-cancel').addEventListener('click', () => {
+  document.getElementById('doc-edit-area').style.display = 'none';
+  document.getElementById('doc-viewer-body').style.display = 'flex';
+});
+
+document.getElementById('doc-edit-save').addEventListener('click', async () => {
+  if (!_currentDoc) return;
+  const content = document.getElementById('doc-edit-textarea').value;
+  const editName = document.getElementById('doc-edit-author-name').value.trim() || 'Anonymous';
+  const editRole = document.getElementById('doc-edit-author-role').value;
+  const author = editRole ? editName + ' (' + editRole + ')' : editName;
+  const resp = await fetch('/api/docs/' + encodeURIComponent(_currentDoc.folder) + '/' + encodeURIComponent(_currentDoc.slug), {
+    method: 'PUT',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({content, author}),
+  });
+  if (resp.ok) {
+    // Reload the doc
+    await viewDoc(_currentDoc.folder, _currentDoc.slug);
+  } else {
+    const err = await resp.json();
+    alert('Error: ' + (err.error || 'unknown'));
+  }
+});
+
+// History panel
+async function loadDocHistory() {
+  if (!_currentDoc) return;
+  const panel = document.getElementById('doc-history-panel');
+  const list = document.getElementById('doc-history-list');
+  list.innerHTML = '<div style="padding:8px 12px;font-size:11px;color:#888">Loading...</div>';
+  panel.style.display = '';
+  const resp = await fetch('/api/docs/' + encodeURIComponent(_currentDoc.folder) + '/' + encodeURIComponent(_currentDoc.slug) + '/history');
+  const history = await resp.json();
+  list.innerHTML = '';
+  if (!history.length) {
+    list.innerHTML = '<div style="padding:8px 12px;font-size:11px;color:#888">No version history</div>';
+    return;
+  }
+  history.forEach((v, i) => {
+    const item = document.createElement('div');
+    item.className = 'thought-item' + (i === 0 ? ' active' : '');
+    const ts = new Date(v.updated_at * 1000);
+    const label = v.is_current ? 'Current' : 'v' + (history.length - i);
+    item.innerHTML = '<div class="thought-item-time">' + escapeHtml(label) + ' - ' + ts.toLocaleString() + '</div>' +
+      '<div class="thought-item-preview">' + escapeHtml(v.updated_by || 'unknown') + '</div>';
+    item.addEventListener('click', () => {
+      document.querySelectorAll('#doc-history-list .thought-item').forEach(el => el.classList.remove('active'));
+      item.classList.add('active');
+      document.getElementById('doc-viewer-content').innerHTML = renderMarkdown(v.content || '');
+    });
+    list.appendChild(item);
+  });
+}
+
+document.getElementById('doc-history-btn').addEventListener('click', () => {
+  const panel = document.getElementById('doc-history-panel');
+  if (panel.style.display !== 'none') {
+    panel.style.display = 'none';
+  } else {
+    loadDocHistory();
+  }
 });
 
 let docsSearchTimer = null;
@@ -1264,6 +1843,9 @@ document.getElementById('new-doc-btn').addEventListener('click', () => {
   });
   docEditorTitle.value = '';
   docEditorContent.value = '';
+  // Pre-fill author from persona bar
+  document.getElementById('doc-author-name').value = senderName.value;
+  document.getElementById('doc-author-role').value = senderRole.value || '';
   docEditor.style.display = 'flex';
   docsList.style.display = 'none';
   document.getElementById('docs-toolbar').style.display = 'none';
@@ -1282,7 +1864,9 @@ document.getElementById('doc-editor-save').addEventListener('click', async () =>
   const content = docEditorContent.value;
   const folder = docEditorFolder.value;
   if (!title) { alert('Title is required'); return; }
-  const author = getSenderLabel();
+  const docName = document.getElementById('doc-author-name').value.trim() || 'Anonymous';
+  const docRole = document.getElementById('doc-author-role').value;
+  const author = docRole ? docName + ' (' + docRole + ')' : docName;
   const resp = await fetch('/api/docs', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
@@ -1454,6 +2038,46 @@ function renderCommits(commits) {
   });
   content.innerHTML = html;
 }
+
+// -- GitLab new repo --
+document.getElementById('gl-new-repo-btn').addEventListener('click', () => {
+  document.getElementById('gl-new-repo-form').style.display = '';
+  document.getElementById('gl-new-repo-btn').style.display = 'none';
+  document.getElementById('gl-new-repo-name').value = '';
+  document.getElementById('gl-new-repo-desc').value = '';
+  document.getElementById('gl-new-repo-name').focus();
+});
+
+document.getElementById('gl-new-repo-cancel').addEventListener('click', () => {
+  document.getElementById('gl-new-repo-form').style.display = 'none';
+  document.getElementById('gl-new-repo-btn').style.display = '';
+});
+
+document.getElementById('gl-new-repo-save').addEventListener('click', async () => {
+  const name = document.getElementById('gl-new-repo-name').value.trim();
+  if (!name) return;
+  const desc = document.getElementById('gl-new-repo-desc').value.trim();
+  const author = getSenderLabel();
+  const resp = await fetch('/api/gitlab/repos', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({name, description: desc, author}),
+  });
+  if (resp.ok) {
+    document.getElementById('gl-new-repo-form').style.display = 'none';
+    document.getElementById('gl-new-repo-btn').style.display = '';
+    loadRepos();
+    switchRepo(name);
+  } else {
+    const err = await resp.json();
+    alert('Error: ' + (err.error || 'unknown'));
+  }
+});
+
+document.getElementById('gl-new-repo-name').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') document.getElementById('gl-new-repo-save').click();
+  if (e.key === 'Escape') document.getElementById('gl-new-repo-cancel').click();
+});
 
 // -- Tickets tab --
 let tkAllTickets = [];
@@ -1690,15 +2314,487 @@ document.getElementById('ticket-back-btn').addEventListener('click', () => {
 });
 
 // -- Init --
-loadChannels().then(() => {
-  updateChannelHeader();
-  updateSenderDropdown();
-  loadMessages();
-  connectSSE();
+loadPersonas().then(() => {
+  loadChannels().then(() => {
+    updateChannelHeader();
+    updateSenderDropdown();
+    loadMessages();
+    connectSSE();
+  });
 });
 loadFolders();
 loadRepos();
 loadTickets();
+
+// -- NPCs tab --
+
+const TIER_LABELS = {1: 'Tier 1 — ICs', 2: 'Tier 2 — Managers', 3: 'Tier 3 — Executives'};
+
+async function loadNPCs() {
+  const container = document.getElementById('npcs-content');
+  const empty = document.getElementById('npcs-empty');
+  const resp = await fetch('/api/npcs');
+  const npcs = await resp.json();
+  // Update sidebar summary
+  const summaryEl = document.getElementById('npcs-summary');
+  const scenarioEl = document.getElementById('npcs-scenario-info');
+  if (npcs.length === 0) {
+    container.innerHTML = '';
+    container.appendChild(empty);
+    empty.style.display = 'block';
+    summaryEl.textContent = '';
+    scenarioEl.textContent = 'No scenario loaded';
+    return;
+  }
+  const readyCount = npcs.filter(n => n.live_state === 'ready').length;
+  const startingCount = npcs.filter(n => n.live_state === 'starting').length;
+  const respondingCount = npcs.filter(n => n.live_state === 'responding').length;
+  const oooCount = npcs.filter(n => !n.online).length;
+  const disconnectedCount = npcs.filter(n => n.online && n.live_state === 'disconnected').length;
+  scenarioEl.innerHTML = '<strong>' + npcs.length + ' agents</strong>';
+  let summaryHtml = '';
+  if (readyCount > 0) summaryHtml += '<div style="color:#2ecc71">Ready: ' + readyCount + '</div>';
+  if (respondingCount > 0) summaryHtml += '<div style="color:#3498db">Responding: ' + respondingCount + '</div>';
+  if (startingCount > 0) summaryHtml += '<div style="color:#f39c12">Starting: ' + startingCount + '</div>';
+  if (oooCount > 0) summaryHtml += '<div style="color:#888">Out of office: ' + oooCount + '</div>';
+  if (disconnectedCount > 0) summaryHtml += '<div style="color:#555">Disconnected: ' + disconnectedCount + '</div>';
+  if (!summaryHtml) summaryHtml = '<div style="color:#555">No agents active</div>';
+  summaryEl.innerHTML = summaryHtml;
+  // Group by tier
+  const tiers = {};
+  npcs.forEach(npc => {
+    const t = npc.tier || 0;
+    if (!tiers[t]) tiers[t] = [];
+    tiers[t].push(npc);
+  });
+  container.innerHTML = '';
+  Object.keys(tiers).sort().forEach(tierNum => {
+    const section = document.createElement('div');
+    section.className = 'npc-tier-section';
+    const header = document.createElement('div');
+    header.className = 'npc-tier-header';
+    header.textContent = TIER_LABELS[tierNum] || ('Tier ' + tierNum);
+    section.appendChild(header);
+    const grid = document.createElement('div');
+    grid.className = 'npc-tier-grid';
+    tiers[tierNum].forEach(npc => {
+      grid.appendChild(createNPCCard(npc));
+    });
+    section.appendChild(grid);
+    container.appendChild(section);
+  });
+}
+
+const LIVE_STATE_LABELS = {
+  ready: 'Ready', starting: 'Starting...', responding: 'Thinking...',
+  'writing docs': 'Writing docs...', 'committing code': 'Committing code...',
+  'managing tickets': 'Managing tickets...', 'processing commands': 'Processing...',
+  'posting': 'Posting...', offline: 'Out of Office', disconnected: 'Disconnected',
+  unknown: 'Unknown',
+};
+
+function createNPCCard(npc) {
+  const card = document.createElement('div');
+  const ls = npc.live_state || 'unknown';
+  const lsCss = ls.replace(/ /g, '-');
+  card.className = 'npc-card' + (npc.online ? '' : ' offline');
+  card.innerHTML =
+    '<div class="npc-card-header">' +
+      '<span class="npc-status-dot ' + lsCss + '"></span>' +
+      '<span class="npc-card-name">' + escapeHtml(npc.display_name) + '</span>' +
+      '<span class="npc-card-state">' + (LIVE_STATE_LABELS[ls] || ls) + '</span>' +
+    '</div>' +
+    '<div class="npc-card-desc">' + escapeHtml(npc.team_description) + '</div>' +
+    '<div class="npc-card-section-label">Channels</div>' +
+    '<div class="npc-card-tags">' +
+      npc.channels.map(ch => '<span class="npc-tag">' + escapeHtml(ch) + '</span>').join('') +
+    '</div>' +
+    '<div class="npc-card-section-label">Doc Folders</div>' +
+    '<div class="npc-card-tags">' +
+      (npc.folders || []).map(f => '<span class="npc-tag npc-tag-folder">' + escapeHtml(f) + '</span>').join('') +
+    '</div>';
+  const btn = document.createElement('button');
+  btn.className = 'npc-toggle-btn' + (npc.online ? ' is-online' : '');
+  btn.textContent = npc.online ? 'Set Out of Office' : 'Bring Online';
+  btn.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    await fetch('/api/npcs/' + encodeURIComponent(npc.key) + '/toggle', {method: 'POST'});
+    loadNPCs();
+  });
+  card.appendChild(btn);
+  card.style.cursor = 'pointer';
+  card.addEventListener('click', (e) => {
+    if (e.target === btn) return;  // don't open detail when clicking toggle
+    openNPCDetail(npc.key, npc.display_name);
+  });
+  return card;
+}
+
+// -- NPC detail modal --
+
+let _npcDetailKey = null;
+let _npcDetailTab = 'thoughts';
+let _npcThoughtsData = [];
+
+async function openNPCDetail(key, displayName) {
+  _npcDetailKey = key;
+  _npcDetailTab = 'thoughts';
+  document.getElementById('npc-detail-title').textContent = displayName;
+  document.querySelectorAll('.npc-detail-tab').forEach(t => {
+    t.classList.toggle('active', t.dataset.npcTab === 'thoughts');
+  });
+  switchNPCDetailTab('thoughts');
+  await loadNPCThoughts();
+  openModal('npc-detail-modal');
+}
+
+function switchNPCDetailTab(tab) {
+  _npcDetailTab = tab;
+  document.getElementById('npc-detail-thoughts').style.display = tab === 'thoughts' ? 'flex' : 'none';
+  document.getElementById('npc-detail-prompt').style.display = tab === 'prompt' ? '' : 'none';
+}
+
+async function loadNPCThoughts() {
+  const list = document.getElementById('npc-thoughts-list');
+  const content = document.getElementById('npc-thoughts-content');
+  list.innerHTML = '';
+  content.textContent = 'Loading...';
+  const resp = await fetch('/api/npcs/' + encodeURIComponent(_npcDetailKey) + '/thoughts');
+  _npcThoughtsData = await resp.json();
+  if (!_npcThoughtsData.length) {
+    content.textContent = 'No thoughts recorded yet. This agent has not responded to any messages.';
+    return;
+  }
+  // Render list items (newest first)
+  const reversed = [..._npcThoughtsData].reverse();
+  reversed.forEach((t, i) => {
+    const idx = _npcThoughtsData.length - 1 - i;
+    const item = document.createElement('div');
+    item.className = 'thought-item' + (i === 0 ? ' active' : '');
+    item.dataset.idx = idx;
+    const ts = new Date(t.timestamp * 1000);
+    const timeStr = ts.toLocaleTimeString();
+    const dateStr = ts.toLocaleDateString();
+    const preview = (t.thinking || t.response || '').substring(0, 60).replace(/[\\n\\r]+/g, ' ');
+    item.innerHTML = '<div class="thought-item-time">' + dateStr + ' ' + timeStr + '</div>' +
+      '<div class="thought-item-preview">' + escapeHtml(preview) + '</div>';
+    item.addEventListener('click', () => selectThought(idx));
+    list.appendChild(item);
+  });
+  // Select the newest
+  selectThought(_npcThoughtsData.length - 1);
+}
+
+function selectThought(idx) {
+  const content = document.getElementById('npc-thoughts-content');
+  const t = _npcThoughtsData[idx];
+  if (!t) return;
+  // Update active state in list
+  document.querySelectorAll('.thought-item').forEach(el => {
+    el.classList.toggle('active', parseInt(el.dataset.idx) === idx);
+  });
+  const ts = new Date(t.timestamp * 1000).toLocaleString();
+  let text = '=== Internal Thinking ===  ' + ts + '\\n\\n';
+  text += t.thinking || '(no thinking captured)';
+  text += '\\n\\n=== Response ===\\n\\n';
+  text += t.response || '(no response)';
+  content.textContent = text;
+}
+
+async function loadNPCPrompt() {
+  const body = document.getElementById('npc-detail-prompt');
+  body.textContent = 'Loading...';
+  const resp = await fetch('/api/npcs/' + encodeURIComponent(_npcDetailKey) + '/prompt');
+  const data = await resp.json();
+  body.textContent = data.content || data.error || 'No prompt found.';
+}
+
+document.querySelectorAll('.npc-detail-tab').forEach(tab => {
+  tab.addEventListener('click', async () => {
+    _npcDetailTab = tab.dataset.npcTab;
+    document.querySelectorAll('.npc-detail-tab').forEach(t => {
+      t.classList.toggle('active', t.dataset.npcTab === _npcDetailTab);
+    });
+    switchNPCDetailTab(_npcDetailTab);
+    if (_npcDetailTab === 'thoughts') await loadNPCThoughts();
+    else if (_npcDetailTab === 'prompt') await loadNPCPrompt();
+  });
+});
+
+document.getElementById('npc-detail-close').addEventListener('click', () => {
+  closeModal('npc-detail-modal');
+});
+
+// -- Orchestrator status polling --
+
+const orchDot = document.getElementById('orch-dot');
+const orchLabel = document.getElementById('orch-label');
+const STATUS_LABELS = {
+  disconnected: 'Disconnected',
+  connecting: 'Connecting...',
+  waiting: 'Waiting for session',
+  starting: 'Starting agents...',
+  ready: 'Ready',
+  responding: 'Responding...',
+  stopping: 'Stopping agents...',
+  restarting: 'Restarting...',
+};
+
+async function pollStatus() {
+  try {
+    const resp = await fetch('/api/status');
+    const status = await resp.json();
+    const state = status.orchestrator.state || 'disconnected';
+    orchDot.className = 'status-dot ' + state;
+    const msg = status.orchestrator.message;
+    orchLabel.textContent = msg || STATUS_LABELS[state] || state;
+    // Auto-refresh NPC tab if it's visible
+    if (currentTab === 'npcs') loadNPCs();
+  } catch(e) {
+    orchDot.className = 'status-dot disconnected';
+    orchLabel.textContent = 'Server error';
+  }
+}
+
+setInterval(pollStatus, 3000);
+pollStatus();
+
+// -- Session controls --
+
+function showLoading(text) {
+  document.getElementById('loading-text').textContent = text || 'Loading...';
+  document.getElementById('loading-overlay').classList.add('open');
+}
+function hideLoading() {
+  document.getElementById('loading-overlay').classList.remove('open');
+}
+function openModal(id) { document.getElementById(id).classList.add('open'); }
+function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+
+function showNotice(text) {
+  // Show a non-blocking notice bar at the top of the page
+  let bar = document.getElementById('notice-bar');
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.id = 'notice-bar';
+    bar.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:999;background:#e94560;color:#fff;padding:10px 20px;font-size:13px;display:flex;align-items:center;justify-content:space-between;';
+    const dismiss = document.createElement('button');
+    dismiss.textContent = 'Dismiss';
+    dismiss.style.cssText = 'background:rgba(0,0,0,0.3);color:#fff;border:none;padding:4px 12px;border-radius:4px;cursor:pointer;font-size:12px;margin-left:16px;';
+    dismiss.addEventListener('click', () => bar.remove());
+    bar.appendChild(document.createElement('span'));
+    bar.appendChild(dismiss);
+    document.body.prepend(bar);
+  }
+  bar.querySelector('span').textContent = text;
+}
+
+async function reloadAllState() {
+  messagesByChannel = {};
+  seenIds.clear();
+  unreadByChannel = {};
+  await loadPersonas();
+  await loadChannels();
+  await loadMessages();
+  renderSidebar();
+  renderMessages();
+  loadFolders();
+  loadDocs();
+  loadRepos();
+  loadTickets();
+  loadNPCs();
+}
+
+// -- New Session Modal --
+
+document.getElementById('session-new-btn').addEventListener('click', async () => {
+  const sel = document.getElementById('new-session-scenario');
+  sel.innerHTML = '';
+  document.getElementById('new-session-status').textContent = '';
+  document.getElementById('new-session-name').value = '';
+  const resp = await fetch('/api/session/scenarios');
+  const scenarios = await resp.json();
+  scenarios.forEach(s => {
+    const opt = document.createElement('option');
+    opt.value = s.key;
+    opt.textContent = s.name + ' (' + s.characters + ' characters)';
+    opt.dataset.desc = s.description || '';
+    sel.appendChild(opt);
+  });
+  // Show description for first scenario
+  const first = scenarios[0];
+  document.getElementById('new-session-scenario-desc').textContent = first ? first.description : '';
+  openModal('new-session-modal');
+});
+
+document.getElementById('new-session-scenario').addEventListener('change', (e) => {
+  const opt = e.target.selectedOptions[0];
+  document.getElementById('new-session-scenario-desc').textContent = opt ? opt.dataset.desc : '';
+});
+
+document.getElementById('new-session-cancel').addEventListener('click', () => closeModal('new-session-modal'));
+
+document.getElementById('new-session-confirm').addEventListener('click', async () => {
+  const scenario = document.getElementById('new-session-scenario').value;
+  if (!scenario) return;
+  const status = document.getElementById('new-session-status');
+  status.textContent = 'Creating session...';
+  document.getElementById('new-session-confirm').disabled = true;
+  closeModal('new-session-modal');
+  showLoading('Creating new session...');
+  try {
+    await fetch('/api/session/new', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({scenario}),
+    });
+    await reloadAllState();
+    pollStatus();
+  } finally {
+    hideLoading();
+    document.getElementById('new-session-confirm').disabled = false;
+  }
+});
+
+// -- Save Session Modal --
+
+document.getElementById('session-save-btn').addEventListener('click', () => {
+  document.getElementById('save-session-name').value = '';
+  document.getElementById('save-session-status').textContent = '';
+  openModal('save-session-modal');
+  document.getElementById('save-session-name').focus();
+});
+
+document.getElementById('save-session-cancel').addEventListener('click', () => closeModal('save-session-modal'));
+
+document.getElementById('save-session-confirm').addEventListener('click', async () => {
+  const name = document.getElementById('save-session-name').value.trim();
+  const status = document.getElementById('save-session-status');
+  status.textContent = 'Saving...';
+  document.getElementById('save-session-confirm').disabled = true;
+  try {
+    const resp = await fetch('/api/session/save', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({name: name || undefined}),
+    });
+    if (resp.ok) {
+      const meta = await resp.json();
+      status.textContent = 'Saved: ' + (meta.name || meta.instance_dir);
+      status.style.color = '#2ecc71';
+      setTimeout(() => {
+        closeModal('save-session-modal');
+        status.style.color = '';
+      }, 1500);
+    } else {
+      const err = await resp.json();
+      status.textContent = 'Error: ' + (err.error || 'unknown');
+      status.style.color = '#e94560';
+    }
+  } finally {
+    document.getElementById('save-session-confirm').disabled = false;
+  }
+});
+
+// -- Load Session Modal --
+
+let _sessionsCache = [];
+
+async function refreshSessionsList() {
+  const sel = document.getElementById('load-session-select');
+  sel.innerHTML = '';
+  const resp = await fetch('/api/session/list');
+  _sessionsCache = await resp.json();
+  if (_sessionsCache.length === 0) {
+    const opt = document.createElement('option');
+    opt.disabled = true;
+    opt.textContent = 'No saved sessions';
+    sel.appendChild(opt);
+    document.getElementById('load-session-confirm').disabled = true;
+    return;
+  }
+  _sessionsCache.forEach(s => {
+    const opt = document.createElement('option');
+    opt.value = s.instance_dir;
+    const date = new Date((s.saved_at || s.created_at) * 1000).toLocaleString();
+    opt.textContent = (s.name || s.instance_dir);
+    opt.dataset.date = date;
+    opt.dataset.scenario = s.scenario || '';
+    sel.appendChild(opt);
+  });
+}
+
+// Modal's session list selection
+document.getElementById('load-session-select').addEventListener('change', (e) => {
+  const val = e.target.value;
+  const s = _sessionsCache.find(x => x.instance_dir === val);
+  const detail = document.getElementById('load-session-detail');
+  if (s) {
+    const date = new Date((s.saved_at || s.created_at) * 1000).toLocaleString();
+    detail.textContent = 'Scenario: ' + (s.scenario || '?') + '  |  Saved: ' + date;
+    document.getElementById('load-session-confirm').disabled = false;
+  } else {
+    detail.textContent = '';
+    document.getElementById('load-session-confirm').disabled = true;
+  }
+});
+
+document.getElementById('load-session-select').addEventListener('dblclick', () => {
+  document.getElementById('load-session-confirm').click();
+});
+
+// Replace header load dropdown with a button
+{
+  const headerSelect = document.getElementById('session-load-select');
+  if (headerSelect) headerSelect.remove();
+  const loadBtn = document.createElement('button');
+  loadBtn.id = 'session-load-btn';
+  loadBtn.className = 'session-btn';
+  loadBtn.title = 'Load session';
+  loadBtn.textContent = 'Load';
+  document.getElementById('session-controls').appendChild(loadBtn);
+
+  loadBtn.addEventListener('click', async () => {
+    document.getElementById('load-session-status').textContent = '';
+    document.getElementById('load-session-detail').textContent = '';
+    document.getElementById('load-session-confirm').disabled = true;
+    await refreshSessionsList();
+    openModal('load-session-modal');
+  });
+}
+
+document.getElementById('load-session-cancel').addEventListener('click', () => closeModal('load-session-modal'));
+
+document.getElementById('load-session-confirm').addEventListener('click', async () => {
+  const sel = document.getElementById('load-session-select');
+  const instance = sel.value;
+  if (!instance) return;
+  const status = document.getElementById('load-session-status');
+  status.textContent = 'Loading session...';
+  document.getElementById('load-session-confirm').disabled = true;
+  closeModal('load-session-modal');
+  showLoading('Loading session...');
+  try {
+    const resp = await fetch('/api/session/load', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({instance}),
+    });
+    if (resp.ok) {
+      await reloadAllState();
+    } else {
+      const err = await resp.json();
+      hideLoading();
+      openModal('load-session-modal');
+      status.textContent = 'Error: ' + (err.error || 'unknown');
+      status.style.color = '#e94560';
+      return;
+    }
+  } finally {
+    hideLoading();
+    document.getElementById('load-session-confirm').disabled = false;
+  }
+});
 </script>
 </body>
 </html>"""
@@ -1707,12 +2803,6 @@ loadTickets();
 def create_app() -> Flask:
     """Create and configure the Flask chat application."""
     app = Flask(__name__)
-
-    # Load existing chat log on startup (if any)
-    if CHAT_LOG.exists():
-        print(f"Preserving existing chat log: {CHAT_LOG}")
-    else:
-        print("No existing chat log found, starting fresh")
 
     # Initialize channels, folders, and docs
     _init_channels()
@@ -1730,6 +2820,11 @@ def create_app() -> Flask:
     _init_tickets()
     print(f"Tickets storage ready: {TICKETS_DIR}  ({len(_tickets)} existing tickets)")
 
+    _init_agent_online()
+
+    _load_chat_log()
+    print(f"Chat log: {len(_messages)} messages loaded")
+
     @app.route("/")
     def index():
         return WEB_UI
@@ -1742,12 +2837,18 @@ def create_app() -> Flask:
             result = []
             for name, info in sorted(_channels.items()):
                 members = sorted(_channel_members.get(name, set()))
-                result.append({
+                entry = {
                     "name": name,
                     "description": info["description"],
                     "is_external": info["is_external"],
                     "members": members,
-                })
+                }
+                if info.get("is_system"):
+                    entry["is_system"] = True
+                if info.get("is_director"):
+                    entry["is_director"] = True
+                    entry["director_persona"] = info.get("director_persona", "")
+                result.append(entry)
         return jsonify(result)
 
     @app.route("/api/channels/<path:name>/join", methods=["POST"])
@@ -1983,14 +3084,48 @@ def create_app() -> Flask:
                 return jsonify({"error": "not found"}), 404
 
             doc_path = DOCS_DIR / folder / f"{slug}.txt"
+
+            # Save current content as a version before overwriting
+            old_content = ""
+            if doc_path.exists():
+                old_content = doc_path.read_text(encoding="utf-8", errors="replace")
+            if "history" not in meta:
+                meta["history"] = []
+            meta["history"].append({
+                "content": old_content,
+                "updated_by": meta.get("updated_by", meta.get("created_by", "unknown")),
+                "updated_at": meta.get("updated_at", meta.get("created_at", 0)),
+            })
+
             doc_path.write_text(content, encoding="utf-8")
             meta["updated_at"] = time.time()
+            meta["updated_by"] = author
             meta["size"] = len(content.encode("utf-8"))
             meta["preview"] = content[:100]
             _save_index()
 
         _broadcast_doc_event("updated", meta)
         return jsonify(meta)
+
+    @app.route("/api/docs/<folder>/<slug>/history", methods=["GET"])
+    def get_doc_history(folder, slug):
+        with _docs_lock:
+            meta = _docs_index.get(slug)
+        if meta is None or meta.get("folder") != folder:
+            return jsonify({"error": "not found"}), 404
+        history = meta.get("history", [])
+        # Add current version as the first entry
+        doc_path = DOCS_DIR / folder / f"{slug}.txt"
+        current_content = ""
+        if doc_path.exists():
+            current_content = doc_path.read_text(encoding="utf-8", errors="replace")
+        current = {
+            "content": current_content,
+            "updated_by": meta.get("updated_by", meta.get("created_by", "unknown")),
+            "updated_at": meta.get("updated_at", meta.get("created_at", 0)),
+            "is_current": True,
+        }
+        return jsonify([current] + list(reversed(history)))
 
     @app.route("/api/docs/<folder>/<slug>/append", methods=["POST"])
     def append_doc(folder, slug):
@@ -2005,9 +3140,20 @@ def create_app() -> Flask:
 
             doc_path = DOCS_DIR / folder / f"{slug}.txt"
             existing = doc_path.read_text(encoding="utf-8", errors="replace")
+
+            # Save current content as a version before appending
+            if "history" not in meta:
+                meta["history"] = []
+            meta["history"].append({
+                "content": existing,
+                "updated_by": meta.get("updated_by", meta.get("created_by", "unknown")),
+                "updated_at": meta.get("updated_at", meta.get("created_at", 0)),
+            })
+
             new_content = existing + "\n" + content
             doc_path.write_text(new_content, encoding="utf-8")
             meta["updated_at"] = time.time()
+            meta["updated_by"] = author
             meta["size"] = len(new_content.encode("utf-8"))
             meta["preview"] = new_content[:100]
             _save_index()
@@ -2340,6 +3486,250 @@ def create_app() -> Flask:
 
         _broadcast_tickets_event("depends_updated", ticket)
         return jsonify(ticket)
+
+    # -- Status & Control API --
+
+    @app.route("/api/status", methods=["GET"])
+    def get_status():
+        with _orchestrator_lock:
+            orch = dict(_orchestrator_status)
+            # Mark as disconnected if no heartbeat in 15 seconds
+            if orch["last_heartbeat"] == 0 or time.time() - orch["last_heartbeat"] > 30:
+                orch["state"] = "disconnected"
+        return jsonify({
+            "server": "running",
+            "scenario": get_current_session().get("scenario"),
+            "messages": len(_messages),
+            "documents": len(_docs_index),
+            "repos": len(_gitlab_repos),
+            "tickets": len(_tickets),
+            "channels": len(_channels),
+            "orchestrator": orch,
+        })
+
+    @app.route("/api/orchestrator/heartbeat", methods=["POST"])
+    def orchestrator_heartbeat():
+        data = request.get_json(force=True)
+        with _orchestrator_lock:
+            _orchestrator_status["state"] = data.get("state", "ready")
+            _orchestrator_status["scenario"] = data.get("scenario")
+            _orchestrator_status["agents"] = data.get("agents", {})
+            _orchestrator_status["last_heartbeat"] = time.time()
+            _orchestrator_status["message"] = data.get("message", "")
+        # Return any pending command
+        with _command_lock:
+            cmd = dict(_orchestrator_command)
+            if cmd["action"]:
+                _orchestrator_command["action"] = None  # consume it
+            return jsonify(cmd)
+
+    @app.route("/api/orchestrator/command", methods=["POST"])
+    def orchestrator_command():
+        data = request.get_json(force=True)
+        action = data.get("action")
+        if action not in ("restart", "shutdown", None):
+            return jsonify({"error": "invalid action"}), 400
+        with _command_lock:
+            _orchestrator_command["action"] = action
+            _orchestrator_command.update({k: v for k, v in data.items() if k != "action"})
+        return jsonify({"queued": action})
+
+    # -- Typing indicators --
+
+    @app.route("/api/typing", methods=["POST"])
+    def typing_indicator():
+        data = request.get_json(force=True)
+        event = {
+            "type": "typing",
+            "sender": data.get("sender", ""),
+            "channel": data.get("channel", "#general"),
+            "active": data.get("active", True),
+        }
+        _broadcast(event)
+        return jsonify({"ok": True})
+
+    # -- NPC API --
+
+    @app.route("/api/npcs", methods=["GET"])
+    def list_npcs():
+        from lib.personas import PERSONAS, RESPONSE_TIERS, PERSONA_TIER, DEFAULT_MEMBERSHIPS
+        from lib.docs import get_accessible_folders
+        result = []
+        with _orchestrator_lock:
+            agent_states = _orchestrator_status.get("agents", {})
+            orch_state = _orchestrator_status.get("state", "disconnected")
+            last_hb = _orchestrator_status.get("last_heartbeat", 0)
+        orch_connected = last_hb > 0 and (time.time() - last_hb < 30)
+        with _agent_online_lock:
+            for key, p in PERSONAS.items():
+                channels = sorted(DEFAULT_MEMBERSHIPS.get(key, set()))
+                folders = sorted(get_accessible_folders(key))
+                toggled_online = _agent_online.get(key, True)
+                # Determine live state from orchestrator heartbeat
+                agent_info = agent_states.get(key, {})
+                if not orch_connected:
+                    live_state = "disconnected"
+                elif not toggled_online:
+                    live_state = "offline"
+                else:
+                    live_state = agent_info.get("state", "unknown")
+                result.append({
+                    "key": key,
+                    "display_name": p["display_name"],
+                    "team_description": p.get("team_description", ""),
+                    "tier": PERSONA_TIER.get(key, 0),
+                    "channels": channels,
+                    "folders": folders,
+                    "online": toggled_online,
+                    "live_state": live_state,
+                })
+        return jsonify(result)
+
+    @app.route("/api/npcs/<key>/toggle", methods=["POST"])
+    def toggle_npc(key):
+        from lib.personas import PERSONAS
+        if key not in PERSONAS:
+            return jsonify({"error": f"unknown agent: {key}"}), 404
+        display_name = PERSONAS[key]["display_name"]
+        with _agent_online_lock:
+            current = _agent_online.get(key, True)
+            _agent_online[key] = not current
+            new_state = _agent_online[key]
+        # Post system message
+        if new_state:
+            msg = f"{display_name} is back online"
+        else:
+            msg = f"{display_name} is now out of office"
+        with _lock:
+            sys_msg = {
+                "id": len(_messages) + 1,
+                "sender": "System",
+                "content": msg,
+                "channel": "#system",
+                "timestamp": time.time(),
+            }
+            _messages.append(sys_msg)
+        _persist_message(sys_msg)
+        _broadcast(sys_msg)
+        return jsonify({"key": key, "online": new_state, "display_name": display_name})
+
+    # -- Agent thoughts API --
+
+    @app.route("/api/npcs/<key>/thoughts", methods=["GET"])
+    def get_agent_thoughts(key):
+        with _agent_thoughts_lock:
+            thoughts = list(_agent_thoughts.get(key, []))
+        return jsonify(thoughts)
+
+    @app.route("/api/npcs/<key>/thoughts", methods=["POST"])
+    def post_agent_thoughts(key):
+        data = request.get_json(force=True)
+        entry = {
+            "thinking": data.get("thinking", ""),
+            "response": data.get("response", ""),
+            "timestamp": time.time(),
+        }
+        with _agent_thoughts_lock:
+            _agent_thoughts.setdefault(key, []).append(entry)
+        return jsonify({"ok": True})
+
+    @app.route("/api/npcs/<key>/prompt", methods=["GET"])
+    def get_agent_prompt(key):
+        """Return the character file content for this agent."""
+        from lib.personas import PERSONAS, load_persona_instructions
+        if key not in PERSONAS:
+            return jsonify({"error": "unknown agent"}), 404
+        try:
+            content = load_persona_instructions(key)
+            return jsonify({"key": key, "content": content})
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    # -- Personas API --
+
+    @app.route("/api/personas", methods=["GET"])
+    def get_personas():
+        from lib.personas import PERSONAS
+        result = {}
+        for key, p in PERSONAS.items():
+            result[key] = {
+                "key": key,
+                "display_name": p["display_name"],
+                "team_description": p.get("team_description", ""),
+            }
+        return jsonify(result)
+
+    # -- Session API --
+
+    @app.route("/api/session/current", methods=["GET"])
+    def session_current():
+        return jsonify(get_current_session())
+
+    @app.route("/api/session/list", methods=["GET"])
+    def session_list():
+        return jsonify(list_sessions())
+
+    @app.route("/api/session/scenarios", methods=["GET"])
+    def session_scenarios():
+        return jsonify(list_scenarios())
+
+    @app.route("/api/session/save", methods=["POST"])
+    def session_save():
+        data = request.get_json(force=True) if request.data else {}
+        name = data.get("name")
+        try:
+            meta = save_session(name)
+            return jsonify(meta), 201
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/session/load", methods=["POST"])
+    def session_load():
+        data = request.get_json(force=True)
+        instance_name = data.get("instance")
+        if not instance_name:
+            return jsonify({"error": "instance required"}), 400
+        try:
+            meta = load_session(instance_name)
+            # Load the scenario config so channels/personas/folders are populated
+            scenario = meta.get("scenario")
+            if scenario:
+                from lib.scenario_loader import load_scenario as _load_scenario
+                _load_scenario(scenario)
+                set_scenario(scenario)
+            _reinitialize()
+            # Apply saved memberships on top of defaults
+            memberships = get_memberships_from_instance(instance_name)
+            if memberships:
+                with _channel_lock:
+                    for ch, members in memberships.items():
+                        if ch in _channel_members:
+                            _channel_members[ch] = set(members)
+            # Signal orchestrator to restart with this session's scenario
+            with _command_lock:
+                _orchestrator_command["action"] = "restart"
+                _orchestrator_command["scenario"] = scenario
+            return jsonify(meta)
+        except FileNotFoundError as e:
+            return jsonify({"error": str(e)}), 404
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/session/new", methods=["POST"])
+    def session_new():
+        data = request.get_json(force=True) if request.data else {}
+        scenario = data.get("scenario")
+        try:
+            meta = new_session(scenario)
+            _reinitialize()
+            # Signal orchestrator to restart with the new scenario
+            with _command_lock:
+                _orchestrator_command["action"] = "restart"
+                _orchestrator_command["scenario"] = scenario or get_current_session().get("scenario")
+            meta["restarting_agents"] = True
+            return jsonify(meta)
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
 
     return app
 

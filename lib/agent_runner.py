@@ -42,13 +42,18 @@ def format_duration(seconds: float) -> str:
     return " ".join(parts)
 
 
-def _extract_response_text(msg, response_parts: list[str]) -> None:
+def _extract_response_text(msg, response_parts: list[str],
+                           thinking_parts: list[str] | None = None) -> None:
     """Extract text from an SDK message into response_parts list."""
     type_name = type(msg).__name__
     if type_name == "AssistantMessage":
         for block in msg.content:
-            if type(block).__name__ == "TextBlock":
+            block_type = type(block).__name__
+            if block_type == "TextBlock":
                 response_parts.append(block.text)
+            elif block_type == "ThinkingBlock" and thinking_parts is not None:
+                if hasattr(block, "thinking") and block.thinking:
+                    thinking_parts.append(block.thinking)
     elif type_name == "ResultMessage":
         # Handle structured_output (JSON mode) if present
         if hasattr(msg, "structured_output") and msg.structured_output:
@@ -78,19 +83,34 @@ class AgentPool:
         self._clients: dict[str, ClaudeSDKClient] = {}
         self._log_files: dict[str, Path] = {}
 
-    async def start(self, build_initial_prompt) -> None:
+    async def start(self, build_initial_prompt, on_progress=None) -> None:
         """Open and initialize sessions for all personas.
 
         Args:
             build_initial_prompt: callable(persona_key) -> str that returns the
                 one-time role prompt for a persona.
+            on_progress: optional callable(i, total, persona_key, display_name, state)
+                called before ("starting") and after ("ready") each agent.
+                Return True from the callback to abort startup early.
         """
         self._log_dir.mkdir(parents=True, exist_ok=True)
 
-        print(f"Opening {len(self._personas)} agent sessions...")
-        for key, persona in self._personas.items():
+        total = len(self._personas)
+        print(f"Opening {total} agent sessions...")
+        for i, (key, persona) in enumerate(self._personas.items(), 1):
+            print(f"  Starting ({i}/{total}): {persona['display_name']}...", end="", flush=True)
+            if on_progress:
+                if on_progress(i, total, key, persona["display_name"], "starting"):
+                    print(f" ABORTED")
+                    print(f"Startup interrupted at {i}/{total}")
+                    return
             await self._open_session(key, build_initial_prompt)
-        print(f"All {len(self._clients)} sessions ready")
+            if on_progress:
+                if on_progress(i, total, key, persona["display_name"], "ready"):
+                    print(f" ABORTED after ready")
+                    print(f"Startup interrupted at {i}/{total}")
+                    return
+        print(f"All {len(self._clients)}/{total} sessions ready")
 
     async def _open_session(self, persona_key: str, build_initial_prompt) -> None:
         """Open a single persistent session and send role instructions."""
@@ -128,7 +148,9 @@ class AgentPool:
             pass  # Consume init response (expect "READY" or similar)
 
         elapsed = time.monotonic() - start_time
-        print(f"  Session ready: {name} ({format_duration(elapsed)})")
+        ready_count = len(self._clients)
+        total_count = len(self._personas)
+        print(f" ready ({ready_count}/{total_count}) ({format_duration(elapsed)})")
 
     async def send(self, persona_key: str, prompt: str) -> dict:
         """Send a turn prompt to a persona's persistent session.
@@ -157,6 +179,7 @@ class AgentPool:
 
         start_time = time.monotonic()
         response_parts = []
+        thinking_parts = []
 
         try:
             await client.query(prompt)
@@ -165,10 +188,11 @@ class AgentPool:
                     with open(log_file, "a") as f:
                         f.write(f"{msg}\n")
                         f.flush()
-                _extract_response_text(msg, response_parts)
+                _extract_response_text(msg, response_parts, thinking_parts)
 
             elapsed = time.monotonic() - start_time
             response_text = "\n".join(response_parts).strip()
+            thinking_text = "\n\n".join(thinking_parts).strip()
 
             if log_file:
                 with open(log_file, "a") as f:
@@ -180,6 +204,7 @@ class AgentPool:
                 "name": name,
                 "success": True,
                 "response_text": response_text,
+                "thinking_text": thinking_text,
                 "duration_seconds": elapsed,
             }
 
@@ -203,17 +228,20 @@ class AgentPool:
             }
 
     async def _close_session(self, persona_key: str) -> None:
-        """Close a single session."""
+        """Close a single session. Handles SDK errors gracefully."""
         client = self._clients.pop(persona_key, None)
         if client:
             try:
                 await client.__aexit__(None, None, None)
-            except Exception:
-                pass
+            except (Exception, BaseException):
+                pass  # SDK may raise CancelledError or other async errors
 
     async def close(self) -> None:
-        """Close all sessions."""
-        for key in list(self._clients.keys()):
+        """Close all sessions. Safe to call multiple times."""
+        keys = list(self._clients.keys())
+        if not keys:
+            return
+        for key in keys:
             await self._close_session(key)
         print("All agent sessions closed")
 
