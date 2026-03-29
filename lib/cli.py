@@ -24,8 +24,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Host to bind to (default: 127.0.0.1)",
     )
     server_parser.add_argument(
-        "--scenario", type=str, default="tech-startup",
-        help="Scenario to load (default: tech-startup)",
+        "--scenario", type=str, default=None,
+        help="Scenario to auto-start (omit to wait for New/Load in UI)",
     )
 
     # ── chat subcommand ──────────────────────────────────────────────
@@ -60,7 +60,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Seconds between polling for new messages (default: 5.0)",
     )
     chat_parser.add_argument(
-        "--scenario", type=str, default="tech-startup",
-        help="Scenario to load (default: tech-startup)",
+        "--scenario", type=str, default=None,
+        help="Scenario to auto-start (omit to wait for New/Load in UI)",
     )
     return parser.parse_args(argv)

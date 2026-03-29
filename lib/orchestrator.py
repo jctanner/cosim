@@ -890,6 +890,24 @@ async def _run_loop(
     return posted_channels
 
 
+def _requeue_restart(base_url: str, scenario_name: str) -> None:
+    """Re-queue a restart command to the server using a sync HTTP request.
+
+    Called when the orchestrator is about to crash from a CancelledError
+    so the command survives the restart.
+    """
+    import requests as sync_requests
+    try:
+        resp = sync_requests.post(
+            f"{base_url}/api/orchestrator/command",
+            json={"action": "restart", "scenario": scenario_name},
+            timeout=5,
+        )
+        print(f"  Re-queue response: {resp.status_code}")
+    except Exception as e:
+        print(f"  Re-queue failed: {e}")
+
+
 def _build_agent_status(personas: list[dict], pool: AgentPool | None = None) -> dict:
     """Build agent status dict for heartbeat."""
     result = {}
@@ -904,9 +922,14 @@ def _build_agent_status(personas: list[dict], pool: AgentPool | None = None) -> 
 
 
 async def _start_agents(client, personas, model, scenario_name):
-    """Spin up agent pool and announce agents online."""
+    """Spin up agent pool and announce agents online.
+
+    Returns (pool, interrupted). If interrupted is True, a restart command
+    was received during startup.
+    """
     pool = AgentPool(personas, model, LOG_DIR)
     total = len(personas)
+    pending_cmd = [None]  # saves the command that caused the interrupt
 
     online_names = []
 
@@ -922,15 +945,36 @@ async def _start_agents(client, personas, model, scenario_name):
             client.post_message("System",
                 f"{display_name} is online ({i}/{tot})\n\nAgents online: {online_list}",
                 channel="#system")
-        client.send_heartbeat("starting", scenario_name, agents, msg)
+        # Check for pending commands during startup — return True to abort
+        cmd = client.send_heartbeat("starting", scenario_name, agents, msg)
+        if cmd.get("action") in ("restart", "shutdown"):
+            pending_cmd[0] = cmd
+            return True
+        return False
 
     await pool.start(build_initial_prompt, on_progress=on_progress)
+
+    if pending_cmd[0]:
+        print("Startup interrupted by pending command")
+        # Announce the agents that came online are going offline
+        for i, name in enumerate(reversed(online_names), 1):
+            remaining = [n for n in online_names if n != name]
+            online_names.remove(name)
+            if remaining:
+                client.post_message("System",
+                    f"{name} is offline (startup cancelled)\n\nAgents still online: {', '.join(remaining)}",
+                    channel="#system")
+            else:
+                client.post_message("System",
+                    f"{name} is offline (startup cancelled)\n\nAll agents offline.",
+                    channel="#system")
+        return pool, pending_cmd[0]
 
     # Send ready heartbeat
     agents = _build_agent_status(personas, pool)
     client.send_heartbeat("ready", scenario_name, agents, "All agents ready")
 
-    return pool
+    return pool, None
 
 
 async def _stop_agents(client, pool, personas, scenario_name=""):
@@ -961,41 +1005,80 @@ async def _stop_agents(client, pool, personas, scenario_name=""):
 async def run_orchestrator(args) -> None:
     """Main orchestrator loop: poll for messages, run agents, post responses."""
     client = ChatClient(base_url=args.server_url)
-    personas = get_active_personas(getattr(args, "personas", None))
     model = getattr(args, "model", "sonnet")
-    scenario_name = getattr(args, "scenario", "tech-startup")
+    scenario_name = getattr(args, "scenario", None) or "unknown"
     max_waves = getattr(args, "max_rounds", 3)
     poll_interval = getattr(args, "poll_interval", 5.0)
-
     max_auto_rounds = getattr(args, "max_auto_rounds", 3)
-
-    if not personas:
-        print("Error: no valid personas selected")
-        return
+    personas = []  # populated when scenario loads
 
     print(f"Orchestrator starting")
     print(f"  Server: {args.server_url}")
-    print(f"  Scenario: {scenario_name}")
     print(f"  Model: {model}")
-    print(f"  Personas: {', '.join(p['display_name'] for p in personas)}")
     print(f"  Max waves: {max_waves}")
     print(f"  Max autonomous rounds: {'unlimited' if max_auto_rounds == 0 else max_auto_rounds}")
     print(f"  Poll interval: {poll_interval}s")
 
     # Wait for server to be reachable
-    client.send_heartbeat("connecting", scenario_name, {}, "Waiting for server...")
     while not client.health_check():
+        client.send_heartbeat("connecting", scenario_name, {}, "Waiting for server...")
         print("Waiting for chat server...")
         await asyncio.sleep(2)
     print("Connected to chat server")
 
-    # Open persistent agent sessions
-    pool = await _start_agents(client, personas, model, scenario_name)
+    # Wait for a session to be started (New or Load) before spinning up agents
+    pool = None
+    last_seen_id = 0
 
-    # Skip any existing messages
-    existing = client.get_messages()
-    last_seen_id = existing[-1]["id"] if existing else 0
-    print(f"Skipping {len(existing)} existing messages (last_seen_id={last_seen_id})")
+    # Check if there's a pending command (e.g. re-queued after crash)
+    initial_cmd = client.send_heartbeat("waiting", scenario_name, {},
+                                        "Checking for pending commands...")
+    next_cmd = initial_cmd if initial_cmd.get("action") else None
+
+    print("Waiting for session start (click New or Load in the UI)...")
+    while pool is None:
+        if next_cmd:
+            cmd = next_cmd
+            next_cmd = None
+        else:
+            cmd = client.send_heartbeat("waiting", scenario_name, {},
+                                        "Waiting for session — click New or Load")
+        if cmd.get("action") == "restart":
+            new_scenario = cmd.get("scenario", scenario_name)
+            if new_scenario != scenario_name:
+                from lib.scenario_loader import load_scenario
+                load_scenario(new_scenario)
+                scenario_name = new_scenario
+            personas = get_active_personas(getattr(args, "personas", None))
+            print(f"\nStarting session: {scenario_name}")
+            print(f"  Personas: {', '.join(p['display_name'] for p in personas)}")
+            try:
+                pool, pending = await _start_agents(client, personas, model, scenario_name)
+            except (Exception, BaseException):
+                # SDK cancel scope crash — re-queue the command via a sync request
+                # so we pick it up after main.py restarts us
+                print(f"Agent startup crashed, re-queuing restart for {scenario_name}")
+                _requeue_restart(client.base_url, scenario_name)
+                raise
+            if pending:
+                # Another command came in during startup — close partial pool and retry
+                print(f"Interrupted — new command: {pending.get('action')} ({pending.get('scenario')})")
+                try:
+                    await pool.close()
+                except (Exception, BaseException):
+                    pass
+                try:
+                    await asyncio.sleep(2)
+                except (Exception, BaseException):
+                    pass
+                pool = None
+                next_cmd = pending  # re-queue the interrupting command
+                continue
+            existing = client.get_messages()
+            last_seen_id = existing[-1]["id"] if existing else 0
+            print(f"Skipping {len(existing)} existing messages (last_seen_id={last_seen_id})")
+        else:
+            await asyncio.sleep(poll_interval)
 
     try:
         while True:
@@ -1007,7 +1090,16 @@ async def run_orchestrator(args) -> None:
                 print(f"\n*** Restart command received (scenario: {new_scenario}) ***")
 
                 # Shut down current agents
-                await _stop_agents(client, pool, personas, scenario_name)
+                try:
+                    await _stop_agents(client, pool, personas, scenario_name)
+                except (Exception, BaseException):
+                    print("Warning: error during agent shutdown, continuing restart")
+
+                # Brief pause to let async resources clean up
+                try:
+                    await asyncio.sleep(2)
+                except (Exception, BaseException):
+                    pass
 
                 # Reload scenario if changed
                 if new_scenario != scenario_name:
@@ -1017,7 +1109,35 @@ async def run_orchestrator(args) -> None:
 
                 # Reload personas and start new agents
                 personas = get_active_personas(getattr(args, "personas", None))
-                pool = await _start_agents(client, personas, model, scenario_name)
+                try:
+                    pool, pending = await _start_agents(client, personas, model, scenario_name)
+                except (Exception, BaseException):
+                    print(f"Agent startup crashed, re-queuing restart for {scenario_name}")
+                    _requeue_restart(client.base_url, scenario_name)
+                    raise
+
+                if pending:
+                    # Interrupted again — close and handle the new command next loop
+                    print(f"Restart interrupted by another command")
+                    try:
+                        await pool.close()
+                    except (Exception, BaseException):
+                        pass
+                    try:
+                        await asyncio.sleep(2)
+                    except (Exception, BaseException):
+                        pass
+                    # The pending command will be picked up on the next heartbeat
+                    # Re-queue it by posting it back to the server
+                    try:
+                        import requests
+                        requests.post(
+                            f"{client.base_url}/api/orchestrator/command",
+                            json=pending, timeout=5,
+                        )
+                    except Exception:
+                        pass
+                    continue
 
                 # Reset message tracking
                 existing = client.get_messages()

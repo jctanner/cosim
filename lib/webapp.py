@@ -352,6 +352,7 @@ WEB_UI = """<!DOCTYPE html>
   #orch-label { font-size: 11px; color: #888; }
   .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
   .status-dot.disconnected { background: #666; }
+  .status-dot.waiting { background: #f39c12; }
   .status-dot.connecting { background: #f39c12; animation: pulse 1s ease-in-out infinite; }
   .status-dot.starting { background: #f39c12; animation: pulse 1s ease-in-out infinite; }
   .status-dot.ready { background: #2ecc71; }
@@ -1969,9 +1970,11 @@ const orchLabel = document.getElementById('orch-label');
 const STATUS_LABELS = {
   disconnected: 'Disconnected',
   connecting: 'Connecting...',
+  waiting: 'Waiting for session',
   starting: 'Starting agents...',
   ready: 'Ready',
   responding: 'Responding...',
+  stopping: 'Stopping agents...',
   restarting: 'Restarting...',
 };
 
@@ -2981,6 +2984,11 @@ def create_app() -> Flask:
                         if ch in _channel_members:
                             _channel_members[ch] = set(members)
             _reinitialize()
+            # Signal orchestrator to restart with this session's scenario
+            scenario = meta.get("scenario", get_current_session().get("scenario"))
+            with _command_lock:
+                _orchestrator_command["action"] = "restart"
+                _orchestrator_command["scenario"] = scenario
             return jsonify(meta)
         except FileNotFoundError as e:
             return jsonify({"error": str(e)}), 404
