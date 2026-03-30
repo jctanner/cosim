@@ -2,6 +2,8 @@
 
 import re
 import asyncio
+import threading
+import time as _time
 from pathlib import Path
 
 from lib.chat_client import ChatClient
@@ -18,6 +20,63 @@ from lib.personas import (
 from lib.agent_runner import AgentPool
 
 LOG_DIR = Path(__file__).parent.parent / "var" / "logs"
+
+# -- DM (Direct Message) queue --
+# recipient_key -> [{from_key, from_name, text, timestamp}]
+_dm_queue: dict[str, list[dict]] = {}
+_dm_queue_lock = threading.Lock()
+MAX_DMS_PER_TURN = 2
+
+
+def get_dm_queue() -> dict:
+    """Return a snapshot of the DM queue (for session persistence)."""
+    with _dm_queue_lock:
+        return {k: list(v) for k, v in _dm_queue.items()}
+
+
+def set_dm_queue(data: dict) -> None:
+    """Replace the DM queue with saved data (for session restore)."""
+    with _dm_queue_lock:
+        _dm_queue.clear()
+        _dm_queue.update(data)
+
+
+def _queue_dms(client, persona, dm_cmds):
+    """Queue DMs from an agent, enforcing the per-turn cap."""
+    sender_key = persona["name"]
+    sender_name = persona["display_name"]
+    queued = 0
+    with _dm_queue_lock:
+        for dm in dm_cmds[:MAX_DMS_PER_TURN]:
+            recipient = dm.get("to", "")
+            text = dm.get("text", "").strip()
+            if not recipient or not text:
+                continue
+            if recipient not in PERSONAS:
+                print(f"  {sender_name}: dm to unknown agent {recipient}, skipped")
+                continue
+            _dm_queue.setdefault(recipient, []).append({
+                "from_key": sender_key,
+                "from_name": sender_name,
+                "text": text,
+                "timestamp": _time.time(),
+            })
+            queued += 1
+            recip_name = PERSONAS[recipient]["display_name"]
+            # Log to #system for operator visibility
+            client.post_message("System",
+                f"[DM] {sender_name} \u2192 {recip_name}: {text}",
+                channel="#system")
+            print(f"  {sender_name}: dm -> {recip_name}")
+    if len(dm_cmds) > MAX_DMS_PER_TURN:
+        print(f"  {sender_name}: {len(dm_cmds) - MAX_DMS_PER_TURN} DMs dropped (cap={MAX_DMS_PER_TURN})")
+
+
+def _pop_pending_dms(persona_key: str) -> list[dict]:
+    """Pop and return pending DMs for an agent, clearing the queue."""
+    with _dm_queue_lock:
+        return _dm_queue.pop(persona_key, [])
+
 
 def _get_agent_display_names() -> set[str]:
     """Get agent display names dynamically (PERSONAS populated after scenario load)."""
@@ -603,7 +662,7 @@ async def _process_json_response(
     author = persona["display_name"]
 
     # 1. Normalize and execute commands
-    doc_cmds, gitlab_cmds, tickets_cmds, channels_to_join = normalize_commands(parsed)
+    doc_cmds, gitlab_cmds, tickets_cmds, channels_to_join, dm_cmds = normalize_commands(parsed)
 
     if doc_cmds:
         if on_activity:
@@ -629,6 +688,9 @@ async def _process_json_response(
             print(f"  {persona['display_name']}: joined {ch}")
         except Exception as e:
             print(f"  {persona['display_name']}: failed to join {ch} - {e}")
+
+    if dm_cmds:
+        _queue_dms(client, persona, dm_cmds)
 
     # 2. Extract channel-routed messages
     return extract_messages(parsed, default_channel)
@@ -815,6 +877,7 @@ async def _run_loop(
                     ch_name for ch_name, ch_members in memberships.items()
                     if pk in ch_members
                 }
+                pending_dms = _pop_pending_dms(pk)
                 prompt = build_turn_prompt(
                     pk,
                     full_history,
@@ -824,6 +887,7 @@ async def _run_loop(
                     repos=repos,
                     tickets=tickets,
                     offline_agents=offline_keys,
+                    pending_dms=pending_dms,
                 )
                 # Show typing indicator and update agent status
                 display_name = persona["display_name"]
@@ -916,6 +980,18 @@ async def _run_loop(
                     posted_channels.add(ch)
                     if ch not in trigger_channels:
                         new_trigger_channels.add(ch)
+
+        # Check for pending DMs — trigger recipients in the next wave
+        with _dm_queue_lock:
+            dm_recipients = {k for k in _dm_queue if k in persona_map and _dm_queue[k]}
+        if dm_recipients:
+            for pk in dm_recipients:
+                for ch_name, ch_members in memberships.items():
+                    if pk in ch_members:
+                        new_trigger_channels.add(ch_name)
+                        break
+            dm_names = ", ".join(persona_map[pk]["display_name"] for pk in dm_recipients)
+            print(f"  Pending DMs for: {dm_names} — triggering next wave")
 
         trigger_channels = new_trigger_channels
 
@@ -1251,6 +1327,14 @@ async def run_orchestrator(args) -> None:
             # Ensure ready state is broadcast after all processing
             agents = _build_agent_status(personas, pool)
             client.send_heartbeat("ready", scenario_name, agents)
+
+            # Auto-save session after each response cycle
+            try:
+                from lib.session import save_session
+                save_session("autosave")
+                print("Auto-saved session")
+            except Exception as e:
+                print(f"Auto-save failed: {e}")
 
             print(f"\nWaiting for new messages (last_seen_id={last_seen_id})...")
     finally:
