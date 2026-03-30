@@ -541,8 +541,7 @@ def _parse_multi_channel_response(text: str, default_channel: str) -> dict[str, 
 
 
 def _post_system(client: ChatClient, text: str) -> None:
-    """Post a system message to both #general (for agents) and #system (for operator)."""
-    client.post_message("System", text, channel="#general")
+    """Post a system message to #system (operator-visible only)."""
     client.post_message("System", text, channel="#system")
 
 
