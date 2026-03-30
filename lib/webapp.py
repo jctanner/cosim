@@ -1,6 +1,7 @@
 """Flask chat server with SSE broadcast and web UI."""
 
 import json
+import re
 import time
 import queue
 import threading
@@ -21,6 +22,91 @@ from lib.scenario_loader import list_scenarios
 
 CHAT_LOG = Path(__file__).parent.parent / "var" / "chat.log"
 DOCS_DIR = Path(__file__).parent.parent / "var" / "docs"
+LOGS_DIR = Path(__file__).parent.parent / "var" / "logs"
+
+# Regex to match ResultMessage(...) lines written by agent_runner
+_RESULT_MSG_RE = re.compile(
+    r"ResultMessage\("
+    r".*?total_cost_usd=(?P<cost>[0-9eE.+-]+|None)"
+    r".*?usage=(?P<usage>\{[^}]*\}|None)"
+)
+
+
+def _parse_usage_from_logs() -> dict:
+    """Parse token usage and cost data from agent log files in var/logs/.
+
+    Returns dict with 'totals' (session-wide) and 'agents' (per-agent list).
+    """
+    agents: dict[str, dict] = {}
+
+    if not LOGS_DIR.is_dir():
+        return {"totals": {"input_tokens": 0, "output_tokens": 0,
+                           "total_cost_usd": 0.0, "api_calls": 0},
+                "agents": []}
+
+    for log_path in sorted(LOGS_DIR.glob("*.log")):
+        # Derive agent name from log filename (reverse of agent_runner's naming)
+        agent_name = log_path.stem.replace("_", " ")
+
+        agent_data = {
+            "name": agent_name,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_cost_usd": 0.0,
+            "api_calls": 0,
+        }
+
+        try:
+            with open(log_path, encoding="utf-8", errors="replace") as f:
+                for line in f:
+                    m = _RESULT_MSG_RE.search(line)
+                    if not m:
+                        continue
+                    agent_data["api_calls"] += 1
+
+                    # Parse cost
+                    cost_str = m.group("cost")
+                    if cost_str and cost_str != "None":
+                        try:
+                            agent_data["total_cost_usd"] += float(cost_str)
+                        except ValueError:
+                            pass
+
+                    # Parse usage dict
+                    usage_str = m.group("usage")
+                    if usage_str and usage_str != "None":
+                        # usage looks like {'input_tokens': 123, 'output_tokens': 456}
+                        # Convert single quotes to double for json parsing
+                        try:
+                            usage_json = usage_str.replace("'", '"')
+                            usage = json.loads(usage_json)
+                            agent_data["input_tokens"] += int(usage.get("input_tokens", 0))
+                            agent_data["output_tokens"] += int(usage.get("output_tokens", 0))
+                        except (json.JSONDecodeError, ValueError):
+                            pass
+        except OSError:
+            continue
+
+        if agent_data["api_calls"] > 0:
+            agents[agent_name] = agent_data
+
+    # Compute session totals
+    totals = {
+        "input_tokens": sum(a["input_tokens"] for a in agents.values()),
+        "output_tokens": sum(a["output_tokens"] for a in agents.values()),
+        "total_cost_usd": round(sum(a["total_cost_usd"] for a in agents.values()), 6),
+        "api_calls": sum(a["api_calls"] for a in agents.values()),
+    }
+
+    # Round per-agent costs
+    for a in agents.values():
+        a["total_cost_usd"] = round(a["total_cost_usd"], 6)
+
+    return {
+        "totals": totals,
+        "agents": sorted(agents.values(), key=lambda a: a["total_cost_usd"], reverse=True),
+    }
+
 
 # In-memory state
 _messages: list[dict] = []
@@ -444,6 +530,30 @@ WEB_UI = """<!DOCTYPE html>
   .thought-item-preview { color: #888; margin-top: 2px; overflow: hidden;
                           text-overflow: ellipsis; white-space: nowrap; }
 
+  /* -- Usage tab -- */
+  #usage-pane { padding: 0; flex-direction: row; }
+  #usage-sidebar { width: 200px; min-width: 200px; background: #121a30; border-right: 1px solid #0f3460;
+                   display: flex; flex-direction: column; overflow-y: auto; padding: 8px 0; }
+  .usage-sidebar-section { font-size: 11px; font-weight: 700; text-transform: uppercase;
+                           letter-spacing: 1px; color: #555; padding: 10px 14px 4px; }
+  .usage-stat { padding: 4px 14px; font-size: 12px; color: #888; }
+  .usage-stat strong { color: #e0e0e0; }
+  #usage-main { flex: 1; overflow-y: auto; padding: 20px; }
+  #usage-content { max-width: 1000px; }
+  #usage-empty { color: #666; text-align: center; padding: 40px; }
+  .usage-grid { display: flex; flex-wrap: wrap; gap: 12px; }
+  .usage-card { background: #1a1a2e; border: 1px solid #333; border-radius: 10px;
+                padding: 14px 16px; flex: 1 1 200px; max-width: 280px; min-width: 200px;
+                transition: border-color 0.15s; }
+  .usage-card:hover { border-color: #555; }
+  .usage-card-name { font-size: 14px; font-weight: 700; color: #e0e0e0; margin-bottom: 10px;
+                     padding-bottom: 6px; border-bottom: 1px solid #333; }
+  .usage-card-row { display: flex; justify-content: space-between; padding: 3px 0;
+                    font-size: 12px; color: #888; }
+  .usage-card-row .label { color: #666; }
+  .usage-card-row .value { color: #e0e0e0; font-weight: 600; font-family: monospace; }
+  .usage-card-row .value.cost { color: #2ecc71; }
+
   /* -- Modal overlay -- */
   .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7);
                    z-index: 1000; align-items: center; justify-content: center; }
@@ -803,6 +913,7 @@ WEB_UI = """<!DOCTYPE html>
   <button class="header-tab" data-tab="gitlab">GitLab</button>
   <button class="header-tab" data-tab="tickets">Tickets</button>
   <button class="header-tab" data-tab="npcs">NPCs</button>
+  <button class="header-tab" data-tab="usage">Usage</button>
   <div id="session-controls">
     <span id="orch-status" title="Orchestrator status">
       <span id="orch-dot" class="status-dot disconnected"></span>
@@ -1122,6 +1233,18 @@ WEB_UI = """<!DOCTYPE html>
       </div>
     </div>
   </div>
+  <!-- Usage tab -->
+  <div id="usage-pane" class="tab-pane">
+    <div id="usage-sidebar">
+      <div class="usage-sidebar-section">Session Totals</div>
+      <div id="usage-totals" style="padding:4px 0;"></div>
+    </div>
+    <div id="usage-main">
+      <div id="usage-content">
+        <div id="usage-empty">No usage data yet. Send messages so agents produce responses.</div>
+      </div>
+    </div>
+  </div>
 </div>
 
 <!-- New Session Modal -->
@@ -1384,6 +1507,7 @@ document.querySelectorAll('.header-tab').forEach(tab => {
     if (target === 'gitlab') loadRepos();
     if (target === 'tickets') loadTickets();
     if (target === 'npcs') loadNPCs();
+    if (target === 'usage') loadUsage();
   });
 });
 
@@ -2525,6 +2649,69 @@ document.getElementById('npc-detail-close').addEventListener('click', () => {
   closeModal('npc-detail-modal');
 });
 
+// -- Usage tab --
+
+function formatTokenCount(n) {
+  if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+  if (n >= 1000) return (n / 1000).toFixed(1) + 'K';
+  return n.toString();
+}
+
+function formatCost(usd) {
+  if (usd >= 1) return '$' + usd.toFixed(2);
+  if (usd >= 0.01) return '$' + usd.toFixed(3);
+  if (usd > 0) return '$' + usd.toFixed(4);
+  return '$0.00';
+}
+
+async function loadUsage() {
+  try {
+    const resp = await fetch('/api/usage');
+    const data = await resp.json();
+    const totals = data.totals;
+    const agents = data.agents;
+
+    // Update sidebar totals
+    const totalsEl = document.getElementById('usage-totals');
+    totalsEl.innerHTML =
+      '<div class="usage-stat"><span class="label">API Calls:</span> <strong>' + totals.api_calls + '</strong></div>' +
+      '<div class="usage-stat"><span class="label">Input:</span> <strong>' + formatTokenCount(totals.input_tokens) + '</strong></div>' +
+      '<div class="usage-stat"><span class="label">Output:</span> <strong>' + formatTokenCount(totals.output_tokens) + '</strong></div>' +
+      '<div class="usage-stat"><span class="label">Cost:</span> <strong style="color:#2ecc71">' + formatCost(totals.total_cost_usd) + '</strong></div>';
+
+    // Update main content
+    const container = document.getElementById('usage-content');
+    const emptyEl = document.getElementById('usage-empty');
+
+    if (!agents || agents.length === 0) {
+      container.innerHTML = '';
+      container.appendChild(emptyEl);
+      emptyEl.style.display = 'block';
+      return;
+    }
+
+    container.innerHTML = '';
+    const grid = document.createElement('div');
+    grid.className = 'usage-grid';
+
+    agents.forEach(agent => {
+      const card = document.createElement('div');
+      card.className = 'usage-card';
+      card.innerHTML =
+        '<div class="usage-card-name">' + escapeHtml(agent.name) + '</div>' +
+        '<div class="usage-card-row"><span class="label">Input tokens</span><span class="value">' + formatTokenCount(agent.input_tokens) + '</span></div>' +
+        '<div class="usage-card-row"><span class="label">Output tokens</span><span class="value">' + formatTokenCount(agent.output_tokens) + '</span></div>' +
+        '<div class="usage-card-row"><span class="label">API calls</span><span class="value">' + agent.api_calls + '</span></div>' +
+        '<div class="usage-card-row"><span class="label">Cost</span><span class="value cost">' + formatCost(agent.total_cost_usd) + '</span></div>';
+      grid.appendChild(card);
+    });
+
+    container.appendChild(grid);
+  } catch(e) {
+    // silently ignore fetch errors
+  }
+}
+
 // -- Orchestrator status polling --
 
 const orchDot = document.getElementById('orch-dot');
@@ -2548,8 +2735,9 @@ async function pollStatus() {
     orchDot.className = 'status-dot ' + state;
     const msg = status.orchestrator.message;
     orchLabel.textContent = msg || STATUS_LABELS[state] || state;
-    // Auto-refresh NPC tab if it's visible
+    // Auto-refresh NPC and Usage tabs if visible
     if (currentTab === 'npcs') loadNPCs();
+    if (currentTab === 'usage') loadUsage();
   } catch(e) {
     orchDot.className = 'status-dot disconnected';
     orchLabel.textContent = 'Server error';
@@ -3730,6 +3918,12 @@ def create_app() -> Flask:
             return jsonify(meta)
         except Exception as e:
             return jsonify({"error": str(e)}), 500
+
+    # -- Usage API --
+
+    @app.route("/api/usage", methods=["GET"])
+    def get_usage():
+        return jsonify(_parse_usage_from_logs())
 
     return app
 
