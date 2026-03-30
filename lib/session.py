@@ -54,7 +54,13 @@ def list_sessions() -> list[dict]:
 
 
 def _generate_instance_name(scenario: str, name: str | None) -> str:
-    """Generate an instance directory name."""
+    """Generate an instance directory name.
+
+    If name is "autosave", use a fixed directory (no timestamp) so
+    repeated auto-saves overwrite the same slot.
+    """
+    if name == "autosave":
+        return f"{scenario}--autosave"
     date_str = datetime.now().strftime("%Y-%m-%d-%H%M")
     if name:
         slug = name.lower().replace(" ", "-")
@@ -117,6 +123,15 @@ def save_session(name: str | None = None) -> dict:
     if thoughts:
         (instance_dir / "thoughts.json").write_text(json.dumps(thoughts, indent=2))
 
+    # Save DM queue
+    try:
+        from lib.orchestrator import get_dm_queue
+        dm_data = get_dm_queue()
+        if dm_data:
+            (instance_dir / "dm_queue.json").write_text(json.dumps(dm_data, indent=2))
+    except Exception:
+        pass
+
     # Write metadata
     now = time.time()
     meta = {
@@ -167,6 +182,15 @@ def load_session(instance_name: str) -> dict:
             with _agent_thoughts_lock:
                 _agent_thoughts.clear()
                 _agent_thoughts.update(thoughts)
+        except Exception:
+            pass
+
+    # Restore DM queue
+    dm_path = instance_dir / "dm_queue.json"
+    if dm_path.exists():
+        try:
+            from lib.orchestrator import set_dm_queue
+            set_dm_queue(json.loads(dm_path.read_text()))
         except Exception:
             pass
 

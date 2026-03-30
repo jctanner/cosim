@@ -254,7 +254,7 @@ def build_initial_prompt(persona_key: str, channels: dict[str, dict] | None = No
     team_lines = []
     for pk, p in PERSONAS.items():
         desc = p.get("team_description", pk)
-        team_lines.append(f"- **{p['display_name']}** — {desc}")
+        team_lines.append(f"- **{p['display_name']}** (`{pk}`) — {desc}")
     team_listing = "\n".join(team_lines)
 
     # Build folders listing
@@ -308,7 +308,7 @@ When any of these people speak, the relevant team members should engage — do N
 
 ## IMPORTANT: Communication Rules
 
-**All communication happens exclusively through these chat channels.** There are no phone calls, emails, Slack DMs, video calls, or any other communication tools available. Do not suggest scheduling calls, sending emails, or meeting in person — these are not possible. Everything must be handled through the chat and shared documents.
+**All communication happens through chat channels and direct messages.** There are no phone calls, emails, video calls, or any other communication tools available. Do not suggest scheduling calls, sending emails, or meeting in person — these are not possible. Everything must be handled through the chat, direct messages, and shared documents.
 
 When you need to deliver something to the customer, do it directly in an external channel or create a shared document. Do not defer work to offline channels that don't exist.
 
@@ -386,6 +386,14 @@ Valid statuses: open, in_progress, resolved, closed. Valid priorities: low, medi
 |--------|--------|
 | `JOIN` | `channel` (e.g. "#engineering") |
 
+**Direct message commands** (`type: "dm"`):
+
+| action | params |
+|--------|--------|
+| (none) | `to` (persona key from team listing, e.g. "engmgr"), `text` |
+
+DMs are private one-shot messages delivered at the recipient's next turn. Max 2 per response. Use the persona key shown in parentheses in the team listing above (e.g. `engmgr`, `pm`, `ceo`). Use for pre-alignment, escalation, or private coordination. Do not use DMs for anything that should be part of the public record.
+
 ### Complete Example
 
 ```json
@@ -398,7 +406,8 @@ Valid statuses: open, in_progress, resolved, closed. Valid priorities: low, medi
   "commands": [
     {{"type": "doc", "action": "CREATE", "params": {{"folder": "engineering", "title": "Rate Limiting Spec", "content": "## Rate Limiting\\n\\nEndpoints will enforce per-key limits..."}}}},
     {{"type": "tickets", "action": "CREATE", "params": {{"title": "Implement API rate limiting", "assignee": "Alex (Senior Eng)", "priority": "high", "description": "Implement rate limiting per the spec document."}}}},
-    {{"type": "channel", "action": "JOIN", "params": {{"channel": "#devops"}}}}
+    {{"type": "channel", "action": "JOIN", "params": {{"channel": "#devops"}}}},
+    {{"type": "dm", "params": {{"to": "engmgr", "text": "Heads up — the rate limiting estimate is aggressive. May need to push back if sales promises a timeline."}}}}
   ]
 }}
 ```
@@ -451,6 +460,7 @@ def build_turn_prompt(
     repos: list[dict] | None = None,
     tickets: list[dict] | None = None,
     offline_agents: set[str] | None = None,
+    pending_dms: list[dict] | None = None,
 ) -> str:
     """Build a lean per-turn prompt for a persistent session.
 
@@ -462,6 +472,7 @@ def build_turn_prompt(
         docs: List of document metadata dicts.
         repos: List of GitLab repository metadata dicts.
         tickets: List of ticket dicts.
+        pending_dms: List of pending DM dicts for this agent.
     """
     persona = PERSONAS[persona_key]
     if channels is None:
@@ -548,9 +559,19 @@ Reply with a single JSON object. Format: {{"action": "respond", "messages": [...
                 "Do not expect responses from them. Do not defer work to them or suggest they handle something."
             )
 
+    # Build pending DMs section
+    dm_section = ""
+    if pending_dms:
+        lines = ["## Private Messages (visible only to you)\n"]
+        for dm in pending_dms:
+            lines.append(f'- From {dm["from_name"]}: "{dm["text"]}"')
+        dm_section = "\n".join(lines)
+
     parts = [f"## Chat History\n\n{history}"]
     if offline_section:
         parts.append(offline_section)
+    if dm_section:
+        parts.append(dm_section)
     if director_section:
         parts.append(director_section)
     if docs_section:
