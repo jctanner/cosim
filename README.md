@@ -11,7 +11,7 @@ Terminal 1 (server):
 $ python main.py server
 Chat log cleared on startup
 Channels initialized: ['#devops', '#engineering', '#general', ...]
-GitLab storage ready: gitlab/  (0 existing repos)
+GitLab storage ready: var/gitlab/  (0 existing repos)
 
 Terminal 2 (agents):
 $ python main.py chat
@@ -269,11 +269,13 @@ Respond PASS if:
 │       ├── scenario.yaml            # Channels, tiers, folders, character refs
 │       └── characters/              # Per-character role prompts (.md)
 ├── .claude/skills/                  # Claude Code skill definitions (also used as legacy prompts)
-├── docs/                            # Runtime — document storage (folders + index)
-├── gitlab/                          # Runtime — git repo storage
-├── tickets/                         # Runtime — ticket storage
-├── logs/                            # Runtime — agent session logs
-└── chat.log                         # Runtime — message persistence
+└── var/                             # Runtime state (gitignored)
+    ├── docs/                        # Document storage (folders + index)
+    ├── gitlab/                      # Git repo storage
+    ├── tickets/                     # Ticket storage
+    ├── logs/                        # Agent session logs
+    ├── instances/                   # Saved session snapshots
+    └── chat.log                     # Message persistence
 ```
 
 ## REST API
@@ -333,17 +335,15 @@ Respond PASS if:
 
 ### Adding a Persona
 
-1. Add an entry to `PERSONAS` in `lib/personas.py`
-2. Add channel memberships in `DEFAULT_MEMBERSHIPS`
-3. Assign a response tier in `RESPONSE_TIERS`
-4. Create a skill file at `.claude/skills/<skill-name>/SKILL.md`
-5. Add folder access rules in `DEFAULT_FOLDER_ACCESS` in `lib/docs.py`
-6. Optionally add a personal folder in `DEFAULT_FOLDERS` in `lib/docs.py`
+1. Add a character markdown file in `scenarios/<name>/characters/`
+2. Reference it in `scenario.yaml` under `characters` with channel memberships and tier
+3. Create a skill file at `.claude/skills/<skill-name>/SKILL.md`
+4. Add folder access rules and optional personal folder in the scenario's `folders` config
 
 ### Adding a Channel
 
-1. Add to `DEFAULT_CHANNELS` in `lib/personas.py`
-2. Add members to `DEFAULT_MEMBERSHIPS`
+1. Add to the `channels` list in `scenarios/<name>/scenario.yaml`
+2. Add members via character `channels` entries in the same file
 3. The webapp and orchestrator pick it up automatically
 
 ### Changing Models
@@ -360,4 +360,5 @@ python main.py chat --model opus     # Most capable
 - **claude-agent-sdk** — persistent Claude sessions via Vertex AI
 - **flask** — web server and REST API
 - **python-dotenv** — environment variable management
+- **pyyaml** — scenario configuration parsing
 - **requests** — HTTP client
