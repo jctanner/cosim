@@ -24,12 +24,14 @@ CHAT_LOG = Path(__file__).parent.parent / "var" / "chat.log"
 DOCS_DIR = Path(__file__).parent.parent / "var" / "docs"
 LOGS_DIR = Path(__file__).parent.parent / "var" / "logs"
 
-# Regex to match ResultMessage(...) lines written by agent_runner
-_RESULT_MSG_RE = re.compile(
-    r"ResultMessage\("
-    r".*?total_cost_usd=(?P<cost>[0-9eE.+-]+|None)"
-    r".*?usage=(?P<usage>\{[^}]*\}|None)"
-)
+# Regexes to parse ResultMessage lines written by agent_runner.
+# The usage dict contains nested sub-dicts, so we extract token counts
+# directly from the line rather than trying to parse the full dict.
+_RESULT_MSG_RE = re.compile(r"ResultMessage\(.*?total_cost_usd=(?P<cost>[0-9eE.+-]+|None)")
+_INPUT_TOKENS_RE = re.compile(r"'input_tokens':\s*(\d+)")
+_OUTPUT_TOKENS_RE = re.compile(r"'output_tokens':\s*(\d+)")
+_CACHE_CREATE_RE = re.compile(r"'cache_creation_input_tokens':\s*(\d+)")
+_CACHE_READ_RE = re.compile(r"'cache_read_input_tokens':\s*(\d+)")
 
 
 def _parse_usage_from_logs() -> dict:
@@ -72,18 +74,16 @@ def _parse_usage_from_logs() -> dict:
                         except ValueError:
                             pass
 
-                    # Parse usage dict
-                    usage_str = m.group("usage")
-                    if usage_str and usage_str != "None":
-                        # usage looks like {'input_tokens': 123, 'output_tokens': 456}
-                        # Convert single quotes to double for json parsing
-                        try:
-                            usage_json = usage_str.replace("'", '"')
-                            usage = json.loads(usage_json)
-                            agent_data["input_tokens"] += int(usage.get("input_tokens", 0))
-                            agent_data["output_tokens"] += int(usage.get("output_tokens", 0))
-                        except (json.JSONDecodeError, ValueError):
-                            pass
+                    # Extract token counts directly from line text.
+                    # Input = input_tokens + cache_creation + cache_read
+                    for pat in (_INPUT_TOKENS_RE, _CACHE_CREATE_RE, _CACHE_READ_RE):
+                        tok_m = pat.search(line)
+                        if tok_m:
+                            agent_data["input_tokens"] += int(tok_m.group(1))
+
+                    tok_m = _OUTPUT_TOKENS_RE.search(line)
+                    if tok_m:
+                        agent_data["output_tokens"] += int(tok_m.group(1))
         except OSError:
             continue
 
@@ -2809,9 +2809,11 @@ document.getElementById('session-new-btn').addEventListener('click', async () =>
     opt.dataset.desc = s.description || '';
     sel.appendChild(opt);
   });
-  // Show description for first scenario
-  const first = scenarios[0];
-  document.getElementById('new-session-scenario-desc').textContent = first ? first.description : '';
+  // Default to tech-startup if available, otherwise first
+  const preferred = scenarios.find(s => s.key === 'tech-startup');
+  if (preferred) sel.value = preferred.key;
+  const selected = scenarios.find(s => s.key === sel.value) || scenarios[0];
+  document.getElementById('new-session-scenario-desc').textContent = selected ? selected.description : '';
   openModal('new-session-modal');
 });
 
