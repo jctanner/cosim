@@ -216,6 +216,26 @@ def new_session(scenario_name: str | None = None) -> dict:
 
     _clear_runtime_dirs()
 
+    # Copy scenario seed data (docs, gitlab, tickets) if present
+    from lib.scenario_loader import SCENARIOS_DIR
+    scenario_dir = SCENARIOS_DIR / scenario
+    for dirname in ["docs", "gitlab", "tickets"]:
+        seed_dir = scenario_dir / dirname
+        if seed_dir.exists():
+            dst = VAR_DIR / dirname
+            if not dst.exists():
+                shutil.copytree(seed_dir, dst)
+            else:
+                # Merge seed files into existing dir
+                for item in seed_dir.rglob("*"):
+                    if item.is_file():
+                        rel = item.relative_to(seed_dir)
+                        target = dst / rel
+                        target.parent.mkdir(parents=True, exist_ok=True)
+                        if not target.exists():
+                            shutil.copy2(item, target)
+            print(f"  Seeded {dirname}/ from scenario")
+
     _current_session["scenario"] = scenario
     _current_session["instance_name"] = None
     _current_session["created_at"] = time.time()

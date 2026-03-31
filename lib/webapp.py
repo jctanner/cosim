@@ -185,6 +185,15 @@ def _init_channels():
         }
         _channel_members["#system"] = set()
 
+        # Create #dms channel for agent-to-agent DM visibility
+        _channels["#dms"] = {
+            "description": "Agent direct messages (operator visibility)",
+            "is_external": False,
+            "is_system": True,
+            "created_at": now,
+        }
+        _channel_members["#dms"] = set()
+
         # Create director channels for each persona
         for pk, p_info in PERSONAS.items():
             ch_name = f"#director-{pk}"
@@ -953,6 +962,7 @@ WEB_UI = """<!DOCTYPE html>
         <input id="sender-name" type="text" placeholder="Your name..." value="" style="width:120px" />
         <select id="sender-role">
           <option value="">No role</option>
+          <option value="Scenario Director">Scenario Director</option>
           <option value="Consultant">Consultant</option>
           <option value="Customer">Customer</option>
           <option value="New Hire">New Hire</option>
@@ -1144,38 +1154,11 @@ WEB_UI = """<!DOCTYPE html>
             <label style="margin-left:12px;">Assignee</label>
             <select class="tk-form-select" id="tk-form-assignee">
               <option value="">Unassigned</option>
-              <option value="Sarah (PM)">Sarah (PM)</option>
-              <option value="Marcus (Eng Manager)">Marcus (Eng Manager)</option>
-              <option value="Priya (Architect)">Priya (Architect)</option>
-              <option value="Alex (Senior Eng)">Alex (Senior Eng)</option>
-              <option value="Jordan (Support Eng)">Jordan (Support Eng)</option>
-              <option value="Taylor (Sales Eng)">Taylor (Sales Eng)</option>
-              <option value="Dana (CEO)">Dana (CEO)</option>
-              <option value="Morgan (CFO)">Morgan (CFO)</option>
-              <option value="Riley (Marketing)">Riley (Marketing)</option>
-              <option value="Casey (DevOps)">Casey (DevOps)</option>
-              <option value="Nadia (Project Mgr)">Nadia (Project Mgr)</option>
             </select>
           </div>
           <div class="tk-form-row">
             <label>Created by</label>
             <select class="tk-form-select" id="tk-form-author">
-              <option value="Consultant" selected>Consultant</option>
-              <option value="Customer">Customer</option>
-              <option value="Sarah (PM)">Sarah (PM)</option>
-              <option value="Marcus (Eng Manager)">Marcus (Eng Manager)</option>
-              <option value="Priya (Architect)">Priya (Architect)</option>
-              <option value="Alex (Senior Eng)">Alex (Senior Eng)</option>
-              <option value="Jordan (Support Eng)">Jordan (Support Eng)</option>
-              <option value="Taylor (Sales Eng)">Taylor (Sales Eng)</option>
-              <option value="Dana (CEO)">Dana (CEO)</option>
-              <option value="Morgan (CFO)">Morgan (CFO)</option>
-              <option value="Riley (Marketing)">Riley (Marketing)</option>
-              <option value="Casey (DevOps)">Casey (DevOps)</option>
-              <option value="Nadia (Project Mgr)">Nadia (Project Mgr)</option>
-              <option value="Board Member">Board Member</option>
-              <option value="Investor">Investor</option>
-              <option value="God">God</option>
             </select>
           </div>
           <div class="tk-form-row">
@@ -1196,22 +1179,6 @@ WEB_UI = """<!DOCTYPE html>
           <span id="ticket-detail-id"></span>
           <span style="margin-left:auto;font-size:12px;color:#888;">Acting as</span>
           <select class="tk-form-select" id="tk-acting-as" style="font-size:12px;">
-            <option value="Consultant" selected>Consultant</option>
-            <option value="Customer">Customer</option>
-            <option value="Sarah (PM)">Sarah (PM)</option>
-            <option value="Marcus (Eng Manager)">Marcus (Eng Manager)</option>
-            <option value="Priya (Architect)">Priya (Architect)</option>
-            <option value="Alex (Senior Eng)">Alex (Senior Eng)</option>
-            <option value="Jordan (Support Eng)">Jordan (Support Eng)</option>
-            <option value="Taylor (Sales Eng)">Taylor (Sales Eng)</option>
-            <option value="Dana (CEO)">Dana (CEO)</option>
-            <option value="Morgan (CFO)">Morgan (CFO)</option>
-            <option value="Riley (Marketing)">Riley (Marketing)</option>
-            <option value="Casey (DevOps)">Casey (DevOps)</option>
-            <option value="Nadia (Project Mgr)">Nadia (Project Mgr)</option>
-            <option value="Board Member">Board Member</option>
-            <option value="Investor">Investor</option>
-            <option value="God">God</option>
           </select>
         </div>
         <div id="ticket-detail-content"></div>
@@ -1436,6 +1403,9 @@ async function loadPersonas() {
     css += '.msg-agent-' + i + ' .sender { color: ' + color + '; } ';
   });
   styleEl.textContent = css;
+
+  // Update ticket dropdowns with current personas
+  populateTicketDropdowns();
 }
 
 // Known human persona CSS classes
@@ -2286,11 +2256,55 @@ function renderTicketList() {
 
 let tkCurrentViewId = null;
 
-const TK_ASSIGNEE_OPTIONS = [
-  '', 'Sarah (PM)', 'Marcus (Eng Manager)', 'Priya (Architect)', 'Alex (Senior Eng)',
-  'Jordan (Support Eng)', 'Taylor (Sales Eng)', 'Dana (CEO)', 'Morgan (CFO)',
-  'Riley (Marketing)', 'Casey (DevOps)', 'Nadia (Project Mgr)',
+// Built dynamically from PERSONA_DISPLAY after loadPersonas()
+let TK_ASSIGNEE_OPTIONS = [''];
+
+const HUMAN_ROLES = [
+  'Scenario Director', 'Consultant', 'Customer', 'New Hire', 'Board Member',
+  'Intern', 'Vendor', 'Investor', 'Auditor', 'Competitor', 'Regulator',
+  'The Press', 'Hacker', 'God',
 ];
+
+function populateTicketDropdowns() {
+  // Build assignee list from current personas
+  TK_ASSIGNEE_OPTIONS = [''];
+  Object.values(PERSONA_DISPLAY).forEach(name => TK_ASSIGNEE_OPTIONS.push(name));
+
+  // Populate assignee dropdown (ticket creation)
+  const assigneeSel = document.getElementById('tk-form-assignee');
+  if (assigneeSel) {
+    assigneeSel.innerHTML = '<option value="">Unassigned</option>';
+    Object.values(PERSONA_DISPLAY).forEach(name => {
+      assigneeSel.innerHTML += '<option value="' + escapeHtml(name) + '">' + escapeHtml(name) + '</option>';
+    });
+  }
+
+  // Populate author dropdown (ticket creation) — human roles + agents
+  const authorSel = document.getElementById('tk-form-author');
+  if (authorSel) {
+    authorSel.innerHTML = '';
+    HUMAN_ROLES.forEach(role => {
+      const selected = role === 'Scenario Director' ? ' selected' : '';
+      authorSel.innerHTML += '<option value="' + escapeHtml(role) + '"' + selected + '>' + escapeHtml(role) + '</option>';
+    });
+    Object.values(PERSONA_DISPLAY).forEach(name => {
+      authorSel.innerHTML += '<option value="' + escapeHtml(name) + '">' + escapeHtml(name) + '</option>';
+    });
+  }
+
+  // Populate acting-as dropdown (ticket detail) — same as author
+  const actingSel = document.getElementById('tk-acting-as');
+  if (actingSel) {
+    actingSel.innerHTML = '';
+    HUMAN_ROLES.forEach(role => {
+      const selected = role === 'Scenario Director' ? ' selected' : '';
+      actingSel.innerHTML += '<option value="' + escapeHtml(role) + '"' + selected + '>' + escapeHtml(role) + '</option>';
+    });
+    Object.values(PERSONA_DISPLAY).forEach(name => {
+      actingSel.innerHTML += '<option value="' + escapeHtml(name) + '">' + escapeHtml(name) + '</option>';
+    });
+  }
+}
 
 function toggleCreateForm() {
   const form = document.getElementById('tk-create-form');

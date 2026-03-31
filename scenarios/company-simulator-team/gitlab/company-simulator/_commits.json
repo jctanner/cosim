@@ -1,0 +1,37 @@
+[
+  {
+    "id": "fc28c2c0",
+    "message": "first commit",
+    "author": "Tanner (Maintainer)",
+    "timestamp": 1711584000.0,
+    "files": [
+      "main.py",
+      "lib/webapp.py",
+      "lib/orchestrator.py",
+      "lib/personas.py"
+    ]
+  },
+  {
+    "id": "be5bd2e0",
+    "message": "Add multi-channel Slack-like agent organization system",
+    "author": "Tanner (Maintainer)",
+    "timestamp": 1711670400.0,
+    "files": [
+      "lib/webapp.py",
+      "lib/orchestrator.py",
+      "lib/personas.py"
+    ]
+  },
+  {
+    "id": "c17db460",
+    "message": "Config-driven scenarios, session management, orchestrator control",
+    "author": "ACP (Collaborator)",
+    "timestamp": 1711756800.0,
+    "files": [
+      "lib/scenario_loader.py",
+      "lib/session.py",
+      "lib/webapp.py",
+      "scenarios/tech-startup/scenario.yaml"
+    ]
+  }
+]

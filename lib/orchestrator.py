@@ -63,10 +63,10 @@ def _queue_dms(client, persona, dm_cmds):
             })
             queued += 1
             recip_name = PERSONAS[recipient]["display_name"]
-            # Log to #system for operator visibility
+            # Log to #dms for operator visibility
             client.post_message("System",
                 f"[DM] {sender_name} \u2192 {recip_name}: {text}",
-                channel="#system")
+                channel="#dms")
             print(f"  {sender_name}: dm -> {recip_name}")
     if len(dm_cmds) > MAX_DMS_PER_TURN:
         print(f"  {sender_name}: {len(dm_cmds) - MAX_DMS_PER_TURN} DMs dropped (cap={MAX_DMS_PER_TURN})")
