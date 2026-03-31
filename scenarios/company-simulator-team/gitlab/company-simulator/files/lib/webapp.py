@@ -1165,12 +1165,6 @@ WEB_UI = """<!DOCTYPE html>
             <label>Description</label>
             <textarea class="tk-form-textarea" id="tk-form-desc" placeholder="Describe the work to be done..."></textarea>
           </div>
-          <div class="tk-form-row">
-            <label>Notify channel</label>
-            <select class="tk-form-select" id="tk-form-notify">
-              <option value="">Don't notify</option>
-            </select>
-          </div>
           <div class="tk-form-actions">
             <button class="tk-form-cancel" onclick="toggleCreateForm()">Cancel</button>
             <button class="tk-form-submit" onclick="submitCreateTicket()">Create Ticket</button>
@@ -1183,12 +1177,9 @@ WEB_UI = """<!DOCTYPE html>
           <button id="ticket-back-btn">Back</button>
           <span id="ticket-detail-title"></span>
           <span id="ticket-detail-id"></span>
-        </div>
-        <div style="padding:8px 20px;background:#121a30;border-bottom:1px solid #333;display:flex;align-items:center;gap:8px">
-          <span style="font-size:12px;font-weight:600;color:#e94560;text-transform:uppercase;letter-spacing:0.5px">Acting as</span>
+          <span style="margin-left:auto;font-size:12px;color:#888;">Acting as</span>
           <select class="tk-form-select" id="tk-acting-as" style="font-size:12px;">
           </select>
-          <span style="font-size:10px;color:#555">All actions (status, assign, comments) use this identity</span>
         </div>
         <div id="ticket-detail-content"></div>
       </div>
@@ -2319,14 +2310,6 @@ function toggleCreateForm() {
   const form = document.getElementById('tk-create-form');
   form.classList.toggle('open');
   if (form.classList.contains('open')) {
-    // Populate notify channel dropdown
-    const notify = document.getElementById('tk-form-notify');
-    notify.innerHTML = '<option value="">Don\\'t notify</option>';
-    Object.keys(channelsData).sort().forEach(ch => {
-      if (!channelsData[ch].is_system && !channelsData[ch].is_director) {
-        notify.innerHTML += '<option value="' + escapeHtml(ch) + '">' + escapeHtml(ch) + '</option>';
-      }
-    });
     document.getElementById('tk-form-title').focus();
   }
 }
@@ -2338,29 +2321,15 @@ async function submitCreateTicket() {
   const assignee = document.getElementById('tk-form-assignee').value;
   const description = document.getElementById('tk-form-desc').value.trim();
   const author = document.getElementById('tk-form-author').value;
-  const notifyChannel = document.getElementById('tk-form-notify').value;
-  const resp = await fetch('/api/tickets', {
+  await fetch('/api/tickets', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({ title, description, priority, assignee, author }),
   });
-  // Post notification to selected channel
-  if (notifyChannel && resp.ok) {
-    const ticket = await resp.json();
-    let msg = 'New ticket **' + ticket.id + '**: ' + title;
-    if (assignee) msg += ' (assigned to ' + assignee + ')';
-    if (priority && priority !== 'medium') msg += ' [' + priority + ']';
-    await fetch('/api/messages', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ sender: author || 'System', content: msg, channel: notifyChannel }),
-    });
-  }
   document.getElementById('tk-form-title').value = '';
   document.getElementById('tk-form-desc').value = '';
   document.getElementById('tk-form-priority').value = 'medium';
   document.getElementById('tk-form-assignee').value = '';
-  document.getElementById('tk-form-notify').value = '';
   document.getElementById('tk-create-form').classList.remove('open');
   loadTickets();
 }
