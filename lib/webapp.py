@@ -1039,7 +1039,7 @@ WEB_UI = """<!DOCTYPE html>
           <span id="doc-viewer-title"></span>
           <div style="margin-left:auto;display:flex;gap:6px">
             <button id="doc-history-btn" class="session-btn" style="font-size:11px">History</button>
-            <button id="doc-edit-btn" class="session-btn" style="font-size:11px">Edit</button>
+            <button id="doc-edit-btn" class="session-btn" style="font-size:11px">Edit Latest Version</button>
           </div>
         </div>
         <div id="doc-viewer-body" style="display:flex;flex:1;min-height:0;overflow:hidden">
@@ -1926,6 +1926,24 @@ async function loadDocHistory() {
       item.classList.add('active');
       document.getElementById('doc-viewer-content').innerHTML = renderMarkdown(v.content || '');
     });
+    if (!v.is_current) {
+      const restoreBtn = document.createElement('button');
+      restoreBtn.className = 'session-btn';
+      restoreBtn.style.cssText = 'font-size:10px;padding:2px 8px;margin-top:4px;width:100%';
+      restoreBtn.textContent = 'Restore this version';
+      restoreBtn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const resp = await fetch('/api/docs/' + encodeURIComponent(_currentDoc.folder) + '/' + encodeURIComponent(_currentDoc.slug), {
+          method: 'PUT',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({content: v.content, author: 'Restored by Scenario Director'}),
+        });
+        if (resp.ok) {
+          await viewDoc(_currentDoc.folder, _currentDoc.slug);
+        }
+      });
+      item.appendChild(restoreBtn);
+    }
     list.appendChild(item);
   });
 }
