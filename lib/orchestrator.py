@@ -13,6 +13,7 @@ from lib.personas import (
     build_initial_prompt,
     build_turn_prompt,
     DEFAULT_CHANNELS,
+    DEFAULT_MEMBERSHIPS,
     PERSONAS,
     RESPONSE_TIERS,
     PERSONA_TIER,
@@ -898,7 +899,7 @@ async def _run_loop(
                 agents_status = _build_agent_status(personas, pool)
                 agents_status[pk]["state"] = "responding"
                 client.send_heartbeat("responding", scenario_name, agents_status,
-                                      f"{display_name} is thinking...")
+                                      f"{display_name} is thinking...", check_commands=False)
 
                 result = await pool.send(pk, prompt)
 
@@ -927,12 +928,12 @@ async def _run_loop(
                 # Reset agent status after response
                 agents_status = _build_agent_status(personas, pool)
                 client.send_heartbeat("responding", scenario_name, agents_status,
-                                      "Processing messages...")
+                                      "Processing messages...", check_commands=False)
 
                 if not result["success"]:
                     agents_status = _build_agent_status(personas, pool)
                     client.send_heartbeat("responding", scenario_name, agents_status,
-                                          "Processing messages...")
+                                          "Processing messages...", check_commands=False)
                     print(f"  {display_name}: failed, skipping")
                     continue
 
@@ -948,7 +949,7 @@ async def _run_loop(
                     s = _build_agent_status(personas, pool)
                     s[_pk]["state"] = activity
                     client.send_heartbeat("responding", scenario_name, s,
-                                          f"{_dn}: {activity}...")
+                                          f"{_dn}: {activity}...", check_commands=False)
 
                 _update_agent_activity("processing commands")
                 channel_posts = await _process_agent_response(
@@ -958,7 +959,7 @@ async def _run_loop(
                 # Reset status
                 agents_status = _build_agent_status(personas, pool)
                 client.send_heartbeat("responding", scenario_name, agents_status,
-                                      "Processing messages...")
+                                      "Processing messages...", check_commands=False)
 
                 print(f"  {display_name}: response={len(response)} chars, channels={list(channel_posts.keys())}")
 
@@ -1019,6 +1020,97 @@ def _requeue_restart(base_url: str, scenario_name: str) -> None:
         print(f"  Re-queue failed: {e}")
 
 
+async def _process_single_command(client, pool, personas, scenario_name, cmd):
+    """Process a single add/remove agent command.
+
+    Returns (updated personas list, restart_requested bool).
+    """
+    action = cmd.get("action")
+
+    if action == "add_agent":
+        agent_key = cmd.get("key", "")
+        if agent_key and agent_key not in pool._clients:
+            npcs = client.get_npcs()
+            npc_data = next((n for n in npcs if n["key"] == agent_key), None)
+            if npc_data:
+                persona = {
+                    "name": agent_key,
+                    "display_name": npc_data["display_name"],
+                    "team_description": npc_data.get("team_description", ""),
+                    "character_file": npc_data.get("character_file", ""),
+                }
+                PERSONAS[agent_key] = persona
+                DEFAULT_MEMBERSHIPS[agent_key] = set(npc_data.get("channels", ["#general"]))
+                tier = npc_data.get("tier", 1)
+                PERSONA_TIER[agent_key] = tier
+                RESPONSE_TIERS.setdefault(tier, [])
+                if agent_key not in RESPONSE_TIERS[tier]:
+                    RESPONSE_TIERS[tier].append(agent_key)
+                pool._personas[agent_key] = persona
+                print(f"\n*** Adding agent: {persona['display_name']} ***")
+                try:
+                    await pool._open_session(agent_key, build_initial_prompt)
+                    personas = list(pool._personas.values())
+                    client.post_message("System", f"{persona['display_name']} has joined the team!", channel="#system")
+                    client.post_message("System", f"Welcome {persona['display_name']} to the team!", channel="#general")
+                    print(f"  Agent added: {persona['display_name']}")
+                except (Exception, BaseException) as e:
+                    print(f"  Failed to add agent: {e}")
+            else:
+                print(f"  Agent {agent_key} not found on server")
+
+    elif action == "remove_agent":
+        agent_key = cmd.get("key", "")
+        if agent_key:
+            display_name = pool._personas.get(agent_key, {}).get("display_name", agent_key)
+            print(f"\n*** Removing agent: {display_name} ***")
+            if agent_key in pool._clients:
+                try:
+                    await pool._close_session(agent_key)
+                except (Exception, BaseException):
+                    pass
+            pool._personas.pop(agent_key, None)
+            PERSONAS.pop(agent_key, None)
+            DEFAULT_MEMBERSHIPS.pop(agent_key, None)
+            old_tier = PERSONA_TIER.pop(agent_key, None)
+            if old_tier and old_tier in RESPONSE_TIERS:
+                if agent_key in RESPONSE_TIERS[old_tier]:
+                    RESPONSE_TIERS[old_tier].remove(agent_key)
+            personas = list(pool._personas.values())
+            # Finalize on server (remove from server's PERSONAS)
+            try:
+                import requests as _req
+                _req.post(f"{client.base_url}/api/npcs/{agent_key}/finalize-fire", timeout=5)
+            except Exception:
+                pass
+            client.post_message("System", f"{display_name} has left the company.", channel="#system")
+            client.post_message("System", f"{display_name} has left the company.", channel="#general")
+            print(f"  Agent removed: {display_name}")
+
+    elif action == "restart":
+        return personas, True
+
+    return personas, False
+
+
+async def _process_pending_commands(client, pool, personas, scenario_name):
+    """Drain the command queue via heartbeat, processing all pending commands.
+
+    Returns (updated personas list, restart_requested bool).
+    """
+    while True:
+        agents = _build_agent_status(personas, pool)
+        cmd = client.send_heartbeat("ready", scenario_name, agents)
+        action = cmd.get("action")
+        if not action:
+            break
+        print(f"\n  Pending command: {cmd}")
+        personas, restart = await _process_single_command(client, pool, personas, scenario_name, cmd)
+        if restart:
+            return personas, True
+    return personas, False
+
+
 def _build_agent_status(personas: list[dict], pool: AgentPool | None = None) -> dict:
     """Build agent status dict for heartbeat."""
     result = {}
@@ -1056,11 +1148,8 @@ async def _start_agents(client, personas, model, scenario_name):
             client.post_message("System",
                 f"{display_name} is online ({i}/{tot})\n\nAgents online: {online_list}",
                 channel="#system")
-        # Check for pending commands during startup — return True to abort
-        cmd = client.send_heartbeat("starting", scenario_name, agents, msg)
-        if cmd.get("action") in ("restart", "shutdown"):
-            pending_cmd[0] = cmd
-            return True
+        # Update status only — don't consume commands during agent init
+        client.send_heartbeat("starting", scenario_name, agents, msg, check_commands=False)
         return False
 
     await pool.start(build_initial_prompt, on_progress=on_progress)
@@ -1083,7 +1172,7 @@ async def _start_agents(client, personas, model, scenario_name):
 
     # Send ready heartbeat
     agents = _build_agent_status(personas, pool)
-    client.send_heartbeat("ready", scenario_name, agents, "All agents ready")
+    client.send_heartbeat("ready", scenario_name, agents, "All agents ready", check_commands=False)
 
     return pool, None
 
@@ -1108,7 +1197,7 @@ async def _stop_agents(client, pool, personas, scenario_name=""):
                 channel="#system")
         agents = _build_agent_status(personas, pool)
         agents[personas[i-1]["name"]]["state"] = "offline"
-        client.send_heartbeat("stopping", scenario_name, agents,
+        client.send_heartbeat("stopping", scenario_name, agents, check_commands=False,
                               f"Stopping agent {i}/{total}: {name}")
     await pool.close()
 
@@ -1132,7 +1221,7 @@ async def run_orchestrator(args) -> None:
 
     # Wait for server to be reachable
     while not client.health_check():
-        client.send_heartbeat("connecting", scenario_name, {}, "Waiting for server...")
+        client.send_heartbeat("connecting", scenario_name, {}, "Waiting for server...", check_commands=False)
         print("Waiting for chat server...")
         await asyncio.sleep(2)
     print("Connected to chat server")
@@ -1141,10 +1230,10 @@ async def run_orchestrator(args) -> None:
     pool = None
     last_seen_id = 0
 
-    # Check if there's a pending command (e.g. re-queued after crash)
-    initial_cmd = client.send_heartbeat("waiting", scenario_name, {},
-                                        "Checking for pending commands...")
-    next_cmd = initial_cmd if initial_cmd.get("action") else None
+    # Send initial status — don't consume commands yet, the waiting loop handles that
+    client.send_heartbeat("waiting", scenario_name, {},
+                          "Checking for pending commands...", check_commands=False)
+    next_cmd = None
 
     print("Waiting for session start (click New or Load in the UI)...")
     while pool is None:
@@ -1154,7 +1243,22 @@ async def run_orchestrator(args) -> None:
         else:
             cmd = client.send_heartbeat("waiting", scenario_name, {},
                                         "Waiting for session — click New or Load")
-        if cmd.get("action") == "restart":
+        action = cmd.get("action")
+        # Handle remove commands even in waiting state (finalize on server)
+        if action == "remove_agent":
+            agent_key = cmd.get("key", "")
+            if agent_key:
+                try:
+                    import requests as _req
+                    _req.post(f"{client.base_url}/api/npcs/{agent_key}/finalize-fire", timeout=5)
+                    print(f"  Finalized fire for {agent_key} (no active session)")
+                except Exception:
+                    pass
+            continue
+        if action == "add_agent":
+            print(f"  Ignoring add_agent for {cmd.get('key','')} (no active session)")
+            continue
+        if action == "restart":
             new_scenario = cmd.get("scenario", scenario_name)
             if new_scenario != scenario_name:
                 from lib.scenario_loader import load_scenario
@@ -1196,6 +1300,8 @@ async def run_orchestrator(args) -> None:
             # Check for commands from the server
             agents = _build_agent_status(personas, pool)
             cmd = client.send_heartbeat("ready", scenario_name, agents)
+            if cmd.get("action"):
+                print(f"\n  Command received: {cmd}")
             if cmd.get("action") == "restart":
                 new_scenario = cmd.get("scenario", scenario_name)
                 print(f"\n*** Restart command received (scenario: {new_scenario}) ***")
@@ -1260,6 +1366,14 @@ async def run_orchestrator(args) -> None:
                 print("\n*** Shutdown command received ***")
                 break
 
+            if cmd.get("action") in ("add_agent", "remove_agent"):
+                # Process this command and drain any others in the queue
+                personas, _ = await _process_single_command(client, pool, personas, scenario_name, cmd)
+                personas, restart = await _process_pending_commands(client, pool, personas, scenario_name)
+                if restart:
+                    continue
+                continue
+
             new_messages = client.get_messages(since=last_seen_id)
 
             # Only trigger on non-agent messages (human input)
@@ -1271,7 +1385,7 @@ async def run_orchestrator(args) -> None:
 
             # Update heartbeat to show responding
             agents = _build_agent_status(personas, pool)
-            client.send_heartbeat("responding", scenario_name, agents, "Processing messages...")
+            client.send_heartbeat("responding", scenario_name, agents, "Processing messages...", check_commands=False)
 
             # Update last_seen_id
             if new_messages:
@@ -1283,9 +1397,10 @@ async def run_orchestrator(args) -> None:
 
             active_channels = await _run_loop(client, pool, personas, trigger_channels, max_waves, scenario_name)
 
-            # Reset all agents to ready after processing
-            agents = _build_agent_status(personas, pool)
-            client.send_heartbeat("ready", scenario_name, agents)
+            # Reset all agents to ready and process any pending commands
+            personas, restart = await _process_pending_commands(client, pool, personas, scenario_name)
+            if restart:
+                continue
 
             # Update last_seen_id to include any agent responses
             latest = client.get_messages()
@@ -1301,8 +1416,33 @@ async def run_orchestrator(args) -> None:
                     break
                 auto_round += 1
 
-                # Brief pause — check for new human input first
+                # Brief pause — process pending commands and check for new human input
                 await asyncio.sleep(1)
+
+                # Process add commands between rounds (removes deferred until quiesce)
+                while True:
+                    agents = _build_agent_status(personas, pool)
+                    cmd = client.send_heartbeat("responding", scenario_name, agents, "Autonomous continuation...")
+                    action = cmd.get("action")
+                    if not action:
+                        break
+                    if action == "add_agent":
+                        print(f"  Pending command: {cmd}")
+                        personas, _ = await _process_single_command(client, pool, personas, scenario_name, cmd)
+                    elif action == "remove_agent":
+                        # Defer removal until autonomous rounds finish
+                        print(f"  Deferring remove until quiesce: {cmd.get('key')}")
+                        import requests as _req
+                        try:
+                            _req.post(f"{client.base_url}/api/orchestrator/command", json=cmd, timeout=5)
+                        except Exception:
+                            pass
+                        break
+                    elif action == "restart":
+                        break
+                    else:
+                        break
+
                 new_messages = client.get_messages(since=last_seen_id)
                 human_messages = [m for m in new_messages if not _is_agent_message(m)]
                 if human_messages:
@@ -1324,9 +1464,10 @@ async def run_orchestrator(args) -> None:
             if auto_round > 0:
                 print(f"\nAgents quiesced after {auto_round} autonomous round(s)")
 
-            # Ensure ready state is broadcast after all processing
-            agents = _build_agent_status(personas, pool)
-            client.send_heartbeat("ready", scenario_name, agents)
+            # Process any pending commands after quiesce
+            personas, restart = await _process_pending_commands(client, pool, personas, scenario_name)
+            if restart:
+                continue
 
             # Auto-save session after each response cycle
             try:
