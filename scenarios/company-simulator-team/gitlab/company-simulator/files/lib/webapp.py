@@ -531,12 +531,6 @@ WEB_UI = """<!DOCTYPE html>
   .npc-toggle-btn.is-online:hover { border-color: #f39c12; color: #f39c12; }
   .npc-detail-tab { transition: all 0.15s; }
   .npc-detail-tab.active { background: #e94560; border-color: #e94560; color: #fff; }
-  .npc-config-check { display: flex; align-items: center; gap: 4px; background: #1a1a2e;
-                      padding: 4px 10px; border-radius: 6px; border: 1px solid #333;
-                      font-size: 12px; color: #888; cursor: pointer; }
-  .npc-config-check:hover { border-color: #555; }
-  .npc-config-check input { accent-color: #e94560; }
-  .npc-config-check.checked { color: #e0e0e0; border-color: #555; }
   .thought-item { padding: 8px 12px; cursor: pointer; border-bottom: 1px solid #1a1a2e;
                   font-size: 11px; color: #888; transition: background 0.1s; }
   .thought-item:hover { background: #1a1a3e; }
@@ -1171,12 +1165,6 @@ WEB_UI = """<!DOCTYPE html>
             <label>Description</label>
             <textarea class="tk-form-textarea" id="tk-form-desc" placeholder="Describe the work to be done..."></textarea>
           </div>
-          <div class="tk-form-row">
-            <label>Notify channel</label>
-            <select class="tk-form-select" id="tk-form-notify">
-              <option value="">Don't notify</option>
-            </select>
-          </div>
           <div class="tk-form-actions">
             <button class="tk-form-cancel" onclick="toggleCreateForm()">Cancel</button>
             <button class="tk-form-submit" onclick="submitCreateTicket()">Create Ticket</button>
@@ -1189,12 +1177,9 @@ WEB_UI = """<!DOCTYPE html>
           <button id="ticket-back-btn">Back</button>
           <span id="ticket-detail-title"></span>
           <span id="ticket-detail-id"></span>
-        </div>
-        <div style="padding:8px 20px;background:#121a30;border-bottom:1px solid #333;display:flex;align-items:center;gap:8px">
-          <span style="font-size:12px;font-weight:600;color:#e94560;text-transform:uppercase;letter-spacing:0.5px">Acting as</span>
+          <span style="margin-left:auto;font-size:12px;color:#888;">Acting as</span>
           <select class="tk-form-select" id="tk-acting-as" style="font-size:12px;">
           </select>
-          <span style="font-size:10px;color:#555">All actions (status, assign, comments) use this identity</span>
         </div>
         <div id="ticket-detail-content"></div>
       </div>
@@ -1295,7 +1280,6 @@ WEB_UI = """<!DOCTYPE html>
     <div style="display:flex;gap:8px;margin-bottom:12px">
       <button class="session-btn npc-detail-tab active" data-npc-tab="thoughts">Thoughts</button>
       <button class="session-btn npc-detail-tab" data-npc-tab="prompt">Prompt</button>
-      <button class="session-btn npc-detail-tab" data-npc-tab="config">Config</button>
     </div>
     <div id="npc-detail-thoughts" style="flex:1;min-height:0;display:flex;gap:0;border-radius:8px;overflow:hidden;border:1px solid #333">
       <div id="npc-thoughts-list" style="width:200px;min-width:200px;background:#121a30;overflow-y:auto;border-right:1px solid #333">
@@ -1305,27 +1289,6 @@ WEB_UI = """<!DOCTYPE html>
       </div>
     </div>
     <div id="npc-detail-prompt" style="flex:1;min-height:0;overflow-y:auto;background:#111;border-radius:8px;padding:16px;font-size:13px;color:#ccc;white-space:pre-wrap;font-family:monospace;line-height:1.5;display:none">
-    </div>
-    <div id="npc-detail-config" style="flex:1;min-height:0;overflow-y:auto;background:#111;border-radius:8px;padding:16px;display:none">
-      <div style="margin-bottom:16px">
-        <div style="font-size:12px;font-weight:600;color:#e94560;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">Response Tier</div>
-        <select id="npc-config-tier" style="background:#1a1a2e;color:#e0e0e0;border:1px solid #333;padding:6px 10px;border-radius:6px;font-size:13px">
-          <option value="1">Tier 1 — ICs</option>
-          <option value="2">Tier 2 — Managers</option>
-          <option value="3">Tier 3 — Executives</option>
-        </select>
-      </div>
-      <div style="margin-bottom:16px">
-        <div style="font-size:12px;font-weight:600;color:#e94560;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">Channel Memberships</div>
-        <div id="npc-config-channels" style="display:flex;flex-wrap:wrap;gap:6px"></div>
-      </div>
-      <div style="margin-bottom:16px">
-        <div style="font-size:12px;font-weight:600;color:#e94560;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">Doc Folder Access</div>
-        <div id="npc-config-folders" style="display:flex;flex-wrap:wrap;gap:6px"></div>
-      </div>
-      <div style="display:flex;justify-content:flex-end;padding-top:8px;border-top:1px solid #333">
-        <button id="npc-config-save" class="modal-btn-primary" style="font-size:13px">Save Configuration</button>
-      </div>
     </div>
   </div>
 </div>
@@ -2347,14 +2310,6 @@ function toggleCreateForm() {
   const form = document.getElementById('tk-create-form');
   form.classList.toggle('open');
   if (form.classList.contains('open')) {
-    // Populate notify channel dropdown
-    const notify = document.getElementById('tk-form-notify');
-    notify.innerHTML = '<option value="">Don\\'t notify</option>';
-    Object.keys(channelsData).sort().forEach(ch => {
-      if (!channelsData[ch].is_system && !channelsData[ch].is_director) {
-        notify.innerHTML += '<option value="' + escapeHtml(ch) + '">' + escapeHtml(ch) + '</option>';
-      }
-    });
     document.getElementById('tk-form-title').focus();
   }
 }
@@ -2366,29 +2321,15 @@ async function submitCreateTicket() {
   const assignee = document.getElementById('tk-form-assignee').value;
   const description = document.getElementById('tk-form-desc').value.trim();
   const author = document.getElementById('tk-form-author').value;
-  const notifyChannel = document.getElementById('tk-form-notify').value;
-  const resp = await fetch('/api/tickets', {
+  await fetch('/api/tickets', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({ title, description, priority, assignee, author }),
   });
-  // Post notification to selected channel
-  if (notifyChannel && resp.ok) {
-    const ticket = await resp.json();
-    let msg = 'New ticket **' + ticket.id + '**: ' + title;
-    if (assignee) msg += ' (assigned to ' + assignee + ')';
-    if (priority && priority !== 'medium') msg += ' [' + priority + ']';
-    await fetch('/api/messages', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ sender: author || 'System', content: msg, channel: notifyChannel }),
-    });
-  }
   document.getElementById('tk-form-title').value = '';
   document.getElementById('tk-form-desc').value = '';
   document.getElementById('tk-form-priority').value = 'medium';
   document.getElementById('tk-form-assignee').value = '';
-  document.getElementById('tk-form-notify').value = '';
   document.getElementById('tk-create-form').classList.remove('open');
   loadTickets();
 }
@@ -2667,7 +2608,6 @@ function switchNPCDetailTab(tab) {
   _npcDetailTab = tab;
   document.getElementById('npc-detail-thoughts').style.display = tab === 'thoughts' ? 'flex' : 'none';
   document.getElementById('npc-detail-prompt').style.display = tab === 'prompt' ? '' : 'none';
-  document.getElementById('npc-detail-config').style.display = tab === 'config' ? '' : 'none';
 }
 
 async function loadNPCThoughts() {
@@ -2734,79 +2674,11 @@ document.querySelectorAll('.npc-detail-tab').forEach(tab => {
     switchNPCDetailTab(_npcDetailTab);
     if (_npcDetailTab === 'thoughts') await loadNPCThoughts();
     else if (_npcDetailTab === 'prompt') await loadNPCPrompt();
-    else if (_npcDetailTab === 'config') await loadNPCConfig();
   });
 });
 
 document.getElementById('npc-detail-close').addEventListener('click', () => {
   closeModal('npc-detail-modal');
-});
-
-// -- NPC Config tab --
-
-async function loadNPCConfig() {
-  if (!_npcDetailKey) return;
-  // Get current NPC data
-  const resp = await fetch('/api/npcs');
-  const npcs = await resp.json();
-  const npc = npcs.find(n => n.key === _npcDetailKey);
-  if (!npc) return;
-
-  // Tier dropdown
-  document.getElementById('npc-config-tier').value = npc.tier || 1;
-
-  // Channel checkboxes
-  const chContainer = document.getElementById('npc-config-channels');
-  chContainer.innerHTML = '';
-  const currentChannels = new Set(npc.channels || []);
-  Object.keys(channelsData).sort().forEach(ch => {
-    if (channelsData[ch].is_system || channelsData[ch].is_director) return;
-    const checked = currentChannels.has(ch);
-    const label = document.createElement('label');
-    label.className = 'npc-config-check' + (checked ? ' checked' : '');
-    label.innerHTML = '<input type="checkbox" value="' + escapeHtml(ch) + '"' + (checked ? ' checked' : '') + '> ' + escapeHtml(ch);
-    label.querySelector('input').addEventListener('change', (e) => {
-      label.classList.toggle('checked', e.target.checked);
-    });
-    chContainer.appendChild(label);
-  });
-
-  // Folder checkboxes
-  const flContainer = document.getElementById('npc-config-folders');
-  flContainer.innerHTML = '';
-  const currentFolders = new Set(npc.folders || []);
-  foldersData.forEach(f => {
-    const checked = currentFolders.has(f.name);
-    const label = document.createElement('label');
-    label.className = 'npc-config-check' + (checked ? ' checked' : '');
-    label.innerHTML = '<input type="checkbox" value="' + escapeHtml(f.name) + '"' + (checked ? ' checked' : '') + '> ' + escapeHtml(f.name);
-    label.querySelector('input').addEventListener('change', (e) => {
-      label.classList.toggle('checked', e.target.checked);
-    });
-    flContainer.appendChild(label);
-  });
-}
-
-document.getElementById('npc-config-save').addEventListener('click', async () => {
-  if (!_npcDetailKey) return;
-  const tier = parseInt(document.getElementById('npc-config-tier').value);
-  const channels = [];
-  document.querySelectorAll('#npc-config-channels input:checked').forEach(cb => {
-    channels.push(cb.value);
-  });
-  const folders = [];
-  document.querySelectorAll('#npc-config-folders input:checked').forEach(cb => {
-    folders.push(cb.value);
-  });
-  const resp = await fetch('/api/npcs/' + encodeURIComponent(_npcDetailKey) + '/config', {
-    method: 'PUT',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({tier, channels, folders}),
-  });
-  if (resp.ok) {
-    loadNPCs();
-    loadChannels();
-  }
 });
 
 // -- Usage tab --
@@ -3962,57 +3834,6 @@ def create_app() -> Flask:
         _persist_message(sys_msg)
         _broadcast(sys_msg)
         return jsonify({"key": key, "online": new_state, "display_name": display_name})
-
-    # -- NPC configuration API --
-
-    @app.route("/api/npcs/<key>/config", methods=["PUT"])
-    def update_npc_config(key):
-        from lib.personas import PERSONAS, DEFAULT_MEMBERSHIPS, PERSONA_TIER, RESPONSE_TIERS
-        from lib.docs import DEFAULT_FOLDER_ACCESS
-        if key not in PERSONAS:
-            return jsonify({"error": f"unknown agent: {key}"}), 404
-
-        data = request.get_json(force=True)
-        display_name = PERSONAS[key]["display_name"]
-
-        # Update channel memberships
-        if "channels" in data:
-            new_channels = set(data["channels"])
-            DEFAULT_MEMBERSHIPS[key] = new_channels
-            # Update live channel members
-            with _channel_lock:
-                for ch_name in _channels:
-                    members = _channel_members.get(ch_name, set())
-                    if ch_name in new_channels:
-                        members.add(key)
-                    else:
-                        members.discard(key)
-
-        # Update folder access
-        if "folders" in data:
-            new_folders = set(data["folders"])
-            for folder_name in list(DEFAULT_FOLDER_ACCESS.keys()):
-                if folder_name in new_folders:
-                    DEFAULT_FOLDER_ACCESS[folder_name].add(key)
-                else:
-                    DEFAULT_FOLDER_ACCESS[folder_name].discard(key)
-
-        # Update tier
-        if "tier" in data:
-            new_tier = int(data["tier"])
-            old_tier = PERSONA_TIER.get(key)
-            if old_tier != new_tier:
-                # Remove from old tier
-                if old_tier in RESPONSE_TIERS:
-                    if key in RESPONSE_TIERS[old_tier]:
-                        RESPONSE_TIERS[old_tier].remove(key)
-                # Add to new tier
-                RESPONSE_TIERS.setdefault(new_tier, [])
-                if key not in RESPONSE_TIERS[new_tier]:
-                    RESPONSE_TIERS[new_tier].append(key)
-                PERSONA_TIER[key] = new_tier
-
-        return jsonify({"ok": True, "key": key, "display_name": display_name})
 
     # -- Agent thoughts API --
 
