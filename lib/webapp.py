@@ -142,6 +142,7 @@ _tickets_lock = threading.Lock()
 # Agent online/offline state: persona_key -> True (online) / False (offline)
 _agent_online: dict[str, bool] = {}
 _agent_firing: set[str] = set()  # agents being fired (waiting for session close)
+_agent_verbosity: dict[str, str] = {}  # persona_key -> verbosity level
 _agent_online_lock = threading.Lock()
 
 # Agent thoughts: persona_key -> list of {thinking, response, timestamp}
@@ -1304,7 +1305,13 @@ WEB_UI = """<!DOCTYPE html>
       <button class="session-btn npc-detail-tab" data-npc-tab="config">Config</button>
     </div>
     <div id="npc-detail-thoughts" style="flex:1;min-height:0;display:flex;gap:0;border-radius:8px;overflow:hidden;border:1px solid #333">
-      <div id="npc-thoughts-list" style="width:200px;min-width:200px;background:#121a30;overflow-y:auto;border-right:1px solid #333">
+      <div style="width:200px;min-width:200px;background:#121a30;border-right:1px solid #333;display:flex;flex-direction:column">
+        <div style="padding:6px 8px;border-bottom:1px solid #333">
+          <input id="npc-thoughts-search" type="text" placeholder="Search thoughts..." autocomplete="off"
+                 style="width:100%;background:#111;color:#e0e0e0;border:1px solid #333;padding:4px 8px;border-radius:6px;font-size:11px;outline:none;box-sizing:border-box" />
+        </div>
+        <div id="npc-thoughts-list" style="flex:1;overflow-y:auto">
+        </div>
       </div>
       <div id="npc-thoughts-content" style="flex:1;overflow-y:auto;background:#111;padding:16px;font-size:13px;color:#ccc;white-space:pre-wrap;font-family:monospace;line-height:1.5">
         No thoughts recorded yet.
@@ -1319,6 +1326,17 @@ WEB_UI = """<!DOCTYPE html>
           <option value="1">Tier 1 — ICs</option>
           <option value="2">Tier 2 — Managers</option>
           <option value="3">Tier 3 — Executives</option>
+        </select>
+      </div>
+      <div style="margin-bottom:16px">
+        <div style="font-size:12px;font-weight:600;color:#e94560;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">Verbosity</div>
+        <select id="npc-config-verbosity" style="background:#1a1a2e;color:#e0e0e0;border:1px solid #333;padding:6px 10px;border-radius:6px;font-size:13px">
+          <option value="concise">Concise — 1-2 sentences</option>
+          <option value="brief">Brief — 2-3 sentences</option>
+          <option value="normal" selected>Normal — default</option>
+          <option value="essay">Essay — 1-2 short paragraphs</option>
+          <option value="detailed">Detailed — thorough with examples</option>
+          <option value="dissertation">Dissertation — exhaustive analysis</option>
         </select>
       </div>
       <div style="margin-bottom:16px">
@@ -1390,12 +1408,22 @@ WEB_UI = """<!DOCTYPE html>
         <input id="hire-team-desc" type="text" placeholder="e.g. testing, quality assurance, bug triage" autocomplete="off" />
       </div>
       <div class="modal-field">
-        <label>Tier</label>
-        <select id="hire-tier">
-          <option value="1">Tier 1 — ICs</option>
-          <option value="2">Tier 2 — Managers</option>
-          <option value="3">Tier 3 — Executives</option>
-        </select>
+        <label>Tier / Verbosity</label>
+        <div style="display:flex;gap:8px">
+          <select id="hire-tier" style="flex:1">
+            <option value="1">Tier 1 — ICs</option>
+            <option value="2">Tier 2 — Managers</option>
+            <option value="3">Tier 3 — Executives</option>
+          </select>
+          <select id="hire-verbosity" style="flex:1">
+            <option value="concise">Concise — 1-2 sentences</option>
+            <option value="brief">Brief — 2-3 sentences</option>
+            <option value="normal" selected>Normal</option>
+            <option value="essay">Essay — 1-2 paragraphs</option>
+            <option value="detailed">Detailed — thorough</option>
+            <option value="dissertation">Dissertation — exhaustive</option>
+          </select>
+        </div>
       </div>
       <div class="modal-field">
         <label>Channels</label>
@@ -2776,22 +2804,36 @@ function switchNPCDetailTab(tab) {
 }
 
 async function loadNPCThoughts() {
-  const list = document.getElementById('npc-thoughts-list');
   const content = document.getElementById('npc-thoughts-content');
-  list.innerHTML = '';
   content.textContent = 'Loading...';
+  document.getElementById('npc-thoughts-search').value = '';
   const resp = await fetch('/api/npcs/' + encodeURIComponent(_npcDetailKey) + '/thoughts');
   _npcThoughtsData = await resp.json();
   if (!_npcThoughtsData.length) {
+    document.getElementById('npc-thoughts-list').innerHTML = '';
     content.textContent = 'No thoughts recorded yet. This agent has not responded to any messages.';
     return;
   }
-  // Render list items (newest first)
+  renderThoughtsList();
+}
+
+function renderThoughtsList(filter) {
+  const list = document.getElementById('npc-thoughts-list');
+  const content = document.getElementById('npc-thoughts-content');
+  list.innerHTML = '';
+  const filterLower = (filter || '').toLowerCase();
   const reversed = [..._npcThoughtsData].reverse();
+  let firstIdx = null;
   reversed.forEach((t, i) => {
     const idx = _npcThoughtsData.length - 1 - i;
+    // Filter by search term
+    if (filterLower) {
+      const text = ((t.thinking || '') + ' ' + (t.response || '')).toLowerCase();
+      if (!text.includes(filterLower)) return;
+    }
+    if (firstIdx === null) firstIdx = idx;
     const item = document.createElement('div');
-    item.className = 'thought-item' + (i === 0 ? ' active' : '');
+    item.className = 'thought-item';
     item.dataset.idx = idx;
     const ts = new Date(t.timestamp * 1000);
     const timeStr = ts.toLocaleTimeString();
@@ -2802,9 +2844,16 @@ async function loadNPCThoughts() {
     item.addEventListener('click', () => selectThought(idx));
     list.appendChild(item);
   });
-  // Select the newest
-  selectThought(_npcThoughtsData.length - 1);
+  if (firstIdx !== null) {
+    selectThought(firstIdx);
+  } else {
+    content.textContent = filter ? 'No thoughts matching "' + filter + '"' : 'No thoughts recorded yet.';
+  }
 }
+
+document.getElementById('npc-thoughts-search').addEventListener('input', (e) => {
+  renderThoughtsList(e.target.value.trim());
+});
 
 function selectThought(idx) {
   const content = document.getElementById('npc-thoughts-content');
@@ -2897,6 +2946,7 @@ document.getElementById('npc-hire-btn').addEventListener('click', async () => {
   document.getElementById('hire-key').dataset.manual = '';
   document.getElementById('hire-team-desc').value = '';
   document.getElementById('hire-tier').value = '1';
+  document.getElementById('hire-verbosity').value = 'normal';
   document.getElementById('hire-prompt').value = '';
 
   // Populate template dropdown
@@ -2974,7 +3024,7 @@ document.getElementById('hire-confirm').addEventListener('click', async () => {
   const resp = await fetch('/api/npcs/hire', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({display_name, key: key || undefined, team_description, tier, channels, folders, prompt}),
+    body: JSON.stringify({display_name, key: key || undefined, team_description, tier, channels, folders, prompt, verbosity: document.getElementById('hire-verbosity').value}),
   });
   if (resp.ok) {
     closeModal('hire-modal');
@@ -2998,8 +3048,9 @@ async function loadNPCConfig() {
   const npc = npcs.find(n => n.key === _npcDetailKey);
   if (!npc) return;
 
-  // Tier dropdown
+  // Tier and verbosity dropdowns
   document.getElementById('npc-config-tier').value = npc.tier || 1;
+  document.getElementById('npc-config-verbosity').value = npc.verbosity || 'normal';
 
   // Channel checkboxes
   const chContainer = document.getElementById('npc-config-channels');
@@ -3070,7 +3121,7 @@ document.getElementById('npc-config-save').addEventListener('click', async () =>
   const resp = await fetch('/api/npcs/' + encodeURIComponent(_npcDetailKey) + '/config', {
     method: 'PUT',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({tier, channels, folders, repos}),
+    body: JSON.stringify({tier, channels, folders, repos, verbosity: document.getElementById('npc-config-verbosity').value}),
   });
   if (resp.ok) {
     loadNPCs();
@@ -4217,6 +4268,7 @@ def create_app() -> Flask:
                     "folders": folders,
                     "repos": repos,
                     "online": toggled_online,
+                    "verbosity": _agent_verbosity.get(key, "normal"),
                     "live_state": live_state,
                 })
         return jsonify(result)
@@ -4398,9 +4450,12 @@ def create_app() -> Flask:
             }
             DEFAULT_FOLDER_ACCESS[personal_name] = {key}
 
-        # Set online
+        # Set online and verbosity
+        verbosity = data.get("verbosity", "normal")
         with _agent_online_lock:
             _agent_online[key] = True
+            if verbosity != "normal":
+                _agent_verbosity[key] = verbosity
 
         # Create director channel
         with _channel_lock:
@@ -4483,6 +4538,11 @@ def create_app() -> Flask:
                 if key not in RESPONSE_TIERS[new_tier]:
                     RESPONSE_TIERS[new_tier].append(key)
                 PERSONA_TIER[key] = new_tier
+
+        # Update verbosity
+        if "verbosity" in data:
+            with _agent_online_lock:
+                _agent_verbosity[key] = data["verbosity"]
 
         # Update repo access
         if "repos" in data:

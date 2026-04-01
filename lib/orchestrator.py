@@ -818,6 +818,7 @@ async def _run_loop(
         # Get online/offline status
         npcs = client.get_npcs()
         offline_keys = {n["key"] for n in npcs if not n.get("online", True)}
+        verbosity_map = {n["key"]: n.get("verbosity", "normal") for n in npcs}
 
         # Collect unique agents to trigger, tracking which channel triggered them
         agents_to_run: dict[str, set[str]] = {}  # persona_key -> set of trigger channels
@@ -889,6 +890,7 @@ async def _run_loop(
                     tickets=tickets,
                     offline_agents=offline_keys,
                     pending_dms=pending_dms,
+                    verbosity=verbosity_map.get(pk, "normal"),
                 )
                 # Show typing indicator and update agent status
                 display_name = persona["display_name"]

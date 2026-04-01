@@ -455,6 +455,16 @@ def _build_channel_membership_section(visible_channels: set[str]) -> str:
     return "\n".join(lines)
 
 
+VERBOSITY_INSTRUCTIONS = {
+    "concise": "**RESPONSE LENGTH: Keep your response to 1-2 sentences maximum. Be extremely direct and brief.**",
+    "brief": "**RESPONSE LENGTH: Keep your response to 2-3 sentences. Be direct and to the point.**",
+    "normal": "",
+    "essay": "**RESPONSE LENGTH: You may write 1-2 short paragraphs when needed.**",
+    "detailed": "**RESPONSE LENGTH: Provide thorough analysis with examples. Multiple paragraphs are fine.**",
+    "dissertation": "**RESPONSE LENGTH: Be exhaustive. Cover all angles, provide detailed analysis, examples, and reasoning.**",
+}
+
+
 def build_turn_prompt(
     persona_key: str,
     messages: list[dict],
@@ -465,6 +475,7 @@ def build_turn_prompt(
     tickets: list[dict] | None = None,
     offline_agents: set[str] | None = None,
     pending_dms: list[dict] | None = None,
+    verbosity: str = "normal",
 ) -> str:
     """Build a lean per-turn prompt for a persistent session.
 
@@ -585,6 +596,10 @@ Reply with a single JSON object. Format: {{"action": "respond", "messages": [...
     if tickets_section:
         parts.append(tickets_section)
     parts.append(membership_section)
+    # Add verbosity instruction
+    verbosity_instruction = VERBOSITY_INSTRUCTIONS.get(verbosity, "")
+    if verbosity_instruction:
+        parts.append(verbosity_instruction)
     parts.append(action)
 
     return "\n\n---\n\n".join(parts)

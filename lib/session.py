@@ -96,10 +96,13 @@ def _get_roster() -> dict:
     from lib.personas import PERSONAS, DEFAULT_MEMBERSHIPS, PERSONA_TIER
     from lib.docs import DEFAULT_FOLDER_ACCESS
     from lib.gitlab import DEFAULT_REPO_ACCESS
+    from lib.webapp import _agent_verbosity, _agent_online_lock
     roster = {}
     for key, p in PERSONAS.items():
         folders = [f for f, members in DEFAULT_FOLDER_ACCESS.items() if key in members]
         repos = [r for r, members in DEFAULT_REPO_ACCESS.items() if key in members] if DEFAULT_REPO_ACCESS else []
+        with _agent_online_lock:
+            verbosity = _agent_verbosity.get(key, "normal")
         roster[key] = {
             "display_name": p["display_name"],
             "team_description": p.get("team_description", ""),
@@ -108,6 +111,7 @@ def _get_roster() -> dict:
             "folders": sorted(folders),
             "repos": sorted(repos),
             "tier": PERSONA_TIER.get(key, 1),
+            "verbosity": verbosity,
         }
     return roster
 
@@ -238,6 +242,14 @@ def load_session(instance_name: str) -> dict:
                 RESPONSE_TIERS.setdefault(tier, [])
                 if key not in RESPONSE_TIERS[tier]:
                     RESPONSE_TIERS[tier].append(key)
+
+            # Restore verbosity
+            from lib.webapp import _agent_verbosity, _agent_online_lock
+            with _agent_online_lock:
+                _agent_verbosity.clear()
+                for key, data in roster.items():
+                    if data.get("verbosity", "normal") != "normal":
+                        _agent_verbosity[key] = data["verbosity"]
 
             # Rebuild folder access
             DEFAULT_FOLDER_ACCESS.clear()
