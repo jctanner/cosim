@@ -1,0 +1,83 @@
+[
+  {
+    "id": "fc28c2c0",
+    "message": "first commit",
+    "author": "Tanner (Maintainer)",
+    "timestamp": 1711584000.0,
+    "files": [
+      "main.py",
+      "pyproject.toml",
+      "lib/webapp.py",
+      "lib/orchestrator.py",
+      "lib/personas.py",
+      "lib/cli.py",
+      "lib/agent_runner.py",
+      "lib/docs.py"
+    ]
+  },
+  {
+    "id": "be5bd2e0",
+    "message": "Add multi-channel Slack-like agent organization system",
+    "author": "Tanner (Maintainer)",
+    "timestamp": 1711670400.0,
+    "files": [
+      "lib/webapp.py",
+      "lib/orchestrator.py",
+      "lib/personas.py",
+      "lib/chat_client.py",
+      "lib/gitlab.py",
+      "lib/tickets.py"
+    ]
+  },
+  {
+    "id": "c17db460",
+    "message": "Config-driven scenarios, session management, orchestrator control",
+    "author": "ACP (Collaborator)",
+    "timestamp": 1711756800.0,
+    "files": [
+      "lib/scenario_loader.py",
+      "lib/session.py",
+      "lib/response_schema.py",
+      "lib/webapp.py",
+      "lib/orchestrator.py",
+      "main.py",
+      "scenarios/tech-startup/scenario.yaml"
+    ]
+  },
+  {
+    "id": "dbc54430",
+    "message": "Add NPC page, Scenario Director channels, and agent online/offline controls",
+    "author": "ACP (Collaborator)",
+    "timestamp": 1711843200.0,
+    "files": [
+      "lib/webapp.py",
+      "lib/orchestrator.py",
+      "lib/chat_client.py",
+      "lib/personas.py",
+      "lib/agent_runner.py"
+    ]
+  },
+  {
+    "id": "5fec6da0",
+    "message": "Add DM system and Usage tab",
+    "author": "Tanner (Maintainer)",
+    "timestamp": 1711929600.0,
+    "files": [
+      "lib/webapp.py",
+      "lib/orchestrator.py",
+      "lib/response_schema.py",
+      "lib/session.py"
+    ]
+  },
+  {
+    "id": "6c2f8f90",
+    "message": "Add DotCom 2000 and Company Simulator Team scenarios",
+    "author": "ACP (Collaborator)",
+    "timestamp": 1712016000.0,
+    "files": [
+      "scenarios/dotcom-2000/scenario.yaml",
+      "scenarios/company-simulator-team/scenario.yaml",
+      "README.md"
+    ]
+  }
+]

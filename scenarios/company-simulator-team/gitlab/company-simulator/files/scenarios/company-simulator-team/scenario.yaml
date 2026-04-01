@@ -1,0 +1,57 @@
+name: "Company Simulator Team"
+description: "A 2-person team building the company-simulator itself. Recursive vibes."
+
+characters:
+  maintainer:
+    display_name: "Tanner (Maintainer)"
+    character_file: "characters/tanner-maintainer.md"
+    team_description: "project creator, architecture decisions, vision, code review"
+  collaborator:
+    display_name: "ACP (Collaborator)"
+    character_file: "characters/acp-collaborator.md"
+    team_description: "feature implementation, UX ideas, testing, vibe coding"
+
+channels:
+  "#general":
+    description: "Main discussion"
+    is_external: false
+  "#dev":
+    description: "Development work and code discussion"
+    is_external: false
+  "#ideas":
+    description: "Feature ideas and brainstorming"
+    is_external: false
+  "#bugs":
+    description: "Bug reports and fixes"
+    is_external: false
+
+memberships:
+  maintainer: ["#general", "#dev", "#ideas", "#bugs"]
+  collaborator: ["#general", "#dev", "#ideas", "#bugs"]
+
+response_tiers:
+  1: ["maintainer", "collaborator"]
+
+folders:
+  shared:
+    type: "shared"
+    description: "Shared project documents"
+  public:
+    type: "public"
+    description: "Public-facing docs"
+  dev:
+    type: "department"
+    description: "Development notes and specs"
+  tanner:
+    type: "personal"
+    description: "Tanner's notes"
+  acp:
+    type: "personal"
+    description: "ACP's notes"
+
+folder_access:
+  shared: ["maintainer", "collaborator"]
+  public: ["maintainer", "collaborator"]
+  dev: ["maintainer", "collaborator"]
+  tanner: ["maintainer"]
+  acp: ["collaborator"]
