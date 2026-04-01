@@ -1,0 +1,111 @@
+# Company Simulator — Architecture Overview
+
+## Core Concepts
+
+### Scenario vs Instance
+
+The fundamental architectural split:
+
+- **Scenario** — A template defining a simulated organization. Lives in `var/scenarios/` as YAML files. Defines personas, channels, initial state, but contains no runtime data.
+- **Instance** — A running simulation created from a scenario. Lives in `var/sessions/`. Contains all runtime state: message history, agent memory, documents, etc.
+
+This separation lets you:
+- Run the same scenario multiple times with different outcomes
+- Save/load simulation sessions
+- Version control scenarios without polluting them with runtime data
+- Share scenario templates across teams
+
+### Session System
+
+Instances are persisted to disk as sessions:
+
+```
+var/sessions/<session-id>/
+  instance.json        # Core state (channels, members, turn counter)
+  agents/              # Per-agent memory and state
+  documents/           # Shared documents
+  gitlab/              # Git repositories (if enabled)
+```
+
+You can:
+- Save a running simulation at any point
+- Load a saved session and continue from where you left off
+- Archive interesting simulation runs for analysis
+
+### Director Channels
+
+Each persona can have an optional **director channel** — a private communication channel between the scenario operator and that agent.
+
+Two modes:
+- **Whisper mode** — Messages go only to that agent. Use for private guidance, nudges, injecting information.
+- **Conversation mode** — Messages appear in the agent's context as if they're DMs or mentions from other agents. Use for simulating external input.
+
+Director channels are the primary control surface for steering a simulation. They're how you, the operator, interact with individual agents without breaking the fourth wall.
+
+### NPC System
+
+Personas can be marked as NPCs (non-player characters):
+- They don't get automatic turns
+- They only speak when explicitly triggered by the operator via the NPC management page
+- Useful for support staff, external participants, or agents that should only respond to specific events
+
+The NPC page shows all NPCs, their channels, and lets you trigger them individually or in groups.
+
+### YAML-Driven Scenarios
+
+Scenarios are defined in YAML:
+
+```yaml
+name: "My Startup"
+description: "A scrappy team building an AI product"
+
+personas:
+  - name: Alex Chen
+    role: CEO
+    slack_handle: alex
+    personality: "Visionary, optimistic, occasionally over-promises"
+    channels: ["#general", "#leadership"]
+    
+channels:
+  - name: "#general"
+    type: internal
+    members: ["alex", "jordan", "sam"]
+```
+
+This makes scenarios easy to read, edit, share, and version control.
+
+## Technical Stack
+
+- **Backend:** Node.js + Express
+- **Frontend:** Inline HTML templates (yes, really) — keeps everything in one file for rapid iteration
+- **Persistence:** File-based (JSON + directory structure)
+- **AI:** Claude API via Anthropic SDK
+- **State Management:** In-memory during runtime, persisted to disk on save
+
+## Key Files
+
+- `server.js` — Main server, routing, session management
+- `agent.js` — Agent execution logic, turn handling
+- `var/scenarios/` — Scenario definitions (YAML)
+- `var/sessions/` — Runtime instances (JSON + files)
+
+## Development Philosophy
+
+- **Pragmatic over perfect** — Get it working, then polish
+- **Files over databases** — Simple persistence, easy to inspect and debug
+- **Inline over bundled** — Keep the UI in the server file for fast iteration
+- **YAML over code** — Scenarios should be data, not programs
+- **Human-in-the-loop** — The operator is part of the system, not external to it
+
+## What's Next?
+
+Current areas of active development:
+- UI polish (status indicators, typing indicators, better modals)
+- Testing infrastructure (we have none, whoops)
+- Document versioning (track evolution of agent-written docs)
+- Enhanced NPC control surface
+- Multi-instance orchestration (run multiple sessions in parallel)
+
+---
+
+*Generated-By: ACP (Collaborator) — 2026-03-31*
