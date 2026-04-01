@@ -1323,6 +1323,10 @@ WEB_UI = """<!DOCTYPE html>
         <div style="font-size:12px;font-weight:600;color:#e94560;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">Doc Folder Access</div>
         <div id="npc-config-folders" style="display:flex;flex-wrap:wrap;gap:6px"></div>
       </div>
+      <div style="margin-bottom:16px">
+        <div style="font-size:12px;font-weight:600;color:#e94560;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">GitLab Repos</div>
+        <div id="npc-config-repos" style="display:flex;flex-wrap:wrap;gap:6px"></div>
+      </div>
       <div style="display:flex;justify-content:flex-end;padding-top:8px;border-top:1px solid #333">
         <button id="npc-config-save" class="modal-btn-primary" style="font-size:13px">Save Configuration</button>
       </div>
@@ -2627,7 +2631,11 @@ function createNPCCard(npc) {
     '<div class="npc-card-section-label">Doc Folders</div>' +
     '<div class="npc-card-tags">' +
       (npc.folders || []).map(f => '<span class="npc-tag npc-tag-folder">' + escapeHtml(f) + '</span>').join('') +
-    '</div>';
+    '</div>' +
+    ((npc.repos || []).length ? '<div class="npc-card-section-label">GitLab Repos</div>' +
+    '<div class="npc-card-tags">' +
+      npc.repos.map(r => '<span class="npc-tag" style="border-left:2px solid #e67e22">' + escapeHtml(r) + '</span>').join('') +
+    '</div>' : '');
   const btn = document.createElement('button');
   btn.className = 'npc-toggle-btn' + (npc.online ? ' is-online' : '');
   btn.textContent = npc.online ? 'Set Out of Office' : 'Bring Online';
@@ -2785,6 +2793,25 @@ async function loadNPCConfig() {
     });
     flContainer.appendChild(label);
   });
+
+  // Repo checkboxes
+  const repoContainer = document.getElementById('npc-config-repos');
+  repoContainer.innerHTML = '';
+  const currentRepos = new Set(npc.repos || []);
+  const allRepos = Object.keys(glRepos || {}).length ? glRepos.map(r => r.name).sort() : [];
+  if (allRepos.length === 0) {
+    repoContainer.innerHTML = '<span style="font-size:11px;color:#555">No repositories yet</span>';
+  }
+  allRepos.forEach(name => {
+    const checked = currentRepos.has(name);
+    const label = document.createElement('label');
+    label.className = 'npc-config-check' + (checked ? ' checked' : '');
+    label.innerHTML = '<input type="checkbox" value="' + escapeHtml(name) + '"' + (checked ? ' checked' : '') + '> ' + escapeHtml(name);
+    label.querySelector('input').addEventListener('change', (e) => {
+      label.classList.toggle('checked', e.target.checked);
+    });
+    repoContainer.appendChild(label);
+  });
 }
 
 document.getElementById('npc-config-save').addEventListener('click', async () => {
@@ -2798,10 +2825,14 @@ document.getElementById('npc-config-save').addEventListener('click', async () =>
   document.querySelectorAll('#npc-config-folders input:checked').forEach(cb => {
     folders.push(cb.value);
   });
+  const repos = [];
+  document.querySelectorAll('#npc-config-repos input:checked').forEach(cb => {
+    repos.push(cb.value);
+  });
   const resp = await fetch('/api/npcs/' + encodeURIComponent(_npcDetailKey) + '/config', {
     method: 'PUT',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({tier, channels, folders}),
+    body: JSON.stringify({tier, channels, folders, repos}),
   });
   if (resp.ok) {
     loadNPCs();
@@ -3904,6 +3935,8 @@ def create_app() -> Flask:
     def list_npcs():
         from lib.personas import PERSONAS, RESPONSE_TIERS, PERSONA_TIER, DEFAULT_MEMBERSHIPS
         from lib.docs import get_accessible_folders
+        from lib.gitlab import DEFAULT_REPO_ACCESS
+        all_repo_names = sorted(_gitlab_repos.keys())
         result = []
         with _orchestrator_lock:
             agent_states = _orchestrator_status.get("agents", {})
@@ -3914,6 +3947,12 @@ def create_app() -> Flask:
             for key, p in PERSONAS.items():
                 channels = sorted(DEFAULT_MEMBERSHIPS.get(key, set()))
                 folders = sorted(get_accessible_folders(key))
+                # Repos: if no access control, all repos; otherwise filter
+                if DEFAULT_REPO_ACCESS:
+                    repos = sorted(r for r in all_repo_names
+                                   if r not in DEFAULT_REPO_ACCESS or key in DEFAULT_REPO_ACCESS.get(r, set()))
+                else:
+                    repos = all_repo_names
                 toggled_online = _agent_online.get(key, True)
                 # Determine live state from orchestrator heartbeat
                 agent_info = agent_states.get(key, {})
@@ -3930,6 +3969,7 @@ def create_app() -> Flask:
                     "tier": PERSONA_TIER.get(key, 0),
                     "channels": channels,
                     "folders": folders,
+                    "repos": repos,
                     "online": toggled_online,
                     "live_state": live_state,
                 })
@@ -3969,6 +4009,7 @@ def create_app() -> Flask:
     def update_npc_config(key):
         from lib.personas import PERSONAS, DEFAULT_MEMBERSHIPS, PERSONA_TIER, RESPONSE_TIERS
         from lib.docs import DEFAULT_FOLDER_ACCESS
+        from lib.gitlab import DEFAULT_REPO_ACCESS
         if key not in PERSONAS:
             return jsonify({"error": f"unknown agent: {key}"}), 404
 
@@ -4011,6 +4052,19 @@ def create_app() -> Flask:
                 if key not in RESPONSE_TIERS[new_tier]:
                     RESPONSE_TIERS[new_tier].append(key)
                 PERSONA_TIER[key] = new_tier
+
+        # Update repo access
+        if "repos" in data:
+            new_repos = set(data["repos"])
+            with _gitlab_lock:
+                for repo_name in _gitlab_repos:
+                    # If repo has no access control yet, initialize with all agents
+                    if repo_name not in DEFAULT_REPO_ACCESS:
+                        DEFAULT_REPO_ACCESS[repo_name] = set(PERSONAS.keys())
+                    if repo_name in new_repos:
+                        DEFAULT_REPO_ACCESS[repo_name].add(key)
+                    else:
+                        DEFAULT_REPO_ACCESS[repo_name].discard(key)
 
         return jsonify({"ok": True, "key": key, "display_name": display_name})
 

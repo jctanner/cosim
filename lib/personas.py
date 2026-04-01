@@ -121,11 +121,15 @@ def build_docs_index(docs: list[dict], persona_key: str | None = None) -> str:
     return "\n".join(lines)
 
 
-def build_gitlab_index(repos: list[dict]) -> str:
+def build_gitlab_index(repos: list[dict], persona_key: str | None = None) -> str:
     """Format GitLab repository metadata as a prompt section.
 
+    If persona_key is provided, only shows repos the persona can access.
     Returns a "## GitLab Repositories" section or empty string if no repos.
     """
+    if persona_key:
+        from lib.gitlab import get_accessible_repos
+        repos = get_accessible_repos(persona_key, repos)
     if not repos:
         return ""
 
@@ -480,7 +484,7 @@ def build_turn_prompt(
 
     history = _build_history_sections(messages, channels)
     docs_section = build_docs_index(docs, persona_key) if docs else ""
-    repos_section = build_gitlab_index(repos) if repos else ""
+    repos_section = build_gitlab_index(repos, persona_key) if repos else ""
     tickets_section = build_tickets_index(tickets, persona["display_name"]) if tickets else ""
     membership_section = _build_channel_membership_section(channels)
 
