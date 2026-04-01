@@ -1,0 +1,156 @@
+# Scenario Export Format Spec
+
+## Overview
+
+Scenarios should be portable, shareable, and version-controlled. This spec defines a JSON export format that captures everything needed to recreate a scenario in a fresh instance.
+
+## Format Structure
+
+```json
+{
+  "version": "1.0",
+  "scenario": {
+    "name": "Series A Startup",
+    "description": "A fast-growing startup dealing with scale, hiring, and product-market fit.",
+    "time_compression": "1d=2m",
+    "created_at": "2026-04-01T12:00:00Z",
+    "author": "T4NN3R"
+  },
+  "characters": [
+    {
+      "key": "ceo",
+      "name": "Sarah Chen",
+      "role": "CEO",
+      "persona": "Visionary founder, technical background...",
+      "nrsp_sheet": {
+        "narrative_identity": {...},
+        "relational_dynamics": {...},
+        "strategic_priorities": {...},
+        "professional_context": {...}
+      }
+    }
+  ],
+  "channels": [
+    {
+      "name": "#general",
+      "type": "internal",
+      "members": ["ceo", "cto", "pm"],
+      "description": "Main team discussion"
+    },
+    {
+      "name": "#support-external",
+      "type": "external",
+      "members": ["support_lead"],
+      "description": "Customer support"
+    }
+  ],
+  "initial_state": {
+    "documents": [],
+    "repositories": [],
+    "tickets": [],
+    "messages": [
+      {
+        "channel": "#general",
+        "author": "system",
+        "text": "Scenario started: Series A Startup",
+        "timestamp": "T+0"
+      }
+    ]
+  },
+  "events": [
+    {
+      "trigger_time": "T+3d",
+      "type": "director_message",
+      "params": {
+        "channel": "#support-external",
+        "role": "Customer",
+        "text": "Our API has been down for 2 hours. This is unacceptable."
+      }
+    },
+    {
+      "trigger_time": "T+7d",
+      "type": "director_message",
+      "params": {
+        "channel": "#general",
+        "role": "Board Member",
+        "text": "I need an update on burn rate and runway."
+      }
+    }
+  ]
+}
+```
+
+## Field Definitions
+
+### Top Level
+
+- `version` — format version, allows future migration
+- `scenario` — metadata about the scenario
+- `characters` — all agent personas
+- `channels` — channel definitions and membership
+- `initial_state` — starting artifacts (docs, repos, tickets, messages)
+- `events` — optional scripted interventions at specific times
+
+### Scenario Metadata
+
+- `name` — human-readable scenario name
+- `description` — what this scenario is about
+- `time_compression` — format: "1d=2m" (1 simulated day = 2 real minutes)
+- `created_at` — ISO timestamp
+- `author` — who built this scenario
+
+### Characters
+
+- `key` — unique identifier used in code (e.g., "ceo", "pm")
+- `name` — character's full name
+- `role` — job title
+- `persona` — personality and behavior description
+- `nrsp_sheet` — optional structured character definition using NRSP format
+
+### Channels
+
+- `name` — channel name (include # prefix)
+- `type` — "internal" or "external"
+- `members` — array of character keys
+- `description` — what this channel is for
+
+### Initial State
+
+- `documents` — pre-created docs (folder, title, content)
+- `repositories` — GitLab repos (name, description, initial files)
+- `tickets` — pre-created tickets
+- `messages` — seed messages to kick off the scenario
+
+### Events
+
+- `trigger_time` — when to fire (relative: "T+3d", or absolute: "2026-04-05T10:00:00Z")
+- `type` — event type (e.g., "director_message", "document_create", "ticket_create")
+- `params` — event-specific parameters
+
+## Use Cases
+
+1. **Scenario Sharing** — export a well-tuned scenario, share JSON file, others import and run
+2. **Version Control** — commit scenario configs to git, track changes over time
+3. **Scenario Library** — curated collection of scenarios for different industries/situations
+4. **Testing** — scripted events allow reproducible test scenarios
+5. **Remixing** — fork someone else's scenario, tweak characters or events, re-export
+
+## Implementation Notes
+
+- Export endpoint: `GET /api/scenario/export?session_id=...`
+- Import endpoint: `POST /api/scenario/import` (body: JSON file)
+- Import creates a new session with the scenario loaded
+- Existing sessions can't be overwritten by import (safety)
+- Events fire via background scheduler checking `trigger_time`
+
+## Open Questions
+
+- Should we support scenario "inheritance" (base scenario + delta)?
+- How to handle secrets/API keys in exported scenarios?
+- Should there be a "scenario marketplace" or just file sharing?
+- Do we need a scenario validator/linter?
+
+---
+
+**Status:** Draft spec  
+**Next:** Implement export endpoint, test with current scenarios
