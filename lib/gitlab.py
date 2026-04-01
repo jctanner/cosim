@@ -7,6 +7,23 @@ from pathlib import Path
 
 GITLAB_DIR = Path(__file__).parent.parent / "var" / "gitlab"
 
+# Repo access: repo_name -> set of persona keys allowed (empty = all have access)
+DEFAULT_REPO_ACCESS: dict[str, set[str]] = {}
+
+
+def get_accessible_repos(persona_key: str, all_repos: list[dict]) -> list[dict]:
+    """Filter repos to only those this persona can access.
+
+    If DEFAULT_REPO_ACCESS is empty or a repo has no entry, all personas can access it.
+    """
+    if not DEFAULT_REPO_ACCESS:
+        return all_repos
+    return [
+        r for r in all_repos
+        if r.get("name", "") not in DEFAULT_REPO_ACCESS
+        or persona_key in DEFAULT_REPO_ACCESS.get(r.get("name", ""), set())
+    ]
+
 
 def init_gitlab_storage():
     """Create the gitlab directory and an empty repos index if needed."""
