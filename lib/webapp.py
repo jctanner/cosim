@@ -4356,11 +4356,10 @@ def create_app() -> Flask:
         if key in PERSONAS:
             return jsonify({"error": f"agent key '{key}' already exists"}), 409
 
-        # Save character file to scenario directory
-        from lib.scenario_loader import SCENARIOS_DIR
-        from lib.session import get_current_session
+        # Save character file to instance runtime directory (not the scenario template)
+        from lib.session import VAR_DIR, get_current_session
         scenario = get_current_session().get("scenario", "tech-startup")
-        char_dir = SCENARIOS_DIR / scenario / "characters"
+        char_dir = VAR_DIR / "characters"
         char_dir.mkdir(parents=True, exist_ok=True)
         char_file = char_dir / f"{key}.md"
         char_file.write_text(prompt_content or f"# {display_name}\\n\\nYou are {display_name}.")
