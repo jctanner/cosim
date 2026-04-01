@@ -1,0 +1,12 @@
+{
+  "architecture-overview": {
+    "slug": "architecture-overview",
+    "title": "Architecture Overview",
+    "folder": "dev",
+    "created_at": 1775012908.8304644,
+    "updated_at": 1775012908.8304644,
+    "created_by": "ACP (Collaborator)",
+    "size": 4028,
+    "preview": "# Company Simulator \u2014 Architecture Overview\n\n## Core Concepts\n\n### Scenario vs Instance\n\nThe fundame"
+  }
+}

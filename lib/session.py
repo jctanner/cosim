@@ -91,6 +91,27 @@ def _get_agent_thoughts() -> dict[str, dict]:
         return dict(_agent_thoughts)
 
 
+def _get_roster() -> dict:
+    """Get current roster state — all personas with their config."""
+    from lib.personas import PERSONAS, DEFAULT_MEMBERSHIPS, PERSONA_TIER
+    from lib.docs import DEFAULT_FOLDER_ACCESS
+    from lib.gitlab import DEFAULT_REPO_ACCESS
+    roster = {}
+    for key, p in PERSONAS.items():
+        folders = [f for f, members in DEFAULT_FOLDER_ACCESS.items() if key in members]
+        repos = [r for r, members in DEFAULT_REPO_ACCESS.items() if key in members] if DEFAULT_REPO_ACCESS else []
+        roster[key] = {
+            "display_name": p["display_name"],
+            "team_description": p.get("team_description", ""),
+            "character_file": p.get("character_file", ""),
+            "channels": sorted(DEFAULT_MEMBERSHIPS.get(key, set())),
+            "folders": sorted(folders),
+            "repos": sorted(repos),
+            "tier": PERSONA_TIER.get(key, 1),
+        }
+    return roster
+
+
 def save_session(name: str | None = None) -> dict:
     """Save current state to an instance directory. Returns metadata."""
     scenario = _current_session["scenario"]
@@ -122,6 +143,10 @@ def save_session(name: str | None = None) -> dict:
     thoughts = _get_agent_thoughts()
     if thoughts:
         (instance_dir / "thoughts.json").write_text(json.dumps(thoughts, indent=2))
+
+    # Save roster (current PERSONAS state for hire/fire persistence)
+    roster = _get_roster()
+    (instance_dir / "roster.json").write_text(json.dumps(roster, indent=2))
 
     # Save DM queue
     try:
@@ -184,6 +209,51 @@ def load_session(instance_name: str) -> dict:
                 _agent_thoughts.update(thoughts)
         except Exception:
             pass
+
+    # Restore roster (hire/fire changes)
+    roster_path = instance_dir / "roster.json"
+    if roster_path.exists():
+        try:
+            from lib.personas import PERSONAS, DEFAULT_MEMBERSHIPS, PERSONA_TIER, RESPONSE_TIERS
+            from lib.docs import DEFAULT_FOLDER_ACCESS
+            from lib.gitlab import DEFAULT_REPO_ACCESS
+            roster = json.loads(roster_path.read_text())
+
+            # Rebuild PERSONAS from roster
+            PERSONAS.clear()
+            DEFAULT_MEMBERSHIPS.clear()
+            PERSONA_TIER.clear()
+            RESPONSE_TIERS.clear()
+
+            for key, data in roster.items():
+                PERSONAS[key] = {
+                    "name": key,
+                    "display_name": data["display_name"],
+                    "team_description": data.get("team_description", ""),
+                    "character_file": data.get("character_file", ""),
+                }
+                DEFAULT_MEMBERSHIPS[key] = set(data.get("channels", ["#general"]))
+                tier = data.get("tier", 1)
+                PERSONA_TIER[key] = tier
+                RESPONSE_TIERS.setdefault(tier, [])
+                if key not in RESPONSE_TIERS[tier]:
+                    RESPONSE_TIERS[tier].append(key)
+
+            # Rebuild folder access
+            DEFAULT_FOLDER_ACCESS.clear()
+            for key, data in roster.items():
+                for folder in data.get("folders", []):
+                    DEFAULT_FOLDER_ACCESS.setdefault(folder, set()).add(key)
+
+            # Rebuild repo access
+            DEFAULT_REPO_ACCESS.clear()
+            for key, data in roster.items():
+                for repo in data.get("repos", []):
+                    DEFAULT_REPO_ACCESS.setdefault(repo, set()).add(key)
+
+            print(f"  Roster restored: {len(roster)} agents")
+        except Exception as e:
+            print(f"  Roster restore failed: {e}")
 
     # Restore DM queue
     dm_path = instance_dir / "dm_queue.json"
