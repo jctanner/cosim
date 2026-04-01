@@ -1056,6 +1056,16 @@ async def _process_single_command(client, pool, personas, scenario_name, cmd):
                     print(f"  Agent added: {persona['display_name']}")
                 except (Exception, BaseException) as e:
                     print(f"  Failed to add agent: {e}")
+                    # Re-queue for retry (likely CancelledError from prior remove)
+                    print(f"  Re-queuing add_agent for {agent_key}")
+                    try:
+                        import requests as _req
+                        _req.post(f"{client.base_url}/api/orchestrator/command",
+                                  json={"action": "add_agent", "key": agent_key}, timeout=5)
+                    except Exception:
+                        pass
+                    # Clean up partial state
+                    pool._personas.pop(agent_key, None)
             else:
                 print(f"  Agent {agent_key} not found on server")
 
@@ -1097,7 +1107,23 @@ async def _process_pending_commands(client, pool, personas, scenario_name):
     """Drain the command queue via heartbeat, processing all pending commands.
 
     Returns (updated personas list, restart_requested bool).
+    Catches CancelledError from SDK cancel scope leaks after remove_agent.
     """
+    try:
+        return await _process_pending_commands_inner(client, pool, personas, scenario_name)
+    except (asyncio.CancelledError, BaseException) as e:
+        if isinstance(e, KeyboardInterrupt):
+            raise
+        print(f"  Command processing interrupted ({type(e).__name__}), continuing...")
+        try:
+            await asyncio.sleep(0)
+        except (Exception, BaseException):
+            pass
+        return list(pool._personas.values()), False
+
+
+async def _process_pending_commands_inner(client, pool, personas, scenario_name):
+    """Inner implementation of command drain loop."""
     while True:
         agents = _build_agent_status(personas, pool)
         cmd = client.send_heartbeat("ready", scenario_name, agents)
@@ -1197,8 +1223,8 @@ async def _stop_agents(client, pool, personas, scenario_name=""):
                 channel="#system")
         agents = _build_agent_status(personas, pool)
         agents[personas[i-1]["name"]]["state"] = "offline"
-        client.send_heartbeat("stopping", scenario_name, agents, check_commands=False,
-                              f"Stopping agent {i}/{total}: {name}")
+        client.send_heartbeat("stopping", scenario_name, agents,
+                              f"Stopping agent {i}/{total}: {name}", check_commands=False)
     await pool.close()
 
 
