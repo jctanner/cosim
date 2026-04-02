@@ -452,7 +452,7 @@ WEB_UI = """<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Organization Chat</title>
+<title>CoSim</title>
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -925,7 +925,7 @@ WEB_UI = """<!DOCTYPE html>
 </head>
 <body>
 <div id="header">
-  <h1>Organization Chat</h1>
+  <h1>CoSim</h1>
   <button class="header-tab active" data-tab="chat">Chat</button>
   <button class="header-tab" data-tab="docs">Docs</button>
   <button class="header-tab" data-tab="gitlab">GitLab</button>
