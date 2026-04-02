@@ -173,3 +173,71 @@ folder_access:
   riley: ["marketing"]
   casey: ["devops"]
   nadia: ["projmgr"]
+
+events:
+  - name: "Production Outage"
+    severity: "critical"
+    actions:
+      - type: "message"
+        channel: "#general"
+        sender: "PagerDuty (System)"
+        content: "ALERT: Production is DOWN. API returning 500 errors across all endpoints. Customer-facing services affected."
+      - type: "ticket"
+        title: "URGENT: Production outage — all endpoints returning 500"
+        description: "PagerDuty triggered. Multiple services returning 500 errors. Customer impact confirmed. Requires immediate investigation."
+        priority: "critical"
+        author: "PagerDuty (System)"
+      - type: "message"
+        channel: "#support-external"
+        sender: "Support Bot (System)"
+        content: "We're aware of an issue affecting service availability. Our team is actively investigating. We'll provide updates as we have them."
+
+  - name: "Angry Customer Escalation"
+    severity: "high"
+    actions:
+      - type: "message"
+        channel: "#support-external"
+        sender: "Karen (Customer)"
+        content: "Your checkout page has been broken for 2 HOURS. We're losing thousands in sales. Fix this NOW or we're switching to your competitor by end of week."
+      - type: "ticket"
+        title: "Customer escalation: Karen from Acme Corp — checkout broken"
+        description: "Karen from Acme Corp reports checkout has been non-functional for 2 hours. Threatening to switch providers. Revenue impact estimated at $50K+."
+        priority: "critical"
+        author: "Karen (Customer)"
+
+  - name: "New Compliance Policy"
+    severity: "high"
+    actions:
+      - type: "message"
+        channel: "#general"
+        sender: "Legal (System)"
+        content: "NOTICE: New data retention compliance requirements have been issued by legal, effective immediately. All teams must review the policy document in the shared folder."
+      - type: "document"
+        title: "Q2 Data Retention Compliance Requirements"
+        folder: "shared"
+        content: "# Q2 Data Retention Compliance Requirements\n\n## Effective Immediately\n\n1. All API endpoints must implement rate limiting\n2. User data must be encrypted at rest\n3. Session tokens must expire after 24 hours\n4. Audit logs must be retained for 90 days\n\n## Deadline\n\nAll changes must be implemented by end of quarter.\n\n## Consequences\n\nNon-compliance may result in regulatory fines up to $500K."
+        author: "Legal (System)"
+
+  - name: "Dependency Vulnerability"
+    severity: "medium"
+    actions:
+      - type: "message"
+        channel: "#engineering"
+        sender: "GitHub Advisory (System)"
+        content: "Security Advisory: flask-cors v3.x has a known vulnerability (CVE-2024-1234, CVSS 7.5). Upgrade to v4.0+ recommended. This affects our customer-api service."
+
+  - name: "Competitor Launch"
+    severity: "medium"
+    actions:
+      - type: "message"
+        channel: "#sales"
+        sender: "Google Alert (System)"
+        content: "COMPETITOR NEWS: AcmeTech just launched a new product that directly competes with our core offering. They're pricing 20% below us and claiming 2x the performance. Three of our prospects have already asked about it."
+
+  - name: "New Enterprise Lead"
+    severity: "low"
+    actions:
+      - type: "message"
+        channel: "#sales-external"
+        sender: "BigCorp (Customer)"
+        content: "Hi, we're evaluating solutions for our 10,000-seat enterprise deployment. Can you walk us through your platform capabilities, pricing model, and SLA guarantees? We have a decision deadline of 30 days."

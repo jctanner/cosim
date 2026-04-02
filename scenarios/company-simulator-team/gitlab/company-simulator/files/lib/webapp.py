@@ -141,6 +141,8 @@ _tickets_lock = threading.Lock()
 
 # Agent online/offline state: persona_key -> True (online) / False (offline)
 _agent_online: dict[str, bool] = {}
+_agent_firing: set[str] = set()  # agents being fired (waiting for session close)
+_agent_verbosity: dict[str, str] = {}  # persona_key -> verbosity level
 _agent_online_lock = threading.Lock()
 
 # Agent thoughts: persona_key -> list of {thinking, response, timestamp}
@@ -157,8 +159,8 @@ _orchestrator_status: dict = {
 }
 _orchestrator_lock = threading.Lock()
 
-# Control signal for orchestrator (checked on each poll)
-_orchestrator_command: dict = {"action": None}  # None, "restart", "shutdown"
+# Control signal queue for orchestrator (checked on each poll)
+_orchestrator_commands: list[dict] = []
 _command_lock = threading.Lock()
 
 
@@ -452,6 +454,7 @@ WEB_UI = """<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>CoSim</title>
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/js-yaml@4/dist/js-yaml.min.js"></script>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -512,6 +515,7 @@ WEB_UI = """<!DOCTYPE html>
   .npc-status-dot.committing-code { background: #e67e22; animation: pulse 0.8s ease-in-out infinite; }
   .npc-status-dot.managing-tickets { background: #1abc9c; animation: pulse 0.8s ease-in-out infinite; }
   .npc-status-dot.processing-commands { background: #f39c12; animation: pulse 0.8s ease-in-out infinite; }
+  .npc-status-dot.firing { background: #e94560; animation: pulse 1.5s ease-in-out infinite; }
   .npc-status-dot.offline { background: #666; }
   .npc-status-dot.disconnected { background: #444; }
   .npc-status-dot.unknown { background: #444; }
@@ -531,6 +535,12 @@ WEB_UI = """<!DOCTYPE html>
   .npc-toggle-btn.is-online:hover { border-color: #f39c12; color: #f39c12; }
   .npc-detail-tab { transition: all 0.15s; }
   .npc-detail-tab.active { background: #e94560; border-color: #e94560; color: #fff; }
+  .npc-config-check { display: flex; align-items: center; gap: 4px; background: #1a1a2e;
+                      padding: 4px 10px; border-radius: 6px; border: 1px solid #333;
+                      font-size: 12px; color: #888; cursor: pointer; }
+  .npc-config-check:hover { border-color: #555; }
+  .npc-config-check input { accent-color: #e94560; }
+  .npc-config-check.checked { color: #e0e0e0; border-color: #555; }
   .thought-item { padding: 8px 12px; cursor: pointer; border-bottom: 1px solid #1a1a2e;
                   font-size: 11px; color: #888; transition: background 0.1s; }
   .thought-item:hover { background: #1a1a3e; }
@@ -562,6 +572,36 @@ WEB_UI = """<!DOCTYPE html>
   .usage-card-row .label { color: #666; }
   .usage-card-row .value { color: #e0e0e0; font-weight: 600; font-family: monospace; }
   .usage-card-row .value.cost { color: #2ecc71; }
+
+  /* -- Events tab -- */
+  #events-pane { padding: 0; flex-direction: row; }
+  .events-sub-tab.active { background: #e94560; border-color: #e94560; color: #fff; }
+  .event-card { background: #1a1a2e; border: 1px solid #333; border-radius: 10px;
+                padding: 14px 16px; flex: 1 1 250px; max-width: 350px; min-width: 220px;
+                transition: border-color 0.15s; }
+  .event-card:hover { border-color: #555; }
+  .event-card-header { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+  .event-card-name { font-size: 14px; font-weight: 700; color: #e0e0e0; }
+  .event-card-severity { font-size: 10px; font-weight: 600; padding: 2px 6px; border-radius: 4px;
+                         text-transform: uppercase; letter-spacing: 0.5px; }
+  .event-sev-critical { background: #e94560; color: #fff; }
+  .event-sev-high { background: #e67e22; color: #fff; }
+  .event-sev-medium { background: #f39c12; color: #111; }
+  .event-sev-low { background: #2ecc71; color: #111; }
+  .event-card-actions { font-size: 11px; color: #888; margin-bottom: 8px; }
+  .event-card-preview { font-size: 11px; color: #555; margin-bottom: 10px; overflow: hidden;
+                        text-overflow: ellipsis; white-space: nowrap; }
+  .event-card-btns { display: flex; gap: 4px; }
+  .event-card-btns button { flex: 1; }
+  .event-trigger-btn { background: #e94560; color: #fff; border: none; padding: 5px; border-radius: 6px;
+                       cursor: pointer; font-size: 11px; font-weight: 600; }
+  .event-trigger-btn:hover { background: #c0392b; }
+  .event-log-row { background: #1a1a2e; border: 1px solid #333; border-radius: 8px;
+                   padding: 10px 14px; margin-bottom: 8px; display: flex; align-items: center; gap: 12px; }
+  .event-log-row:hover { border-color: #555; }
+  .event-log-time { font-size: 11px; color: #555; min-width: 80px; }
+  .event-log-name { font-size: 13px; font-weight: 600; color: #e0e0e0; flex: 1; }
+  .event-log-actions { font-size: 10px; color: #666; }
 
   /* -- Modal overlay -- */
   .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7);
@@ -923,6 +963,7 @@ WEB_UI = """<!DOCTYPE html>
   <button class="header-tab" data-tab="tickets">Tickets</button>
   <button class="header-tab" data-tab="npcs">NPCs</button>
   <button class="header-tab" data-tab="usage">Usage</button>
+  <button class="header-tab" data-tab="events">Events</button>
   <div id="session-controls">
     <span id="orch-status" title="Orchestrator status">
       <span id="orch-dot" class="status-dot disconnected"></span>
@@ -1165,6 +1206,12 @@ WEB_UI = """<!DOCTYPE html>
             <label>Description</label>
             <textarea class="tk-form-textarea" id="tk-form-desc" placeholder="Describe the work to be done..."></textarea>
           </div>
+          <div class="tk-form-row">
+            <label>Notify channel</label>
+            <select class="tk-form-select" id="tk-form-notify">
+              <option value="">Don't notify</option>
+            </select>
+          </div>
           <div class="tk-form-actions">
             <button class="tk-form-cancel" onclick="toggleCreateForm()">Cancel</button>
             <button class="tk-form-submit" onclick="submitCreateTicket()">Create Ticket</button>
@@ -1177,9 +1224,12 @@ WEB_UI = """<!DOCTYPE html>
           <button id="ticket-back-btn">Back</button>
           <span id="ticket-detail-title"></span>
           <span id="ticket-detail-id"></span>
-          <span style="margin-left:auto;font-size:12px;color:#888;">Acting as</span>
+        </div>
+        <div style="padding:8px 20px;background:#121a30;border-bottom:1px solid #333;display:flex;align-items:center;gap:8px">
+          <span style="font-size:12px;font-weight:600;color:#e94560;text-transform:uppercase;letter-spacing:0.5px">Acting as</span>
           <select class="tk-form-select" id="tk-acting-as" style="font-size:12px;">
           </select>
+          <span style="font-size:10px;color:#555">All actions (status, assign, comments) use this identity</span>
         </div>
         <div id="ticket-detail-content"></div>
       </div>
@@ -1193,10 +1243,34 @@ WEB_UI = """<!DOCTYPE html>
       <hr class="sidebar-divider">
       <div class="sidebar-section">Summary</div>
       <div id="npcs-summary" style="padding:8px 14px;font-size:12px;color:#888;"></div>
+      <hr class="sidebar-divider">
+      <div style="padding:8px 10px">
+        <button id="npc-hire-btn" class="session-btn" style="width:100%;background:#2ecc71;border-color:#2ecc71;color:#fff;font-size:11px">+ Hire Agent</button>
+      </div>
     </div>
     <div id="npcs-main">
       <div id="npcs-content">
         <div id="npcs-empty">No scenario loaded. Click New to start a session.</div>
+      </div>
+    </div>
+  </div>
+  <!-- Events tab -->
+  <div id="events-pane" class="tab-pane">
+    <div style="flex:1;display:flex;flex-direction:column;overflow:hidden">
+      <div style="padding:10px 20px;background:#16213e;border-bottom:1px solid #0f3460;display:flex;align-items:center;gap:8px">
+        <button class="session-btn events-sub-tab active" data-events-tab="pool">Event Pool</button>
+        <button class="session-btn events-sub-tab" data-events-tab="log">Event Log</button>
+        <div style="margin-left:auto">
+          <button id="events-add-btn" class="session-btn" style="background:#2ecc71;border-color:#2ecc71;color:#fff;font-size:11px">+ Add Event</button>
+        </div>
+      </div>
+      <div id="events-pool-view" style="flex:1;overflow-y:auto;padding:20px">
+        <div id="events-pool-grid" style="display:flex;flex-wrap:wrap;gap:12px"></div>
+        <div id="events-pool-empty" style="color:#666;text-align:center;padding:40px">No events configured for this scenario.</div>
+      </div>
+      <div id="events-log-view" style="flex:1;overflow-y:auto;padding:20px;display:none">
+        <div id="events-log-list"></div>
+        <div id="events-log-empty" style="color:#666;text-align:center;padding:40px">No events fired yet.</div>
       </div>
     </div>
   </div>
@@ -1280,15 +1354,174 @@ WEB_UI = """<!DOCTYPE html>
     <div style="display:flex;gap:8px;margin-bottom:12px">
       <button class="session-btn npc-detail-tab active" data-npc-tab="thoughts">Thoughts</button>
       <button class="session-btn npc-detail-tab" data-npc-tab="prompt">Prompt</button>
+      <button class="session-btn npc-detail-tab" data-npc-tab="config">Config</button>
     </div>
     <div id="npc-detail-thoughts" style="flex:1;min-height:0;display:flex;gap:0;border-radius:8px;overflow:hidden;border:1px solid #333">
-      <div id="npc-thoughts-list" style="width:200px;min-width:200px;background:#121a30;overflow-y:auto;border-right:1px solid #333">
+      <div style="width:200px;min-width:200px;background:#121a30;border-right:1px solid #333;display:flex;flex-direction:column">
+        <div style="padding:6px 8px;border-bottom:1px solid #333">
+          <input id="npc-thoughts-search" type="text" placeholder="Search thoughts..." autocomplete="off"
+                 style="width:100%;background:#111;color:#e0e0e0;border:1px solid #333;padding:4px 8px;border-radius:6px;font-size:11px;outline:none;box-sizing:border-box" />
+        </div>
+        <div id="npc-thoughts-list" style="flex:1;overflow-y:auto">
+        </div>
       </div>
       <div id="npc-thoughts-content" style="flex:1;overflow-y:auto;background:#111;padding:16px;font-size:13px;color:#ccc;white-space:pre-wrap;font-family:monospace;line-height:1.5">
         No thoughts recorded yet.
       </div>
     </div>
     <div id="npc-detail-prompt" style="flex:1;min-height:0;overflow-y:auto;background:#111;border-radius:8px;padding:16px;font-size:13px;color:#ccc;white-space:pre-wrap;font-family:monospace;line-height:1.5;display:none">
+    </div>
+    <div id="npc-detail-config" style="flex:1;min-height:0;overflow-y:auto;background:#111;border-radius:8px;padding:16px;display:none">
+      <div style="margin-bottom:16px">
+        <div style="font-size:12px;font-weight:600;color:#e94560;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">Response Tier</div>
+        <select id="npc-config-tier" style="background:#1a1a2e;color:#e0e0e0;border:1px solid #333;padding:6px 10px;border-radius:6px;font-size:13px">
+          <option value="1">Tier 1 — ICs</option>
+          <option value="2">Tier 2 — Managers</option>
+          <option value="3">Tier 3 — Executives</option>
+        </select>
+      </div>
+      <div style="margin-bottom:16px">
+        <div style="font-size:12px;font-weight:600;color:#e94560;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">Verbosity</div>
+        <select id="npc-config-verbosity" style="background:#1a1a2e;color:#e0e0e0;border:1px solid #333;padding:6px 10px;border-radius:6px;font-size:13px">
+          <option value="concise">Concise — 1-2 sentences</option>
+          <option value="brief">Brief — 2-3 sentences</option>
+          <option value="normal" selected>Normal — default</option>
+          <option value="essay">Essay — 1-2 short paragraphs</option>
+          <option value="detailed">Detailed — thorough with examples</option>
+          <option value="dissertation">Dissertation — exhaustive analysis</option>
+        </select>
+      </div>
+      <div style="margin-bottom:16px">
+        <div style="font-size:12px;font-weight:600;color:#e94560;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">Channel Memberships</div>
+        <div id="npc-config-channels" style="display:flex;flex-wrap:wrap;gap:6px"></div>
+      </div>
+      <div style="margin-bottom:16px">
+        <div style="font-size:12px;font-weight:600;color:#e94560;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">Doc Folder Access</div>
+        <div id="npc-config-folders" style="display:flex;flex-wrap:wrap;gap:6px"></div>
+      </div>
+      <div style="margin-bottom:16px">
+        <div style="font-size:12px;font-weight:600;color:#e94560;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">GitLab Repos</div>
+        <div id="npc-config-repos" style="display:flex;flex-wrap:wrap;gap:6px"></div>
+      </div>
+      <div style="display:flex;justify-content:flex-end;padding-top:8px;border-top:1px solid #333">
+        <button id="npc-config-save" class="modal-btn-primary" style="font-size:13px">Save Configuration</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Hire Agent Modal -->
+<div class="modal-overlay" id="hire-modal">
+  <div class="modal" style="width:80vw;max-width:800px;height:80vh;display:flex;flex-direction:column">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+      <h2 style="margin:0">Hire New Agent</h2>
+      <button class="modal-btn-cancel" id="hire-modal-close">Cancel</button>
+    </div>
+    <div style="flex:1;min-height:0;overflow-y:auto">
+      <div class="modal-field">
+        <label>Character Template</label>
+        <select id="hire-template">
+          <option value="">Start from scratch</option>
+        </select>
+        <div class="field-hint">Pick a template to pre-fill the character prompt, or write your own.</div>
+      </div>
+      <div class="modal-field">
+        <label>Name / Role / Key</label>
+        <div style="display:flex;gap:8px;align-items:center">
+          <input id="hire-name" type="text" placeholder="Name" style="flex:2" autocomplete="off" />
+          <select id="hire-role-preset" style="flex:2">
+            <option value="">Role...</option>
+            <option value="PM">PM</option>
+            <option value="Eng Manager">Eng Manager</option>
+            <option value="Architect">Architect</option>
+            <option value="Senior Eng">Senior Eng</option>
+            <option value="Junior Eng">Junior Eng</option>
+            <option value="Support Eng">Support Eng</option>
+            <option value="Sales Eng">Sales Eng</option>
+            <option value="QA Lead">QA Lead</option>
+            <option value="DevOps">DevOps</option>
+            <option value="Designer">Designer</option>
+            <option value="Marketing">Marketing</option>
+            <option value="CEO">CEO</option>
+            <option value="CFO">CFO</option>
+            <option value="CTO">CTO</option>
+            <option value="COO">COO</option>
+            <option value="Project Mgr">Project Mgr</option>
+            <option value="Intern">Intern</option>
+            <option value="Contractor">Contractor</option>
+            <option value="other">Other...</option>
+          </select>
+          <input id="hire-key" type="text" placeholder="key (auto)" style="flex:1" autocomplete="off" />
+        </div>
+        <input id="hire-role-custom" type="text" placeholder="Enter custom role..." style="display:none;width:100%;margin-top:6px" autocomplete="off" />
+      </div>
+      <div class="modal-field">
+        <label>Team Description</label>
+        <input id="hire-team-desc" type="text" placeholder="e.g. testing, quality assurance, bug triage" autocomplete="off" />
+      </div>
+      <div class="modal-field">
+        <label>Tier / Verbosity</label>
+        <div style="display:flex;gap:8px">
+          <select id="hire-tier" style="flex:1">
+            <option value="1">Tier 1 — ICs</option>
+            <option value="2">Tier 2 — Managers</option>
+            <option value="3">Tier 3 — Executives</option>
+          </select>
+          <select id="hire-verbosity" style="flex:1">
+            <option value="concise">Concise — 1-2 sentences</option>
+            <option value="brief">Brief — 2-3 sentences</option>
+            <option value="normal" selected>Normal</option>
+            <option value="essay">Essay — 1-2 paragraphs</option>
+            <option value="detailed">Detailed — thorough</option>
+            <option value="dissertation">Dissertation — exhaustive</option>
+          </select>
+        </div>
+      </div>
+      <div class="modal-field">
+        <label>Channels</label>
+        <div id="hire-channels" style="display:flex;flex-wrap:wrap;gap:6px"></div>
+      </div>
+      <div class="modal-field">
+        <label>Doc Folders</label>
+        <div id="hire-folders" style="display:flex;flex-wrap:wrap;gap:6px"></div>
+      </div>
+      <div class="modal-field">
+        <label>Character Prompt</label>
+        <textarea id="hire-prompt" style="width:100%;min-height:200px;background:#111;color:#e0e0e0;border:1px solid #333;padding:14px;border-radius:8px;font-size:13px;font-family:monospace;resize:vertical" placeholder="# Role Name&#10;&#10;You are [Name], the [Role]. You..."></textarea>
+        <div class="field-hint">The full role prompt defining this agent's personality, responsibilities, and behavior.</div>
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="modal-btn-cancel" onclick="closeModal('hire-modal')">Cancel</button>
+      <button class="modal-btn-primary" id="hire-confirm" style="background:#2ecc71;border-color:#2ecc71">Hire</button>
+    </div>
+  </div>
+</div>
+
+<!-- Event Edit Modal -->
+<div class="modal-overlay" id="event-edit-modal">
+  <div class="modal" style="width:80vw;max-width:900px;height:80vh;display:flex;flex-direction:column">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+      <h2 id="event-edit-title" style="margin:0">Edit Event</h2>
+      <div style="display:flex;gap:6px">
+        <button class="session-btn" id="event-edit-history-btn" style="font-size:11px">History</button>
+        <button class="modal-btn-cancel" id="event-edit-close">Cancel</button>
+      </div>
+    </div>
+    <div style="flex:1;min-height:0;display:flex;gap:0;border-radius:8px;overflow:hidden;border:1px solid #333">
+      <div style="flex:1;display:flex;flex-direction:column">
+        <textarea id="event-edit-yaml" style="flex:1;background:#111;color:#e0e0e0;border:none;padding:16px;font-size:13px;font-family:monospace;line-height:1.5;resize:none;outline:none" placeholder="name: My Event..."></textarea>
+      </div>
+      <div id="event-edit-history" style="display:none;width:200px;min-width:200px;border-left:1px solid #333;background:#121a30;overflow-y:auto">
+        <div style="padding:8px 12px;font-size:11px;font-weight:700;color:#555;text-transform:uppercase;letter-spacing:0.5px">Version History</div>
+        <div id="event-edit-history-list"></div>
+      </div>
+    </div>
+    <div style="display:flex;align-items:center;gap:8px;margin-top:12px">
+      <button class="session-btn" id="event-edit-delete" style="color:#e94560;font-size:11px">Delete Event</button>
+      <div style="flex:1"></div>
+      <button class="modal-btn-cancel" onclick="closeModal('event-edit-modal')">Cancel</button>
+      <button class="modal-btn-primary" id="event-edit-save">Save</button>
     </div>
   </div>
 </div>
@@ -1477,6 +1710,7 @@ document.querySelectorAll('.header-tab').forEach(tab => {
     if (target === 'gitlab') loadRepos();
     if (target === 'tickets') loadTickets();
     if (target === 'npcs') loadNPCs();
+    if (target === 'events') loadEventPool();
     if (target === 'usage') loadUsage();
   });
 });
@@ -2310,6 +2544,14 @@ function toggleCreateForm() {
   const form = document.getElementById('tk-create-form');
   form.classList.toggle('open');
   if (form.classList.contains('open')) {
+    // Populate notify channel dropdown
+    const notify = document.getElementById('tk-form-notify');
+    notify.innerHTML = '<option value="">Don\\'t notify</option>';
+    Object.keys(channelsData).sort().forEach(ch => {
+      if (!channelsData[ch].is_system && !channelsData[ch].is_director) {
+        notify.innerHTML += '<option value="' + escapeHtml(ch) + '">' + escapeHtml(ch) + '</option>';
+      }
+    });
     document.getElementById('tk-form-title').focus();
   }
 }
@@ -2321,15 +2563,29 @@ async function submitCreateTicket() {
   const assignee = document.getElementById('tk-form-assignee').value;
   const description = document.getElementById('tk-form-desc').value.trim();
   const author = document.getElementById('tk-form-author').value;
-  await fetch('/api/tickets', {
+  const notifyChannel = document.getElementById('tk-form-notify').value;
+  const resp = await fetch('/api/tickets', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({ title, description, priority, assignee, author }),
   });
+  // Post notification to selected channel
+  if (notifyChannel && resp.ok) {
+    const ticket = await resp.json();
+    let msg = 'New ticket **' + ticket.id + '**: ' + title;
+    if (assignee) msg += ' (assigned to ' + assignee + ')';
+    if (priority && priority !== 'medium') msg += ' [' + priority + ']';
+    await fetch('/api/messages', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ sender: author || 'System', content: msg, channel: notifyChannel }),
+    });
+  }
   document.getElementById('tk-form-title').value = '';
   document.getElementById('tk-form-desc').value = '';
   document.getElementById('tk-form-priority').value = 'medium';
   document.getElementById('tk-form-assignee').value = '';
+  document.getElementById('tk-form-notify').value = '';
   document.getElementById('tk-create-form').classList.remove('open');
   loadTickets();
 }
@@ -2545,7 +2801,7 @@ const LIVE_STATE_LABELS = {
   ready: 'Ready', starting: 'Starting...', responding: 'Thinking...',
   'writing docs': 'Writing docs...', 'committing code': 'Committing code...',
   'managing tickets': 'Managing tickets...', 'processing commands': 'Processing...',
-  'posting': 'Posting...', offline: 'Out of Office', disconnected: 'Disconnected',
+  'posting': 'Posting...', firing: 'Being Fired...', offline: 'Out of Office', disconnected: 'Disconnected',
   unknown: 'Unknown',
 };
 
@@ -2568,7 +2824,11 @@ function createNPCCard(npc) {
     '<div class="npc-card-section-label">Doc Folders</div>' +
     '<div class="npc-card-tags">' +
       (npc.folders || []).map(f => '<span class="npc-tag npc-tag-folder">' + escapeHtml(f) + '</span>').join('') +
-    '</div>';
+    '</div>' +
+    ((npc.repos || []).length ? '<div class="npc-card-section-label">GitLab Repos</div>' +
+    '<div class="npc-card-tags">' +
+      npc.repos.map(r => '<span class="npc-tag" style="border-left:2px solid #e67e22">' + escapeHtml(r) + '</span>').join('') +
+    '</div>' : '');
   const btn = document.createElement('button');
   btn.className = 'npc-toggle-btn' + (npc.online ? ' is-online' : '');
   btn.textContent = npc.online ? 'Set Out of Office' : 'Bring Online';
@@ -2578,9 +2838,22 @@ function createNPCCard(npc) {
     loadNPCs();
   });
   card.appendChild(btn);
+  const fireBtn = document.createElement('button');
+  fireBtn.className = 'npc-toggle-btn';
+  fireBtn.style.cssText = 'margin-top:4px;font-size:10px;color:#666';
+  fireBtn.textContent = 'Fire';
+  fireBtn.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    if (!confirm('Fire ' + npc.display_name + '? Their session will be closed and they will stop responding. Documents and tickets are preserved.')) return;
+    await fetch('/api/npcs/' + encodeURIComponent(npc.key) + '/fire', {method: 'POST'});
+    await loadPersonas();
+    await loadChannels();
+    loadNPCs();
+  });
+  card.appendChild(fireBtn);
   card.style.cursor = 'pointer';
   card.addEventListener('click', (e) => {
-    if (e.target === btn) return;  // don't open detail when clicking toggle
+    if (e.target === btn || e.target === fireBtn) return;
     openNPCDetail(npc.key, npc.display_name);
   });
   return card;
@@ -2608,25 +2881,40 @@ function switchNPCDetailTab(tab) {
   _npcDetailTab = tab;
   document.getElementById('npc-detail-thoughts').style.display = tab === 'thoughts' ? 'flex' : 'none';
   document.getElementById('npc-detail-prompt').style.display = tab === 'prompt' ? '' : 'none';
+  document.getElementById('npc-detail-config').style.display = tab === 'config' ? '' : 'none';
 }
 
 async function loadNPCThoughts() {
-  const list = document.getElementById('npc-thoughts-list');
   const content = document.getElementById('npc-thoughts-content');
-  list.innerHTML = '';
   content.textContent = 'Loading...';
+  document.getElementById('npc-thoughts-search').value = '';
   const resp = await fetch('/api/npcs/' + encodeURIComponent(_npcDetailKey) + '/thoughts');
   _npcThoughtsData = await resp.json();
   if (!_npcThoughtsData.length) {
+    document.getElementById('npc-thoughts-list').innerHTML = '';
     content.textContent = 'No thoughts recorded yet. This agent has not responded to any messages.';
     return;
   }
-  // Render list items (newest first)
+  renderThoughtsList();
+}
+
+function renderThoughtsList(filter) {
+  const list = document.getElementById('npc-thoughts-list');
+  const content = document.getElementById('npc-thoughts-content');
+  list.innerHTML = '';
+  const filterLower = (filter || '').toLowerCase();
   const reversed = [..._npcThoughtsData].reverse();
+  let firstIdx = null;
   reversed.forEach((t, i) => {
     const idx = _npcThoughtsData.length - 1 - i;
+    // Filter by search term
+    if (filterLower) {
+      const text = ((t.thinking || '') + ' ' + (t.response || '')).toLowerCase();
+      if (!text.includes(filterLower)) return;
+    }
+    if (firstIdx === null) firstIdx = idx;
     const item = document.createElement('div');
-    item.className = 'thought-item' + (i === 0 ? ' active' : '');
+    item.className = 'thought-item';
     item.dataset.idx = idx;
     const ts = new Date(t.timestamp * 1000);
     const timeStr = ts.toLocaleTimeString();
@@ -2637,9 +2925,16 @@ async function loadNPCThoughts() {
     item.addEventListener('click', () => selectThought(idx));
     list.appendChild(item);
   });
-  // Select the newest
-  selectThought(_npcThoughtsData.length - 1);
+  if (firstIdx !== null) {
+    selectThought(firstIdx);
+  } else {
+    content.textContent = filter ? 'No thoughts matching "' + filter + '"' : 'No thoughts recorded yet.';
+  }
 }
+
+document.getElementById('npc-thoughts-search').addEventListener('input', (e) => {
+  renderThoughtsList(e.target.value.trim());
+});
 
 function selectThought(idx) {
   const content = document.getElementById('npc-thoughts-content');
@@ -2674,11 +2969,245 @@ document.querySelectorAll('.npc-detail-tab').forEach(tab => {
     switchNPCDetailTab(_npcDetailTab);
     if (_npcDetailTab === 'thoughts') await loadNPCThoughts();
     else if (_npcDetailTab === 'prompt') await loadNPCPrompt();
+    else if (_npcDetailTab === 'config') await loadNPCConfig();
   });
 });
 
 document.getElementById('npc-detail-close').addEventListener('click', () => {
   closeModal('npc-detail-modal');
+});
+
+// -- Hire modal --
+
+document.getElementById('hire-role-preset').addEventListener('change', (e) => {
+  const custom = document.getElementById('hire-role-custom');
+  if (e.target.value === 'other') {
+    custom.style.display = '';
+    custom.focus();
+  } else {
+    custom.style.display = 'none';
+    custom.value = '';
+  }
+});
+
+function getHireDisplayName() {
+  const name = document.getElementById('hire-name').value.trim();
+  const rolePreset = document.getElementById('hire-role-preset').value;
+  const roleCustom = document.getElementById('hire-role-custom').value.trim();
+  const role = rolePreset === 'other' ? roleCustom : rolePreset;
+  if (!name) return '';
+  return role ? name + ' (' + role + ')' : name;
+}
+
+document.getElementById('hire-template').addEventListener('change', async (e) => {
+  const key = e.target.value;
+  if (!key) return;
+  const resp = await fetch('/api/templates/' + encodeURIComponent(key));
+  if (resp.ok) {
+    const data = await resp.json();
+    const name = document.getElementById('hire-name').value.trim() || 'NAME';
+    document.getElementById('hire-prompt').value = data.content.replace(/{NAME}/g, name);
+  }
+});
+
+// Re-apply name to template when name changes
+document.getElementById('hire-name').addEventListener('input', () => {
+  const templateKey = document.getElementById('hire-template').value;
+  if (templateKey && document.getElementById('hire-prompt').value.includes('{NAME}')) {
+    // Template hasn't been manually edited yet, nothing to do
+  }
+});
+
+document.getElementById('npc-hire-btn').addEventListener('click', async () => {
+  document.getElementById('hire-name').value = '';
+  document.getElementById('hire-role-preset').value = '';
+  document.getElementById('hire-role-custom').value = '';
+  document.getElementById('hire-role-custom').style.display = 'none';
+  document.getElementById('hire-key').value = '';
+  document.getElementById('hire-key').dataset.manual = '';
+  document.getElementById('hire-team-desc').value = '';
+  document.getElementById('hire-tier').value = '1';
+  document.getElementById('hire-verbosity').value = 'normal';
+  document.getElementById('hire-prompt').value = '';
+
+  // Populate template dropdown
+  const templateSel = document.getElementById('hire-template');
+  templateSel.innerHTML = '<option value="">Start from scratch</option>';
+  const resp = await fetch('/api/templates');
+  const templates = await resp.json();
+  templates.forEach(t => {
+    const opt = document.createElement('option');
+    opt.value = t.key;
+    opt.textContent = t.name;
+    templateSel.appendChild(opt);
+  });
+
+  // Populate channel checkboxes
+  const chContainer = document.getElementById('hire-channels');
+  chContainer.innerHTML = '';
+  Object.keys(channelsData).sort().forEach(ch => {
+    if (channelsData[ch].is_system || channelsData[ch].is_director) return;
+    const checked = ch === '#general';
+    const label = document.createElement('label');
+    label.className = 'npc-config-check' + (checked ? ' checked' : '');
+    label.innerHTML = '<input type="checkbox" value="' + escapeHtml(ch) + '"' + (checked ? ' checked' : '') + '> ' + escapeHtml(ch);
+    label.querySelector('input').addEventListener('change', (e) => {
+      label.classList.toggle('checked', e.target.checked);
+    });
+    chContainer.appendChild(label);
+  });
+
+  // Populate folder checkboxes
+  const flContainer = document.getElementById('hire-folders');
+  flContainer.innerHTML = '';
+  foldersData.forEach(f => {
+    const checked = f.name === 'shared' || f.name === 'public';
+    const label = document.createElement('label');
+    label.className = 'npc-config-check' + (checked ? ' checked' : '');
+    label.innerHTML = '<input type="checkbox" value="' + escapeHtml(f.name) + '"' + (checked ? ' checked' : '') + '> ' + escapeHtml(f.name);
+    label.querySelector('input').addEventListener('change', (e) => {
+      label.classList.toggle('checked', e.target.checked);
+    });
+    flContainer.appendChild(label);
+  });
+
+  openModal('hire-modal');
+  document.getElementById('hire-name').focus();
+});
+
+// Auto-generate key from name
+document.getElementById('hire-name').addEventListener('input', () => {
+  const keyField = document.getElementById('hire-key');
+  if (!keyField.dataset.manual) {
+    keyField.value = document.getElementById('hire-name').value.trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+  }
+});
+document.getElementById('hire-key').addEventListener('input', () => {
+  document.getElementById('hire-key').dataset.manual = '1';
+});
+
+document.getElementById('hire-modal-close').addEventListener('click', () => closeModal('hire-modal'));
+
+document.getElementById('hire-confirm').addEventListener('click', async () => {
+  const display_name = getHireDisplayName();
+  const key = document.getElementById('hire-key').value.trim();
+  const team_description = document.getElementById('hire-team-desc').value.trim();
+  const tier = parseInt(document.getElementById('hire-tier').value);
+  const prompt = document.getElementById('hire-prompt').value;
+
+  if (!display_name) { alert('Display name is required'); return; }
+
+  const channels = [];
+  document.querySelectorAll('#hire-channels input:checked').forEach(cb => channels.push(cb.value));
+  const folders = [];
+  document.querySelectorAll('#hire-folders input:checked').forEach(cb => folders.push(cb.value));
+
+  const resp = await fetch('/api/npcs/hire', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({display_name, key: key || undefined, team_description, tier, channels, folders, prompt, verbosity: document.getElementById('hire-verbosity').value}),
+  });
+  if (resp.ok) {
+    closeModal('hire-modal');
+    await loadPersonas();
+    await loadChannels();
+    loadFolders();
+    loadNPCs();
+  } else {
+    const err = await resp.json();
+    alert('Error: ' + (err.error || 'unknown'));
+  }
+});
+
+// -- NPC Config tab --
+
+async function loadNPCConfig() {
+  if (!_npcDetailKey) return;
+  // Get current NPC data
+  const resp = await fetch('/api/npcs');
+  const npcs = await resp.json();
+  const npc = npcs.find(n => n.key === _npcDetailKey);
+  if (!npc) return;
+
+  // Tier and verbosity dropdowns
+  document.getElementById('npc-config-tier').value = npc.tier || 1;
+  document.getElementById('npc-config-verbosity').value = npc.verbosity || 'normal';
+
+  // Channel checkboxes
+  const chContainer = document.getElementById('npc-config-channels');
+  chContainer.innerHTML = '';
+  const currentChannels = new Set(npc.channels || []);
+  Object.keys(channelsData).sort().forEach(ch => {
+    if (channelsData[ch].is_system || channelsData[ch].is_director) return;
+    const checked = currentChannels.has(ch);
+    const label = document.createElement('label');
+    label.className = 'npc-config-check' + (checked ? ' checked' : '');
+    label.innerHTML = '<input type="checkbox" value="' + escapeHtml(ch) + '"' + (checked ? ' checked' : '') + '> ' + escapeHtml(ch);
+    label.querySelector('input').addEventListener('change', (e) => {
+      label.classList.toggle('checked', e.target.checked);
+    });
+    chContainer.appendChild(label);
+  });
+
+  // Folder checkboxes
+  const flContainer = document.getElementById('npc-config-folders');
+  flContainer.innerHTML = '';
+  const currentFolders = new Set(npc.folders || []);
+  foldersData.forEach(f => {
+    const checked = currentFolders.has(f.name);
+    const label = document.createElement('label');
+    label.className = 'npc-config-check' + (checked ? ' checked' : '');
+    label.innerHTML = '<input type="checkbox" value="' + escapeHtml(f.name) + '"' + (checked ? ' checked' : '') + '> ' + escapeHtml(f.name);
+    label.querySelector('input').addEventListener('change', (e) => {
+      label.classList.toggle('checked', e.target.checked);
+    });
+    flContainer.appendChild(label);
+  });
+
+  // Repo checkboxes
+  const repoContainer = document.getElementById('npc-config-repos');
+  repoContainer.innerHTML = '';
+  const currentRepos = new Set(npc.repos || []);
+  const allRepos = Object.keys(glRepos || {}).length ? glRepos.map(r => r.name).sort() : [];
+  if (allRepos.length === 0) {
+    repoContainer.innerHTML = '<span style="font-size:11px;color:#555">No repositories yet</span>';
+  }
+  allRepos.forEach(name => {
+    const checked = currentRepos.has(name);
+    const label = document.createElement('label');
+    label.className = 'npc-config-check' + (checked ? ' checked' : '');
+    label.innerHTML = '<input type="checkbox" value="' + escapeHtml(name) + '"' + (checked ? ' checked' : '') + '> ' + escapeHtml(name);
+    label.querySelector('input').addEventListener('change', (e) => {
+      label.classList.toggle('checked', e.target.checked);
+    });
+    repoContainer.appendChild(label);
+  });
+}
+
+document.getElementById('npc-config-save').addEventListener('click', async () => {
+  if (!_npcDetailKey) return;
+  const tier = parseInt(document.getElementById('npc-config-tier').value);
+  const channels = [];
+  document.querySelectorAll('#npc-config-channels input:checked').forEach(cb => {
+    channels.push(cb.value);
+  });
+  const folders = [];
+  document.querySelectorAll('#npc-config-folders input:checked').forEach(cb => {
+    folders.push(cb.value);
+  });
+  const repos = [];
+  document.querySelectorAll('#npc-config-repos input:checked').forEach(cb => {
+    repos.push(cb.value);
+  });
+  const resp = await fetch('/api/npcs/' + encodeURIComponent(_npcDetailKey) + '/config', {
+    method: 'PUT',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({tier, channels, folders, repos, verbosity: document.getElementById('npc-config-verbosity').value}),
+  });
+  if (resp.ok) {
+    loadNPCs();
+    loadChannels();
+  }
 });
 
 // -- Usage tab --
@@ -2743,6 +3272,235 @@ async function loadUsage() {
     // silently ignore fetch errors
   }
 }
+
+// -- Events tab --
+
+let _eventsSubTab = 'pool';
+
+document.querySelectorAll('.events-sub-tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    _eventsSubTab = tab.dataset.eventsTab;
+    document.querySelectorAll('.events-sub-tab').forEach(t => t.classList.toggle('active', t === tab));
+    document.getElementById('events-pool-view').style.display = _eventsSubTab === 'pool' ? '' : 'none';
+    document.getElementById('events-log-view').style.display = _eventsSubTab === 'log' ? '' : 'none';
+    if (_eventsSubTab === 'pool') loadEventPool();
+    if (_eventsSubTab === 'log') loadEventLog();
+  });
+});
+
+async function loadEventPool() {
+  const grid = document.getElementById('events-pool-grid');
+  const empty = document.getElementById('events-pool-empty');
+  const resp = await fetch('/api/events/pool');
+  const pool = await resp.json();
+  grid.innerHTML = '';
+  empty.style.display = pool.length ? 'none' : 'block';
+  pool.forEach((evt, i) => {
+    const actions = evt.actions || [];
+    const actionTypes = [...new Set(actions.map(a => a.type))].join(', ');
+    const preview = actions.find(a => a.type === 'message');
+    const card = document.createElement('div');
+    card.className = 'event-card';
+    card.style.cursor = 'pointer';
+    card.innerHTML =
+      '<div class="event-card-header">' +
+        '<span class="event-card-severity event-sev-' + (evt.severity || 'medium') + '">' + escapeHtml(evt.severity || 'medium') + '</span>' +
+        '<span class="event-card-name">' + escapeHtml(evt.name || 'Unnamed') + '</span>' +
+      '</div>' +
+      '<div class="event-card-actions">' + escapeHtml(actions.length + ' action(s): ' + actionTypes) + '</div>' +
+      (preview ? '<div class="event-card-preview">' + escapeHtml(preview.content || '').substring(0, 80) + '</div>' : '');
+    const trigBtn = document.createElement('button');
+    trigBtn.className = 'event-trigger-btn';
+    trigBtn.style.cssText = 'width:100%;margin-top:8px';
+    trigBtn.textContent = 'Trigger';
+    trigBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      triggerEvent(evt);
+    });
+    card.appendChild(trigBtn);
+    card.addEventListener('click', (e) => {
+      if (e.target === trigBtn) return;
+      openEventEditor(i, evt);
+    });
+    grid.appendChild(card);
+  });
+}
+
+async function triggerEvent(evt) {
+  const resp = await fetch('/api/events/trigger', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(evt),
+  });
+  if (resp.ok) {
+    showNotice('Event triggered: ' + (evt.name || 'Custom Event') + ' (' + (evt.actions || []).length + ' actions fired)');
+  }
+  loadEventLog();
+}
+
+async function loadEventLog() {
+  const list = document.getElementById('events-log-list');
+  const empty = document.getElementById('events-log-empty');
+  const resp = await fetch('/api/events/log');
+  const log = await resp.json();
+  list.innerHTML = '';
+  empty.style.display = log.length ? 'none' : 'block';
+  [...log].reverse().forEach(entry => {
+    const row = document.createElement('div');
+    row.className = 'event-log-row';
+    row.style.cssText = 'cursor:pointer;flex-wrap:wrap';
+    const ts = new Date(entry.timestamp * 1000).toLocaleString();
+    const actionCount = (entry.actions || []).length;
+    row.innerHTML =
+      '<span class="event-log-time">' + ts + '</span>' +
+      '<span class="event-card-severity event-sev-' + (entry.severity || 'medium') + '">' + escapeHtml(entry.severity || 'medium') + '</span>' +
+      '<span class="event-log-name">' + escapeHtml(entry.name || 'Custom') + '</span>' +
+      '<span class="event-log-actions">' + actionCount + ' action(s)</span>';
+    const retrigger = document.createElement('button');
+    retrigger.className = 'session-btn';
+    retrigger.style.cssText = 'font-size:10px';
+    retrigger.textContent = 'Re-trigger';
+    retrigger.addEventListener('click', (e) => {
+      e.stopPropagation();
+      triggerEvent(entry);
+    });
+    row.appendChild(retrigger);
+    // Expandable YAML detail
+    const detail = document.createElement('div');
+    detail.style.cssText = 'display:none;width:100%;margin-top:8px;background:#111;border-radius:6px;padding:10px;font-family:monospace;font-size:12px;color:#ccc;white-space:pre-wrap;max-height:300px;overflow-y:auto';
+    const clean = Object.assign({}, entry);
+    delete clean._history;
+    detail.textContent = eventToYaml(clean);
+    row.appendChild(detail);
+    row.addEventListener('click', () => {
+      detail.style.display = detail.style.display === 'none' ? '' : 'none';
+    });
+    list.appendChild(row);
+  });
+}
+
+let _eventEditIndex = -1; // -1 = new event
+let _eventEditHistory = []; // version history for current event
+
+function eventToYaml(evt) {
+  if (typeof jsyaml !== 'undefined') return jsyaml.dump(evt, {lineWidth: -1});
+  return JSON.stringify(evt, null, 2);
+}
+
+function yamlToEvent(text) {
+  if (typeof jsyaml !== 'undefined') return jsyaml.load(text);
+  return JSON.parse(text);
+}
+
+function openEventEditor(index, evt) {
+  _eventEditIndex = index;
+  _eventEditHistory = evt._history || [];
+  const clean = Object.assign({}, evt);
+  delete clean._history;
+  document.getElementById('event-edit-title').textContent = index >= 0 ? 'Edit Event' : 'New Event';
+  document.getElementById('event-edit-yaml').value = eventToYaml(clean);
+  document.getElementById('event-edit-delete').style.display = index >= 0 ? '' : 'none';
+  document.getElementById('event-edit-history').style.display = 'none';
+  renderEventHistory();
+  openModal('event-edit-modal');
+}
+
+function renderEventHistory() {
+  const list = document.getElementById('event-edit-history-list');
+  list.innerHTML = '';
+  if (!_eventEditHistory.length) {
+    list.innerHTML = '<div style="padding:8px 12px;font-size:11px;color:#888">No previous versions</div>';
+    return;
+  }
+  [..._eventEditHistory].reverse().forEach((v, i) => {
+    const item = document.createElement('div');
+    item.className = 'thought-item';
+    const ts = new Date(v.saved_at * 1000);
+    item.innerHTML = '<div class="thought-item-time">v' + (_eventEditHistory.length - i) + ' - ' + ts.toLocaleString() + '</div>';
+    item.addEventListener('click', () => {
+      document.querySelectorAll('#event-edit-history-list .thought-item').forEach(el => el.classList.remove('active'));
+      item.classList.add('active');
+      document.getElementById('event-edit-yaml').value = eventToYaml(v.event);
+    });
+    list.appendChild(item);
+
+    const restoreBtn = document.createElement('button');
+    restoreBtn.className = 'session-btn';
+    restoreBtn.style.cssText = 'font-size:10px;padding:2px 8px;margin-top:4px;width:100%';
+    restoreBtn.textContent = 'Restore';
+    restoreBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      document.getElementById('event-edit-yaml').value = eventToYaml(v.event);
+    });
+    item.appendChild(restoreBtn);
+    list.appendChild(item);
+  });
+}
+
+document.getElementById('event-edit-history-btn').addEventListener('click', () => {
+  const panel = document.getElementById('event-edit-history');
+  panel.style.display = panel.style.display === 'none' ? '' : 'none';
+});
+
+document.getElementById('event-edit-close').addEventListener('click', () => closeModal('event-edit-modal'));
+
+document.getElementById('event-edit-save').addEventListener('click', async () => {
+  let evt;
+  try {
+    evt = yamlToEvent(document.getElementById('event-edit-yaml').value);
+  } catch(e) {
+    showNotice('Invalid YAML: ' + e.message);
+    return;
+  }
+  // Save version history
+  if (_eventEditIndex >= 0) {
+    const oldResp = await fetch('/api/events/pool');
+    const oldPool = await oldResp.json();
+    const oldEvt = oldPool[_eventEditIndex];
+    if (oldEvt) {
+      if (!evt._history) evt._history = oldEvt._history || [];
+      const clean = Object.assign({}, oldEvt);
+      delete clean._history;
+      evt._history.push({event: clean, saved_at: Date.now() / 1000});
+    }
+    await fetch('/api/events/pool/' + _eventEditIndex, {
+      method: 'PUT',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(evt),
+    });
+  } else {
+    evt._history = [];
+    await fetch('/api/events/pool', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(evt),
+    });
+  }
+  closeModal('event-edit-modal');
+  loadEventPool();
+});
+
+document.getElementById('event-edit-delete').addEventListener('click', async () => {
+  if (_eventEditIndex < 0) return;
+  if (!confirm('Delete this event?')) return;
+  await fetch('/api/events/pool/' + _eventEditIndex, {method: 'DELETE'});
+  closeModal('event-edit-modal');
+  loadEventPool();
+});
+
+document.getElementById('events-add-btn').addEventListener('click', () => {
+  const template = {
+    name: 'New Event',
+    severity: 'medium',
+    actions: [
+      {type: 'message', channel: '#general', sender: 'System', content: 'Something happened!'}
+    ]
+  };
+  openEventEditor(-1, template);
+});
+
+// Add Events tab loading to tab switch
+// (handled in the existing tab switch handler below)
 
 // -- Orchestrator status polling --
 
@@ -2823,6 +3581,8 @@ async function reloadAllState() {
   loadRepos();
   loadTickets();
   loadNPCs();
+  if (_eventsSubTab === 'pool') loadEventPool();
+  else loadEventLog();
 }
 
 // -- New Session Modal --
@@ -3738,22 +4498,26 @@ def create_app() -> Flask:
             _orchestrator_status["agents"] = data.get("agents", {})
             _orchestrator_status["last_heartbeat"] = time.time()
             _orchestrator_status["message"] = data.get("message", "")
-        # Return any pending command
-        with _command_lock:
-            cmd = dict(_orchestrator_command)
-            if cmd["action"]:
-                _orchestrator_command["action"] = None  # consume it
-            return jsonify(cmd)
+        # Return any pending command (only if caller wants to check)
+        if data.get("check_commands", True):
+            with _command_lock:
+                if _orchestrator_commands:
+                    cmd = _orchestrator_commands.pop(0)
+                    print(f"[cmd queue] consumed: {cmd.get('action')} key={cmd.get('key','')} (remaining: {len(_orchestrator_commands)})")
+                else:
+                    cmd = {"action": None}
+                return jsonify(cmd)
+        return jsonify({"action": None})
 
     @app.route("/api/orchestrator/command", methods=["POST"])
     def orchestrator_command():
         data = request.get_json(force=True)
         action = data.get("action")
-        if action not in ("restart", "shutdown", None):
+        if action not in ("restart", "shutdown", "add_agent", "remove_agent", None):
             return jsonify({"error": "invalid action"}), 400
         with _command_lock:
-            _orchestrator_command["action"] = action
-            _orchestrator_command.update({k: v for k, v in data.items() if k != "action"})
+            _orchestrator_commands.append(data)
+            print(f"[cmd queue] added: {action} (queue size: {len(_orchestrator_commands)})")
         return jsonify({"queued": action})
 
     # -- Typing indicators --
@@ -3776,6 +4540,8 @@ def create_app() -> Flask:
     def list_npcs():
         from lib.personas import PERSONAS, RESPONSE_TIERS, PERSONA_TIER, DEFAULT_MEMBERSHIPS
         from lib.docs import get_accessible_folders
+        from lib.gitlab import DEFAULT_REPO_ACCESS
+        all_repo_names = sorted(_gitlab_repos.keys())
         result = []
         with _orchestrator_lock:
             agent_states = _orchestrator_status.get("agents", {})
@@ -3786,11 +4552,20 @@ def create_app() -> Flask:
             for key, p in PERSONAS.items():
                 channels = sorted(DEFAULT_MEMBERSHIPS.get(key, set()))
                 folders = sorted(get_accessible_folders(key))
+                # Repos: if no access control, all repos; otherwise filter
+                if DEFAULT_REPO_ACCESS:
+                    repos = sorted(r for r in all_repo_names
+                                   if r not in DEFAULT_REPO_ACCESS or key in DEFAULT_REPO_ACCESS.get(r, set()))
+                else:
+                    repos = all_repo_names
                 toggled_online = _agent_online.get(key, True)
                 # Determine live state from orchestrator heartbeat
                 agent_info = agent_states.get(key, {})
+                is_firing = key in _agent_firing
                 if not orch_connected:
-                    live_state = "disconnected"
+                    live_state = "firing" if is_firing else "disconnected"
+                elif is_firing:
+                    live_state = "firing"
                 elif not toggled_online:
                     live_state = "offline"
                 else:
@@ -3799,10 +4574,13 @@ def create_app() -> Flask:
                     "key": key,
                     "display_name": p["display_name"],
                     "team_description": p.get("team_description", ""),
+                    "character_file": p.get("character_file", ""),
                     "tier": PERSONA_TIER.get(key, 0),
                     "channels": channels,
                     "folders": folders,
+                    "repos": repos,
                     "online": toggled_online,
+                    "verbosity": _agent_verbosity.get(key, "normal"),
                     "live_state": live_state,
                 })
         return jsonify(result)
@@ -3834,6 +4612,379 @@ def create_app() -> Flask:
         _persist_message(sys_msg)
         _broadcast(sys_msg)
         return jsonify({"key": key, "online": new_state, "display_name": display_name})
+
+    # -- Events API --
+
+    @app.route("/api/events/pool", methods=["GET"])
+    def get_event_pool():
+        from lib.events import get_event_pool as _get_pool
+        return jsonify(_get_pool())
+
+    @app.route("/api/events/pool", methods=["POST"])
+    def add_event_to_pool():
+        from lib.events import add_event
+        data = request.get_json(force=True)
+        idx = add_event(data)
+        return jsonify({"ok": True, "index": idx}), 201
+
+    @app.route("/api/events/pool/<int:index>", methods=["PUT"])
+    def update_event_in_pool(index):
+        from lib.events import update_event
+        data = request.get_json(force=True)
+        update_event(index, data)
+        return jsonify({"ok": True})
+
+    @app.route("/api/events/pool/<int:index>", methods=["DELETE"])
+    def delete_event_from_pool(index):
+        from lib.events import delete_event
+        delete_event(index)
+        return jsonify({"ok": True})
+
+    @app.route("/api/events/trigger", methods=["POST"])
+    def trigger_event():
+        from lib.events import fire_event
+        data = request.get_json(force=True)
+        results = []
+        # Execute each action
+        for action in data.get("actions", []):
+            action_type = action.get("type", "")
+            if action_type == "message":
+                sender = action.get("sender", "System")
+                content = action.get("content", "")
+                channel = action.get("channel", "#general")
+                with _lock:
+                    msg = {
+                        "id": len(_messages) + 1,
+                        "sender": sender,
+                        "content": content,
+                        "channel": channel,
+                        "timestamp": time.time(),
+                    }
+                    _messages.append(msg)
+                _persist_message(msg)
+                _broadcast(msg)
+                results.append({"type": "message", "channel": channel, "sender": sender})
+            elif action_type == "ticket":
+                title = action.get("title", "")
+                if title:
+                    author = action.get("author", "System")
+                    ticket_id = generate_ticket_id(title, time.time())
+                    now = time.time()
+                    ticket = {
+                        "id": ticket_id,
+                        "title": title,
+                        "description": action.get("description", ""),
+                        "status": "open",
+                        "priority": action.get("priority", "medium"),
+                        "assignee": action.get("assignee", ""),
+                        "created_by": author,
+                        "created_at": now,
+                        "updated_at": now,
+                        "comments": [],
+                        "blocked_by": [],
+                        "blocks": [],
+                    }
+                    with _tickets_lock:
+                        _tickets[ticket_id] = ticket
+                        save_tickets_index(dict(_tickets))
+                    _broadcast_tickets_event("created", ticket)
+                    results.append({"type": "ticket", "id": ticket_id, "title": title})
+            elif action_type == "document":
+                title = action.get("title", "")
+                if title:
+                    from lib.docs import slugify
+                    author = action.get("author", "System")
+                    folder = action.get("folder", "shared")
+                    content = action.get("content", "")
+                    slug = slugify(title)
+                    folder_dir = DOCS_DIR / folder
+                    folder_dir.mkdir(parents=True, exist_ok=True)
+                    doc_path = folder_dir / f"{slug}.txt"
+                    with _docs_lock:
+                        if slug not in _docs_index:
+                            doc_path.write_text(content, encoding="utf-8")
+                            now = time.time()
+                            meta = {
+                                "slug": slug,
+                                "title": title,
+                                "folder": folder,
+                                "created_at": now,
+                                "updated_at": now,
+                                "created_by": author,
+                                "size": len(content.encode("utf-8")),
+                                "preview": content[:100],
+                            }
+                            _docs_index[slug] = meta
+                            _save_index()
+                            _broadcast_doc_event("created", meta)
+                            results.append({"type": "document", "title": title, "folder": folder, "slug": slug})
+        # Log the event with results
+        data["results"] = results
+        entry = fire_event(data)
+        return jsonify(entry)
+
+    @app.route("/api/events/log", methods=["GET"])
+    def get_events_log():
+        from lib.events import get_event_log
+        return jsonify(get_event_log())
+
+    # -- Character templates API --
+
+    @app.route("/api/templates", methods=["GET"])
+    def list_templates():
+        from lib.scenario_loader import SCENARIOS_DIR
+        templates_dir = SCENARIOS_DIR / "character-templates"
+        result = []
+        if templates_dir.exists():
+            for f in sorted(templates_dir.glob("*.md")):
+                name = f.stem.replace("-", " ").title()
+                result.append({"key": f.stem, "name": name})
+        return jsonify(result)
+
+    @app.route("/api/templates/<key>", methods=["GET"])
+    def get_template(key):
+        from lib.scenario_loader import SCENARIOS_DIR
+        path = SCENARIOS_DIR / "character-templates" / f"{key}.md"
+        if not path.exists():
+            return jsonify({"error": "template not found"}), 404
+        content = path.read_text()
+        return jsonify({"key": key, "content": content})
+
+    # -- NPC hire/fire API --
+
+    @app.route("/api/npcs/<key>/fire", methods=["POST"])
+    def fire_npc(key):
+        from lib.personas import PERSONAS
+        if key not in PERSONAS:
+            return jsonify({"error": f"unknown agent: {key}"}), 404
+
+        display_name = PERSONAS[key]["display_name"]
+
+        # Mark as firing — agent stays in PERSONAS but is skipped in responses
+        with _agent_online_lock:
+            _agent_online[key] = False  # skip in response waves
+            _agent_firing.add(key)
+
+        # Signal orchestrator to remove this agent's session
+        # Orchestrator will call back to /api/npcs/<key>/finalize-fire after session closes
+        with _command_lock:
+            _orchestrator_commands.append({"action": "remove_agent", "key": key})
+            print(f"[cmd queue] fire: remove_agent key={key} (queue size: {len(_orchestrator_commands)})")
+
+        # Post system message
+        with _lock:
+            sys_msg = {
+                "id": len(_messages) + 1,
+                "sender": "System",
+                "content": f"{display_name} has left the company.",
+                "channel": "#system",
+                "timestamp": time.time(),
+            }
+            _messages.append(sys_msg)
+        _persist_message(sys_msg)
+        _broadcast(sys_msg)
+
+        return jsonify({"ok": True, "key": key, "display_name": display_name, "fired": True})
+
+    @app.route("/api/npcs/<key>/finalize-fire", methods=["POST"])
+    def finalize_fire(key):
+        """Called by orchestrator after closing the agent's session."""
+        from lib.personas import PERSONAS, DEFAULT_MEMBERSHIPS, PERSONA_TIER, RESPONSE_TIERS
+        from lib.docs import DEFAULT_FOLDER_ACCESS
+        from lib.gitlab import DEFAULT_REPO_ACCESS
+        if key not in PERSONAS:
+            return jsonify({"ok": True})  # already removed
+
+        display_name = PERSONAS[key]["display_name"]
+        del PERSONAS[key]
+        DEFAULT_MEMBERSHIPS.pop(key, None)
+        with _channel_lock:
+            for members in _channel_members.values():
+                members.discard(key)
+        old_tier = PERSONA_TIER.pop(key, None)
+        if old_tier and old_tier in RESPONSE_TIERS:
+            if key in RESPONSE_TIERS[old_tier]:
+                RESPONSE_TIERS[old_tier].remove(key)
+        for access_set in DEFAULT_FOLDER_ACCESS.values():
+            access_set.discard(key)
+        for access_set in DEFAULT_REPO_ACCESS.values():
+            access_set.discard(key)
+        with _agent_online_lock:
+            _agent_online.pop(key, None)
+        with _agent_online_lock:
+            _agent_firing.discard(key)
+        print(f"[fire] finalized: {display_name} removed from PERSONAS")
+        return jsonify({"ok": True, "key": key, "finalized": True})
+
+    @app.route("/api/npcs/hire", methods=["POST"])
+    def hire_npc():
+        from lib.personas import PERSONAS, DEFAULT_MEMBERSHIPS, PERSONA_TIER, RESPONSE_TIERS
+        from lib.docs import DEFAULT_FOLDERS, DEFAULT_FOLDER_ACCESS
+
+        data = request.get_json(force=True)
+        display_name = data.get("display_name", "").strip()
+        key = data.get("key", "").strip().lower().replace(" ", "")
+        team_description = data.get("team_description", "").strip()
+        prompt_content = data.get("prompt", "").strip()
+        tier = int(data.get("tier", 1))
+        channels = data.get("channels", ["#general"])
+        folders = data.get("folders", ["shared", "public"])
+
+        if not display_name or not key:
+            return jsonify({"error": "display_name and key required"}), 400
+        if key in PERSONAS:
+            return jsonify({"error": f"agent key '{key}' already exists"}), 409
+
+        # Save character file to instance runtime directory (not the scenario template)
+        from lib.session import VAR_DIR, get_current_session
+        scenario = get_current_session().get("scenario", "tech-startup")
+        char_dir = VAR_DIR / "characters"
+        char_dir.mkdir(parents=True, exist_ok=True)
+        char_file = char_dir / f"{key}.md"
+        char_file.write_text(prompt_content or f"# {display_name}\\n\\nYou are {display_name}.")
+
+        # Add to PERSONAS
+        PERSONAS[key] = {
+            "name": key,
+            "display_name": display_name,
+            "team_description": team_description,
+            "character_file": str(char_file),
+        }
+
+        # Add to memberships
+        DEFAULT_MEMBERSHIPS[key] = set(channels)
+        with _channel_lock:
+            for ch in channels:
+                if ch in _channel_members:
+                    _channel_members[ch].add(key)
+
+        # Add to tier
+        RESPONSE_TIERS.setdefault(tier, [])
+        if key not in RESPONSE_TIERS[tier]:
+            RESPONSE_TIERS[tier].append(key)
+        PERSONA_TIER[key] = tier
+
+        # Add folder access
+        for folder_name in folders:
+            DEFAULT_FOLDER_ACCESS.setdefault(folder_name, set()).add(key)
+
+        # Create personal folder
+        personal_name = display_name.split("(")[0].strip().lower().replace(" ", "")
+        if personal_name not in DEFAULT_FOLDERS:
+            DEFAULT_FOLDERS[personal_name] = {
+                "type": "personal",
+                "description": f"{display_name}'s private folder",
+            }
+            DEFAULT_FOLDER_ACCESS[personal_name] = {key}
+
+        # Set online and verbosity
+        verbosity = data.get("verbosity", "normal")
+        with _agent_online_lock:
+            _agent_online[key] = True
+            if verbosity != "normal":
+                _agent_verbosity[key] = verbosity
+
+        # Create director channel
+        with _channel_lock:
+            ch_name = f"#director-{key}"
+            _channels[ch_name] = {
+                "description": f"Private channel with {display_name}",
+                "is_external": False,
+                "is_director": True,
+                "director_persona": key,
+                "created_at": time.time(),
+            }
+            _channel_members[ch_name] = set()
+
+        # Signal orchestrator to add this agent's session
+        with _command_lock:
+            _orchestrator_commands.append({"action": "add_agent", "key": key})
+            print(f"[cmd queue] hire: add_agent key={key} (queue size: {len(_orchestrator_commands)})")
+
+        # Post system message
+        with _lock:
+            sys_msg = {
+                "id": len(_messages) + 1,
+                "sender": "System",
+                "content": f"Welcome {display_name} to the team!",
+                "channel": "#system",
+                "timestamp": time.time(),
+            }
+            _messages.append(sys_msg)
+        _persist_message(sys_msg)
+        _broadcast(sys_msg)
+
+        return jsonify({"ok": True, "key": key, "display_name": display_name, "hired": True}), 201
+
+    # -- NPC configuration API --
+
+    @app.route("/api/npcs/<key>/config", methods=["PUT"])
+    def update_npc_config(key):
+        from lib.personas import PERSONAS, DEFAULT_MEMBERSHIPS, PERSONA_TIER, RESPONSE_TIERS
+        from lib.docs import DEFAULT_FOLDER_ACCESS
+        from lib.gitlab import DEFAULT_REPO_ACCESS
+        if key not in PERSONAS:
+            return jsonify({"error": f"unknown agent: {key}"}), 404
+
+        data = request.get_json(force=True)
+        display_name = PERSONAS[key]["display_name"]
+
+        # Update channel memberships
+        if "channels" in data:
+            new_channels = set(data["channels"])
+            DEFAULT_MEMBERSHIPS[key] = new_channels
+            # Update live channel members
+            with _channel_lock:
+                for ch_name in _channels:
+                    members = _channel_members.get(ch_name, set())
+                    if ch_name in new_channels:
+                        members.add(key)
+                    else:
+                        members.discard(key)
+
+        # Update folder access
+        if "folders" in data:
+            new_folders = set(data["folders"])
+            for folder_name in list(DEFAULT_FOLDER_ACCESS.keys()):
+                if folder_name in new_folders:
+                    DEFAULT_FOLDER_ACCESS[folder_name].add(key)
+                else:
+                    DEFAULT_FOLDER_ACCESS[folder_name].discard(key)
+
+        # Update tier
+        if "tier" in data:
+            new_tier = int(data["tier"])
+            old_tier = PERSONA_TIER.get(key)
+            if old_tier != new_tier:
+                # Remove from old tier
+                if old_tier in RESPONSE_TIERS:
+                    if key in RESPONSE_TIERS[old_tier]:
+                        RESPONSE_TIERS[old_tier].remove(key)
+                # Add to new tier
+                RESPONSE_TIERS.setdefault(new_tier, [])
+                if key not in RESPONSE_TIERS[new_tier]:
+                    RESPONSE_TIERS[new_tier].append(key)
+                PERSONA_TIER[key] = new_tier
+
+        # Update verbosity
+        if "verbosity" in data:
+            with _agent_online_lock:
+                _agent_verbosity[key] = data["verbosity"]
+
+        # Update repo access
+        if "repos" in data:
+            new_repos = set(data["repos"])
+            with _gitlab_lock:
+                for repo_name in _gitlab_repos:
+                    # If repo has no access control yet, initialize with all agents
+                    if repo_name not in DEFAULT_REPO_ACCESS:
+                        DEFAULT_REPO_ACCESS[repo_name] = set(PERSONAS.keys())
+                    if repo_name in new_repos:
+                        DEFAULT_REPO_ACCESS[repo_name].add(key)
+                    else:
+                        DEFAULT_REPO_ACCESS[repo_name].discard(key)
+
+        return jsonify({"ok": True, "key": key, "display_name": display_name})
 
     # -- Agent thoughts API --
 
@@ -3929,8 +5080,7 @@ def create_app() -> Flask:
                             _channel_members[ch] = set(members)
             # Signal orchestrator to restart with this session's scenario
             with _command_lock:
-                _orchestrator_command["action"] = "restart"
-                _orchestrator_command["scenario"] = scenario
+                _orchestrator_commands.append({"action": "restart", "scenario": scenario})
             return jsonify(meta)
         except FileNotFoundError as e:
             return jsonify({"error": str(e)}), 404
@@ -3946,8 +5096,7 @@ def create_app() -> Flask:
             _reinitialize()
             # Signal orchestrator to restart with the new scenario
             with _command_lock:
-                _orchestrator_command["action"] = "restart"
-                _orchestrator_command["scenario"] = scenario or get_current_session().get("scenario")
+                _orchestrator_commands.append({"action": "restart", "scenario": scenario or get_current_session().get("scenario")})
             meta["restarting_agents"] = True
             return jsonify(meta)
         except Exception as e:

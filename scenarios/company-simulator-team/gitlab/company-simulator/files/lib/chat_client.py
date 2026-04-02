@@ -344,16 +344,20 @@ class ChatClient:
     # -- Orchestrator control --
 
     def send_heartbeat(self, state: str, scenario: str, agents: dict,
-                       message: str = "") -> dict:
-        """Send orchestrator heartbeat. Returns any pending command."""
+                       message: str = "", check_commands: bool = True) -> dict:
+        """Send orchestrator heartbeat. Returns any pending command if check_commands=True."""
         try:
             resp = requests.post(
                 f"{self.base_url}/api/orchestrator/heartbeat",
                 json={"state": state, "scenario": scenario,
-                      "agents": agents, "message": message},
+                      "agents": agents, "message": message,
+                      "check_commands": check_commands},
                 timeout=5,
             )
             resp.raise_for_status()
-            return resp.json()
+            result = resp.json()
+            if result.get("action"):
+                print(f"  [heartbeat] consumed command: {result}")
+            return result
         except Exception:
             return {"action": None}

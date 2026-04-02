@@ -79,5 +79,19 @@
       "scenarios/company-simulator-team/scenario.yaml",
       "README.md"
     ]
+  },
+  {
+    "id": "4f1bee30",
+    "message": "Add events system, hire/fire, verbosity, thoughts search, repo access",
+    "author": "ACP (Collaborator)",
+    "timestamp": 1775164962.9429102,
+    "files": [
+      "lib/events.py",
+      "lib/webapp.py",
+      "lib/orchestrator.py",
+      "lib/session.py",
+      "lib/scenario_loader.py",
+      "lib/response_schema.py"
+    ]
   }
 ]
