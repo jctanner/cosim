@@ -161,6 +161,18 @@ def save_session(name: str | None = None) -> dict:
     except Exception:
         pass
 
+    # Save events (pool + log)
+    try:
+        from lib.events import get_pool_snapshot, get_log_snapshot
+        pool = get_pool_snapshot()
+        log = get_log_snapshot()
+        if pool:
+            (instance_dir / "event_pool.json").write_text(json.dumps(pool, indent=2))
+        if log:
+            (instance_dir / "event_log.json").write_text(json.dumps(log, indent=2))
+    except Exception:
+        pass
+
     # Write metadata
     now = time.time()
     meta = {
@@ -275,6 +287,20 @@ def load_session(instance_name: str) -> dict:
             set_dm_queue(json.loads(dm_path.read_text()))
         except Exception:
             pass
+
+    # Restore events (pool + log)
+    try:
+        from lib.events import restore_events, init_event_pool
+        pool_path = instance_dir / "event_pool.json"
+        log_path = instance_dir / "event_log.json"
+        pool = json.loads(pool_path.read_text()) if pool_path.exists() else None
+        log = json.loads(log_path.read_text()) if log_path.exists() else []
+        if pool is not None:
+            restore_events(pool, log)
+        else:
+            init_event_pool()  # fall back to scenario defaults
+    except Exception:
+        pass
 
     # Update current session tracking
     _current_session["scenario"] = meta.get("scenario", _current_session["scenario"])

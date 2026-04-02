@@ -72,7 +72,7 @@ def _clear_runtime_dirs() -> None:
     """Remove runtime data directories and chat log."""
     if CHAT_LOG.exists():
         CHAT_LOG.unlink()
-    for d in [DOCS_DIR, GITLAB_DIR, TICKETS_DIR, LOGS_DIR]:
+    for d in [DOCS_DIR, GITLAB_DIR, TICKETS_DIR, LOGS_DIR, VAR_DIR / "characters"]:
         if d.exists():
             shutil.rmtree(d)
 
@@ -89,6 +89,31 @@ def _get_agent_thoughts() -> dict[str, dict]:
     from lib.webapp import _agent_thoughts, _agent_thoughts_lock
     with _agent_thoughts_lock:
         return dict(_agent_thoughts)
+
+
+def _get_roster() -> dict:
+    """Get current roster state — all personas with their config."""
+    from lib.personas import PERSONAS, DEFAULT_MEMBERSHIPS, PERSONA_TIER
+    from lib.docs import DEFAULT_FOLDER_ACCESS
+    from lib.gitlab import DEFAULT_REPO_ACCESS
+    from lib.webapp import _agent_verbosity, _agent_online_lock
+    roster = {}
+    for key, p in PERSONAS.items():
+        folders = [f for f, members in DEFAULT_FOLDER_ACCESS.items() if key in members]
+        repos = [r for r, members in DEFAULT_REPO_ACCESS.items() if key in members] if DEFAULT_REPO_ACCESS else []
+        with _agent_online_lock:
+            verbosity = _agent_verbosity.get(key, "normal")
+        roster[key] = {
+            "display_name": p["display_name"],
+            "team_description": p.get("team_description", ""),
+            "character_file": p.get("character_file", ""),
+            "channels": sorted(DEFAULT_MEMBERSHIPS.get(key, set())),
+            "folders": sorted(folders),
+            "repos": sorted(repos),
+            "tier": PERSONA_TIER.get(key, 1),
+            "verbosity": verbosity,
+        }
+    return roster
 
 
 def save_session(name: str | None = None) -> dict:
@@ -109,7 +134,7 @@ def save_session(name: str | None = None) -> dict:
     if CHAT_LOG.exists():
         shutil.copy2(CHAT_LOG, instance_dir / "chat.log")
 
-    for dirname in ["docs", "gitlab", "tickets", "logs"]:
+    for dirname in ["docs", "gitlab", "tickets", "logs", "characters"]:
         src = VAR_DIR / dirname
         if src.exists():
             shutil.copytree(src, instance_dir / dirname)
@@ -123,12 +148,28 @@ def save_session(name: str | None = None) -> dict:
     if thoughts:
         (instance_dir / "thoughts.json").write_text(json.dumps(thoughts, indent=2))
 
+    # Save roster (current PERSONAS state for hire/fire persistence)
+    roster = _get_roster()
+    (instance_dir / "roster.json").write_text(json.dumps(roster, indent=2))
+
     # Save DM queue
     try:
         from lib.orchestrator import get_dm_queue
         dm_data = get_dm_queue()
         if dm_data:
             (instance_dir / "dm_queue.json").write_text(json.dumps(dm_data, indent=2))
+    except Exception:
+        pass
+
+    # Save events (pool + log)
+    try:
+        from lib.events import get_pool_snapshot, get_log_snapshot
+        pool = get_pool_snapshot()
+        log = get_log_snapshot()
+        if pool:
+            (instance_dir / "event_pool.json").write_text(json.dumps(pool, indent=2))
+        if log:
+            (instance_dir / "event_log.json").write_text(json.dumps(log, indent=2))
     except Exception:
         pass
 
@@ -168,7 +209,7 @@ def load_session(instance_name: str) -> dict:
     if chat_src.exists():
         shutil.copy2(chat_src, CHAT_LOG)
 
-    for dirname in ["docs", "gitlab", "tickets", "logs"]:
+    for dirname in ["docs", "gitlab", "tickets", "logs", "characters"]:
         src = instance_dir / dirname
         if src.exists():
             shutil.copytree(src, VAR_DIR / dirname)
@@ -185,6 +226,59 @@ def load_session(instance_name: str) -> dict:
         except Exception:
             pass
 
+    # Restore roster (hire/fire changes)
+    roster_path = instance_dir / "roster.json"
+    if roster_path.exists():
+        try:
+            from lib.personas import PERSONAS, DEFAULT_MEMBERSHIPS, PERSONA_TIER, RESPONSE_TIERS
+            from lib.docs import DEFAULT_FOLDER_ACCESS
+            from lib.gitlab import DEFAULT_REPO_ACCESS
+            roster = json.loads(roster_path.read_text())
+
+            # Rebuild PERSONAS from roster
+            PERSONAS.clear()
+            DEFAULT_MEMBERSHIPS.clear()
+            PERSONA_TIER.clear()
+            RESPONSE_TIERS.clear()
+
+            for key, data in roster.items():
+                PERSONAS[key] = {
+                    "name": key,
+                    "display_name": data["display_name"],
+                    "team_description": data.get("team_description", ""),
+                    "character_file": data.get("character_file", ""),
+                }
+                DEFAULT_MEMBERSHIPS[key] = set(data.get("channels", ["#general"]))
+                tier = data.get("tier", 1)
+                PERSONA_TIER[key] = tier
+                RESPONSE_TIERS.setdefault(tier, [])
+                if key not in RESPONSE_TIERS[tier]:
+                    RESPONSE_TIERS[tier].append(key)
+
+            # Restore verbosity
+            from lib.webapp import _agent_verbosity, _agent_online_lock
+            with _agent_online_lock:
+                _agent_verbosity.clear()
+                for key, data in roster.items():
+                    if data.get("verbosity", "normal") != "normal":
+                        _agent_verbosity[key] = data["verbosity"]
+
+            # Rebuild folder access
+            DEFAULT_FOLDER_ACCESS.clear()
+            for key, data in roster.items():
+                for folder in data.get("folders", []):
+                    DEFAULT_FOLDER_ACCESS.setdefault(folder, set()).add(key)
+
+            # Rebuild repo access
+            DEFAULT_REPO_ACCESS.clear()
+            for key, data in roster.items():
+                for repo in data.get("repos", []):
+                    DEFAULT_REPO_ACCESS.setdefault(repo, set()).add(key)
+
+            print(f"  Roster restored: {len(roster)} agents")
+        except Exception as e:
+            print(f"  Roster restore failed: {e}")
+
     # Restore DM queue
     dm_path = instance_dir / "dm_queue.json"
     if dm_path.exists():
@@ -193,6 +287,20 @@ def load_session(instance_name: str) -> dict:
             set_dm_queue(json.loads(dm_path.read_text()))
         except Exception:
             pass
+
+    # Restore events (pool + log)
+    try:
+        from lib.events import restore_events, init_event_pool
+        pool_path = instance_dir / "event_pool.json"
+        log_path = instance_dir / "event_log.json"
+        pool = json.loads(pool_path.read_text()) if pool_path.exists() else None
+        log = json.loads(log_path.read_text()) if log_path.exists() else []
+        if pool is not None:
+            restore_events(pool, log)
+        else:
+            init_event_pool()  # fall back to scenario defaults
+    except Exception:
+        pass
 
     # Update current session tracking
     _current_session["scenario"] = meta.get("scenario", _current_session["scenario"])
