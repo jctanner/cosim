@@ -1,6 +1,6 @@
 # Design System — Dark Dashboard Theme
 
-This style guide captures the design language used in the Organization Chat simulator UI. Use it to bootstrap new projects with the same look and feel.
+This style guide captures the design language used in the CoSim simulator UI. Use it to bootstrap new projects with the same look and feel.
 
 ---
 
