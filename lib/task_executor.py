@@ -181,6 +181,12 @@ class TaskExecutor:
 2. Work autonomously — iterate until the goal is achieved.
 3. Write real code, run real commands, verify your work.
 
+## Important
+- Do NOT write files directly to `var/docs/` — documents must go through the structured output below to be indexed properly.
+- Do NOT write files directly to `var/gitlab/` — commits must go through the structured output below.
+- You CAN read files from those directories to understand existing content.
+- You CAN write temporary/working files elsewhere as needed.
+
 ## Output Format
 When finished, output a JSON block with this structure:
 
@@ -195,13 +201,22 @@ When finished, output a JSON block with this structure:
         {{"path": "src/main.py", "content": "...full file content..."}}
       ]
     }}
+  ],
+  "docs": [
+    {{
+      "title": "Document Title",
+      "folder": "shared",
+      "content": "Full document content in markdown..."
+    }}
   ]
 }}
 ```
 
 - `summary` is required.
 - `commits` is an array of logical commits to a simulated GitLab. Include complete file contents.
+- `docs` is an array of documents to create/update in the document system. Use `folder` to specify the target folder (e.g. "shared", "engineering", "devops").
 - If no code changes needed, use an empty `commits` array.
+- If no documents needed, use an empty `docs` array.
 """
 
     def _parse_worker_output(self, text: str) -> dict:
@@ -233,10 +248,11 @@ When finished, output a JSON block with this structure:
         return {"summary": text[:500], "commits": []}
 
     def _deliver_result(self, record: dict, output: dict) -> None:
-        """Deliver task results: commit files and post to channels."""
+        """Deliver task results: commit files, create docs, and post to channels."""
         agent_name = record["agent_name"]
         summary = output.get("summary", "Task completed")
         commits = output.get("commits", [])
+        docs = output.get("docs", [])
 
         # Commit files to simulated GitLab
         for commit in commits:
@@ -248,6 +264,17 @@ When finished, output a JSON block with this structure:
                     self._client.commit_files(project, message, files, agent_name)
                 except Exception as e:
                     print(f"  [Task {record['task_id']}] GitLab commit failed: {e}")
+
+        # Create documents via API
+        for doc in docs:
+            title = doc.get("title", "")
+            content = doc.get("content", "")
+            folder = doc.get("folder", "shared")
+            if title and content:
+                try:
+                    self._client.create_doc(title, content, author=agent_name, folder=folder)
+                except Exception as e:
+                    print(f"  [Task {record['task_id']}] Doc creation failed: {e}")
 
         # Post result to report_to channel
         self._client.post_message(
