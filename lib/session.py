@@ -376,12 +376,32 @@ def new_session(scenario_name: str | None = None) -> dict:
     if not scenario:
         raise RuntimeError("No scenario specified")
 
-    # If switching scenarios, reload the scenario config
-    if scenario != _current_session.get("scenario"):
-        from lib.scenario_loader import load_scenario
-        load_scenario(scenario)
+    # Always reload scenario config on new session (ensures clean state)
+    from lib.scenario_loader import load_scenario
+    load_scenario(scenario)
 
+    # Clear all runtime files
     _clear_runtime_dirs()
+
+    # Clear all in-memory state
+    try:
+        from lib.events import clear_events, init_event_pool
+        clear_events()
+        init_event_pool()
+    except Exception:
+        pass
+    try:
+        from lib.email import clear_inbox
+        clear_inbox()
+    except Exception:
+        pass
+    try:
+        from lib.webapp import _recaps, _agent_thoughts, _agent_online_lock
+        _recaps.clear()
+        with _agent_online_lock:
+            _agent_thoughts.clear()
+    except Exception:
+        pass
 
     # Copy scenario seed data (docs, gitlab, tickets) if present
     from lib.scenario_loader import SCENARIOS_DIR

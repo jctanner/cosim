@@ -797,7 +797,9 @@ async def _process_agent_response(
 
 
 def _is_agent_message(msg: dict) -> bool:
-    """Return True if the message was posted by an agent."""
+    """Return True if the message was posted by an agent (not an event or human)."""
+    if msg.get("is_event"):
+        return False  # Event-triggered messages should be treated as external input
     return msg["sender"] in _get_agent_display_names()
 
 

@@ -1,0 +1,178 @@
+name: "The Shattered Spire — D&D Campaign"
+description: "A 5-person D&D campaign with 4 player characters and a Dungeon Master. The ancient Spire of Aethermoor has shattered, releasing something that should have stayed sealed."
+
+characters:
+  dm:
+    display_name: "Valdris (Dungeon Master)"
+    character_file: "characters/valdris-dm.md"
+    team_description: "world-building, encounters, NPCs, story, rules adjudication"
+  fighter:
+    display_name: "Kael (Fighter)"
+    character_file: "characters/kael-fighter.md"
+    team_description: "frontline combat, tactics, protecting the party"
+  wizard:
+    display_name: "Lyra (Wizard)"
+    character_file: "characters/lyra-wizard.md"
+    team_description: "arcane magic, lore, puzzle-solving, area damage"
+  rogue:
+    display_name: "Nix (Rogue)"
+    character_file: "characters/nix-rogue.md"
+    team_description: "stealth, traps, lockpicking, scouting, sneak attacks"
+  cleric:
+    display_name: "Brother Aldric (Cleric)"
+    character_file: "characters/aldric-cleric.md"
+    team_description: "healing, divine magic, undead turning, moral compass"
+  paladin:
+    display_name: "Tyraziel (Open Sourcerer)"
+    character_file: "characters/tyraziel-paladin.md"
+    team_description: "frontline combat, divine smites, radical transparency, oath of open source"
+
+channels:
+  "#general":
+    description: "Out of character discussion and system messages"
+    is_external: false
+  "#tavern":
+    description: "The party's gathering place — general roleplay and planning"
+    is_external: false
+  "#combat":
+    description: "Active combat encounters and initiative tracking"
+    is_external: false
+  "#lore":
+    description: "World lore, history, and knowledge checks"
+    is_external: false
+  "#ooc":
+    description: "Out of character chat — meta discussion, rules questions, snack orders"
+    is_external: false
+  "#whispers":
+    description: "Private notes passed between characters"
+    is_external: false
+
+memberships:
+  dm: ["#general", "#ooc", "#tavern", "#combat", "#lore", "#whispers"]
+  fighter: ["#general", "#ooc", "#tavern", "#combat", "#lore"]
+  wizard: ["#general", "#ooc", "#tavern", "#combat", "#lore"]
+  rogue: ["#general", "#ooc", "#tavern", "#combat", "#whispers"]
+  cleric: ["#general", "#ooc", "#tavern", "#combat", "#lore"]
+  paladin: ["#general", "#ooc", "#tavern", "#combat", "#lore"]
+
+response_tiers:
+  1: ["fighter", "wizard", "rogue", "cleric", "paladin"]
+  2: ["dm"]
+
+folders:
+  shared:
+    type: "shared"
+    description: "Party inventory and shared notes"
+  public:
+    type: "public"
+    description: "World maps and handouts"
+  quest-log:
+    type: "department"
+    description: "Active and completed quests"
+  dm-notes:
+    type: "personal"
+    description: "DM's private notes — players cannot see"
+  kael:
+    type: "personal"
+    description: "Kael's character sheet and notes"
+  lyra:
+    type: "personal"
+    description: "Lyra's spellbook and notes"
+  nix:
+    type: "personal"
+    description: "Nix's inventory and secret contacts"
+  aldric:
+    type: "personal"
+    description: "Aldric's prayer journal and divine revelations"
+  tyraziel:
+    type: "personal"
+    description: "Tyraziel's changelog and open source manifesto"
+
+folder_access:
+  shared: ["dm", "fighter", "wizard", "rogue", "cleric", "paladin"]
+  public: ["dm", "fighter", "wizard", "rogue", "cleric", "paladin"]
+  quest-log: ["dm", "fighter", "wizard", "rogue", "cleric", "paladin"]
+  dm-notes: ["dm"]
+  kael: ["fighter"]
+  lyra: ["wizard"]
+  nix: ["rogue"]
+  aldric: ["cleric"]
+  tyraziel: ["paladin"]
+
+events:
+  - name: "Ambush on the Road"
+    severity: "high"
+    actions:
+      - type: "message"
+        channel: "#combat"
+        sender: "Valdris (Dungeon Master)"
+        content: "As you round the bend in the forest path, arrows whistle from the treeline! Six goblins leap from the underbrush, crude blades drawn. ROLL INITIATIVE!"
+      - type: "document"
+        title: "Encounter: Goblin Ambush"
+        folder: "quest-log"
+        content: "# Goblin Ambush\n\n**Location:** Forest road, 2 miles from Aethermoor\n**Enemies:** 6 goblins (HP 7 each, AC 15)\n**Terrain:** Dense forest, fallen logs for cover\n**Surprise:** Goblins have surprise if party fails DC 14 Perception"
+        author: "Valdris (Dungeon Master)"
+
+  - name: "Mysterious Stranger at the Tavern"
+    severity: "medium"
+    actions:
+      - type: "message"
+        channel: "#tavern"
+        sender: "Valdris (Dungeon Master)"
+        content: "A hooded figure slides into the booth across from you. Their face is hidden, but you catch the glint of a silver pendant — the mark of the Broken Circle. 'I hear you're heading to the Spire,' they whisper. 'I can tell you what happened there. But it will cost you.'"
+
+  - name: "The Spire Pulses"
+    severity: "critical"
+    actions:
+      - type: "message"
+        channel: "#tavern"
+        sender: "Valdris (Dungeon Master)"
+        content: "The ground shakes. Through the tavern window, you see the distant Spire of Aethermoor — or what remains of it — pulse with sickly violet light. A sound like breaking glass echoes across the valley. Dogs howl. Children cry. Something has changed. Every one of you feels it in your bones: whatever was sealed in that Spire just woke up."
+
+  - name: "Treasure Chest Found"
+    severity: "low"
+    actions:
+      - type: "message"
+        channel: "#combat"
+        sender: "Valdris (Dungeon Master)"
+        content: "Behind the fallen pillar, half-buried in rubble, you spot an iron-banded chest. It's old — centuries old. Runes you don't recognize are etched into the lock. Nix, the lock looks complex but not magical. Lyra, the runes are Primordial but corrupted somehow."
+
+  - name: "Divine Vision"
+    severity: "medium"
+    actions:
+      - type: "message"
+        channel: "#tavern"
+        sender: "Valdris (Dungeon Master)"
+        content: "Brother Aldric, as you kneel in evening prayer, a vision strikes you like a hammer blow. You see the Spire whole — gleaming white against a blue sky. Then it shatters, and from the cracks pour shadows that devour the light. A voice, ancient and sorrowful, speaks: 'The Seal was never meant to be permanent. Find the three Anchors before the Hollow King walks again.' You wake on the floor of the chapel, nose bleeding, the taste of copper on your tongue."
+
+settings:
+  human_roles:
+    - "Scenario Director"
+    - "Tavern Keeper"
+    - "Quest Giver"
+    - "Town Guard"
+    - "Mysterious Stranger"
+    - "Merchant"
+    - "Villager"
+    - "Noble"
+    - "Bandit"
+    - "Oracle"
+    - "Supreme Deity"
+    - "Open Sourcerer"
+  job_titles:
+    - "Fighter"
+    - "Wizard"
+    - "Rogue"
+    - "Cleric"
+    - "Paladin"
+    - "Ranger"
+    - "Barbarian"
+    - "Bard"
+    - "Druid"
+    - "Monk"
+    - "Sorcerer"
+    - "Warlock"
+    - "Artificer"
+    - "Open Sourcerer"
+    - "NPC"
+    - "Companion"
