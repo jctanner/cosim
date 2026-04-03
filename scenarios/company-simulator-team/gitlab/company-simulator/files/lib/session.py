@@ -173,6 +173,15 @@ def save_session(name: str | None = None) -> dict:
     except Exception:
         pass
 
+    # Save emails
+    try:
+        from lib.email import get_inbox_snapshot
+        emails = get_inbox_snapshot()
+        if emails:
+            (instance_dir / "emails.json").write_text(json.dumps(emails, indent=2))
+    except Exception:
+        pass
+
     # Write metadata
     now = time.time()
     meta = {
@@ -301,6 +310,15 @@ def load_session(instance_name: str) -> dict:
             init_event_pool()  # fall back to scenario defaults
     except Exception:
         pass
+
+    # Restore emails
+    emails_path = instance_dir / "emails.json"
+    if emails_path.exists():
+        try:
+            from lib.email import restore_inbox
+            restore_inbox(json.loads(emails_path.read_text()))
+        except Exception:
+            pass
 
     # Update current session tracking
     _current_session["scenario"] = meta.get("scenario", _current_session["scenario"])

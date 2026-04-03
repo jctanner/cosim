@@ -242,6 +242,30 @@ events:
         sender: "BigCorp (Customer)"
         content: "Hi, we're evaluating solutions for our 10,000-seat enterprise deployment. Can you walk us through your platform capabilities, pricing model, and SLA guarantees? We have a decision deadline of 30 days."
 
+  - name: "CEO Quarterly Update"
+    severity: "low"
+    actions:
+      - type: "email"
+        sender: "Dana (CEO)"
+        subject: "Q2 Company Update — Growth, Goals, and What's Next"
+        body: "Team,\n\nI wanted to share some exciting updates as we close out Q2.\n\nRevenue is up 35% QoQ. We've onboarded 12 new enterprise customers. Our NPS score hit 72, up from 58 last quarter.\n\nBut we have work to do. Churn in the mid-market segment is concerning. Support ticket volume is up 40% and response times are slipping. We need to invest in our support tooling and process.\n\nPriorities for Q3:\n1. Reduce support response time to under 4 hours\n2. Launch the enterprise dashboard\n3. Close the Series B (more on this soon)\n\nI'm proud of what we're building. Let's keep pushing.\n\n— Dana"
+
+  - name: "Flexible Work Policy & Equipment Stipend"
+    severity: "medium"
+    actions:
+      - type: "email"
+        sender: "HR (System)"
+        subject: "Flexible Work Policy & Equipment Stipend — Updated Guidelines"
+        body: "All,\n\nWe're formalizing our flexible work policy. The short version: we trust you.\n\nWork from wherever you're most productive — home, office, coffee shop, moon base. There is no minimum in-office requirement. Come in when it makes sense for collaboration, team events, or because you want to.\n\nThe office is always available and stocked with good coffee. We encourage teams to find their own rhythm.\n\nTo support your remote setup, we're offering an annual equipment stipend of $2,000. This covers:\n\n- External monitors, keyboards, mice\n- Webcams, microphones, headsets\n- Ring lights, boom arms, camera rigging\n- Standing desks or ergonomic chairs\n- Any other gear that improves your workspace\n\nSubmit receipts through Expensify — no pre-approval needed. If you need something beyond the stipend, talk to your manager.\n\nWe want you comfortable and productive, wherever you are.\n\n— Human Resources"
+
+  - name: "Mandatory Compliance Training"
+    severity: "medium"
+    actions:
+      - type: "email"
+        sender: "Compliance (System)"
+        subject: "REQUIRED: Annual Security Awareness Training — Due by March 15"
+        body: "All team members,\n\nIt's that time of year. Annual Security Awareness Training is now available and MANDATORY for all employees.\n\nTopics covered:\n- Phishing and social engineering\n- Data handling and classification\n- Incident reporting procedures\n- Password and access management\n\nDeadline: March 15, 2026\n\nFailure to complete by the deadline will result in access restrictions.\n\nAccess the training at: training.internal/security-2026\n\n— Compliance Team"
+
 settings:
   enable_background_tasks: true
   max_concurrent_tasks: 3

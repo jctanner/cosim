@@ -98,3 +98,27 @@ events:
         description: "1. NPC cards overlap below 768px viewport width\n2. 'Being Fired' CSS animation causes layout jank in Firefox\n\nPriority: medium — desktop works fine, mobile is stretch goal"
         priority: "medium"
         author: "Beta Tester (User)"
+
+  - name: "Mandatory Security Training"
+    severity: "medium"
+    actions:
+      - type: "email"
+        sender: "InfoSec (System)"
+        subject: "REQUIRED: Security Best Practices Training — Due by April 15"
+        body: "Team,\n\nAnnual security training is now available. Topics include:\n- API key management (don't commit .env files)\n- Dependency vulnerability scanning\n- Secure session handling\n- The irony of simulating a company that handles security training\n\nDeadline: April 15, 2026\n\nLink: training.internal/security-2026\n\n— InfoSec"
+
+  - name: "Project Milestone Update"
+    severity: "low"
+    actions:
+      - type: "email"
+        sender: "T4NN3R (Maintainer)"
+        subject: "CoSim v0.3 — What We Shipped This Week"
+        body: "1.z3r0,\n\nQuick recap of what landed this week:\n- Events system with multi-action bundles\n- Hire/fire with hot add/remove\n- Per-agent verbosity control\n- Agent thoughts search\n- 8 character templates\n\nThe orchestrator is getting fragile with the hot add/remove stuff. We should probably talk about the subprocess-per-agent rearchitecture before we add more lifecycle complexity.\n\nAlso the agents keep dropping raw JSON in chat. The parser fix helps but it's not bulletproof.\n\n— T4NN3R"
+
+  - name: "Remote Work Equipment Stipend"
+    severity: "low"
+    actions:
+      - type: "email"
+        sender: "HR (System)"
+        subject: "Remote Work Policy & Equipment Stipend — You're Set Up for Success"
+        body: "Team,\n\nQuick reminder: we're a remote-first company. Work from wherever you do your best work.\n\nTo make sure everyone has what they need, we're offering an annual equipment stipend of $2,500. This covers:\n\n- Monitors, keyboards, mice, docks\n- Webcams and microphones\n- Headsets (noise-cancelling encouraged)\n- Ring lights, boom arms, and streaming/rigging gear\n- Standing desks or ergonomic chairs\n- Anything else that makes your setup better\n\nNo approval needed — just submit receipts through Expensify. If you need something above the stipend, talk to your manager.\n\nWe want you comfortable, productive, and looking good on camera (or not — cameras optional, always).\n\n— HR"
