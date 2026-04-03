@@ -592,6 +592,9 @@ WEB_UI = """<!DOCTYPE html>
   .usage-card-row .value { color: #e0e0e0; font-weight: 600; font-family: monospace; }
   .usage-card-row .value.cost { color: #2ecc71; }
 
+  /* -- Advanced tab -- */
+  #advanced-pane { padding: 0; }
+
   /* -- Recap tab -- */
   #recap-pane { padding: 0; flex-direction: row; }
   #recap-sidebar { width: 200px; min-width: 200px; background: #121a30; border-right: 1px solid #0f3460;
@@ -1005,11 +1008,12 @@ WEB_UI = """<!DOCTYPE html>
   <button class="header-tab" data-tab="docs">Docs</button>
   <button class="header-tab" data-tab="gitlab">GitLab</button>
   <button class="header-tab" data-tab="tickets">Tickets</button>
+  <button class="header-tab" data-tab="email">Email</button>
+  <button class="header-tab" data-tab="events">Events</button>
   <button class="header-tab" data-tab="npcs">NPCs</button>
   <button class="header-tab" data-tab="usage">Usage</button>
-  <button class="header-tab" data-tab="events">Events</button>
-  <button class="header-tab" data-tab="email">Email</button>
   <button class="header-tab" data-tab="recap">Recap</button>
+  <button class="header-tab" data-tab="advanced">Advanced</button>
   <div id="session-controls">
     <span id="orch-status" title="Orchestrator status">
       <span id="orch-dot" class="status-dot disconnected"></span>
@@ -1047,30 +1051,12 @@ WEB_UI = """<!DOCTYPE html>
       <div id="messages-panel"></div>
       <div id="persona-bar">
         <input id="sender-name" type="text" placeholder="Your name..." value="" style="width:120px" />
-        <select id="sender-role">
-          <option value="">No role</option>
-          <option value="Scenario Director">Scenario Director</option>
-          <option value="Consultant">Consultant</option>
-          <option value="Customer">Customer</option>
-          <option value="New Hire">New Hire</option>
-          <option value="Board Member">Board Member</option>
-          <option value="Intern">Intern</option>
-          <option value="Vendor">Vendor</option>
-          <option value="Investor">Investor</option>
-          <option value="Auditor">Auditor</option>
-          <option value="Competitor">Competitor</option>
-          <option value="Regulator">Regulator</option>
-          <option value="The Press">The Press</option>
-          <option value="Hacker">Hacker</option>
-          <option value="God">God</option>
-          <option value="custom">Custom...</option>
-        </select>
+        <select id="sender-role"></select>
         <input id="sender-role-custom" type="text" placeholder="Custom role..." style="width:100px;display:none" />
       </div>
       <div id="input-area">
         <input id="msg-input" type="text" placeholder="Type a message..." autocomplete="off" />
         <button id="send-btn">Send</button>
-        <button id="clear-btn" title="Clear chat">Clear</button>
       </div>
     </div>
   </div>
@@ -1107,22 +1093,7 @@ WEB_UI = """<!DOCTYPE html>
             </select>
             <span style="font-size:11px;color:#555">Author:</span>
             <input id="doc-author-name" type="text" placeholder="Your name..." style="width:120px;background:#111;color:#e0e0e0;border:1px solid #333;padding:5px 8px;border-radius:6px;font-size:12px" />
-            <select id="doc-author-role" style="background:#111;color:#e0e0e0;border:1px solid #333;padding:5px 8px;border-radius:6px;font-size:12px">
-              <option value="">No role</option>
-              <option value="Consultant">Consultant</option>
-              <option value="Customer">Customer</option>
-              <option value="New Hire">New Hire</option>
-              <option value="Board Member">Board Member</option>
-              <option value="Intern">Intern</option>
-              <option value="Vendor">Vendor</option>
-              <option value="Investor">Investor</option>
-              <option value="Auditor">Auditor</option>
-              <option value="Competitor">Competitor</option>
-              <option value="Regulator">Regulator</option>
-              <option value="The Press">The Press</option>
-              <option value="Hacker">Hacker</option>
-              <option value="God">God</option>
-            </select>
+            <select id="doc-author-role" style="background:#111;color:#e0e0e0;border:1px solid #333;padding:5px 8px;border-radius:6px;font-size:12px"></select>
           </div>
           <textarea id="doc-editor-content" placeholder="Write your document content here (Markdown supported)..." rows="16"></textarea>
         </div>
@@ -1150,22 +1121,7 @@ WEB_UI = """<!DOCTYPE html>
           <div style="display:flex;gap:8px;align-items:center">
             <span style="font-size:11px;color:#555">Editing as:</span>
             <input id="doc-edit-author-name" type="text" placeholder="Your name..." style="width:120px;background:#111;color:#e0e0e0;border:1px solid #333;padding:5px 8px;border-radius:6px;font-size:12px" />
-            <select id="doc-edit-author-role" style="background:#111;color:#e0e0e0;border:1px solid #333;padding:5px 8px;border-radius:6px;font-size:12px">
-              <option value="">No role</option>
-              <option value="Consultant">Consultant</option>
-              <option value="Customer">Customer</option>
-              <option value="New Hire">New Hire</option>
-              <option value="Board Member">Board Member</option>
-              <option value="Intern">Intern</option>
-              <option value="Vendor">Vendor</option>
-              <option value="Investor">Investor</option>
-              <option value="Auditor">Auditor</option>
-              <option value="Competitor">Competitor</option>
-              <option value="Regulator">Regulator</option>
-              <option value="The Press">The Press</option>
-              <option value="Hacker">Hacker</option>
-              <option value="God">God</option>
-            </select>
+            <select id="doc-edit-author-role" style="background:#111;color:#e0e0e0;border:1px solid #333;padding:5px 8px;border-radius:6px;font-size:12px"></select>
             <div style="margin-left:auto;display:flex;gap:6px">
               <button id="doc-edit-cancel" class="session-btn" style="font-size:11px">Cancel</button>
               <button id="doc-edit-save" class="session-btn" style="font-size:11px;background:#e94560;border-color:#e94560;color:#fff">Save</button>
@@ -1391,18 +1347,7 @@ WEB_UI = """<!DOCTYPE html>
           <label>From</label>
           <div style="display:flex;gap:8px">
             <input id="email-compose-name" type="text" placeholder="Name" style="flex:1" autocomplete="off" />
-            <select id="email-compose-role" style="flex:1">
-              <option value="">No role</option>
-              <option value="Scenario Director">Scenario Director</option>
-              <option value="System">System</option>
-              <option value="CEO">CEO</option>
-              <option value="HR">HR</option>
-              <option value="Legal">Legal</option>
-              <option value="Compliance">Compliance</option>
-              <option value="Customer">Customer</option>
-              <option value="Board Member">Board Member</option>
-              <option value="custom">Custom...</option>
-            </select>
+            <select id="email-compose-role" style="flex:1"></select>
           </div>
           <input id="email-compose-role-custom" type="text" placeholder="Custom role..." style="display:none;width:100%;margin-top:6px" autocomplete="off" />
         </div>
@@ -1420,6 +1365,20 @@ WEB_UI = """<!DOCTYPE html>
         </div>
       </div>
       <div id="email-empty-state" style="color:#666;text-align:center;padding:60px;font-size:14px">Select an email to read, or compose a new one.</div>
+    </div>
+  </div>
+  <!-- Advanced tab -->
+  <div id="advanced-pane" class="tab-pane">
+    <div id="advanced-main" style="flex:1;padding:20px;overflow-y:auto">
+      <div style="max-width:600px">
+        <h3 style="color:#e0e0e0;margin-bottom:16px">Advanced Actions</h3>
+        <div style="margin-bottom:24px">
+          <div style="font-size:12px;font-weight:600;color:#e94560;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">Danger Zone</div>
+          <p style="font-size:12px;color:#888;margin-bottom:12px">These actions are destructive and cannot be undone. Save your session first.</p>
+          <button id="clear-chat-btn" class="session-btn" style="border-color:#e94560;color:#e94560;margin-right:8px">Clear Chat History</button>
+          <button id="clear-all-btn" class="session-btn" style="background:#e94560;border-color:#e94560;color:#fff">Clear Everything</button>
+        </div>
+      </div>
     </div>
   </div>
 </div>
@@ -1565,28 +1524,7 @@ WEB_UI = """<!DOCTYPE html>
         <label>Name / Role / Key</label>
         <div style="display:flex;gap:8px;align-items:center">
           <input id="hire-name" type="text" placeholder="Name" style="flex:2" autocomplete="off" />
-          <select id="hire-role-preset" style="flex:2">
-            <option value="">Role...</option>
-            <option value="PM">PM</option>
-            <option value="Eng Manager">Eng Manager</option>
-            <option value="Architect">Architect</option>
-            <option value="Senior Eng">Senior Eng</option>
-            <option value="Junior Eng">Junior Eng</option>
-            <option value="Support Eng">Support Eng</option>
-            <option value="Sales Eng">Sales Eng</option>
-            <option value="QA Lead">QA Lead</option>
-            <option value="DevOps">DevOps</option>
-            <option value="Designer">Designer</option>
-            <option value="Marketing">Marketing</option>
-            <option value="CEO">CEO</option>
-            <option value="CFO">CFO</option>
-            <option value="CTO">CTO</option>
-            <option value="COO">COO</option>
-            <option value="Project Mgr">Project Mgr</option>
-            <option value="Intern">Intern</option>
-            <option value="Contractor">Contractor</option>
-            <option value="other">Other...</option>
-          </select>
+          <select id="hire-role-preset" style="flex:2"></select>
           <input id="hire-key" type="text" placeholder="key (auto)" style="flex:1" autocomplete="off" />
         </div>
         <input id="hire-role-custom" type="text" placeholder="Enter custom role..." style="display:none;width:100%;margin-top:6px" autocomplete="off" />
@@ -1774,7 +1712,7 @@ async function loadPersonas() {
   styleEl.textContent = css;
 
   // Update ticket dropdowns with current personas
-  populateTicketDropdowns();
+  populateAllRoleDropdowns();
 }
 
 // Known human persona CSS classes
@@ -2077,7 +2015,7 @@ async function clearChat() {
 }
 
 sendBtn.addEventListener('click', send);
-document.getElementById('clear-btn').addEventListener('click', clearChat);
+// clear-btn removed — now in Advanced tab
 input.addEventListener('keydown', (e) => { if (e.key === 'Enter') send(); });
 
 // -- Docs tab --
@@ -2631,50 +2569,99 @@ let tkCurrentViewId = null;
 // Built dynamically from PERSONA_DISPLAY after loadPersonas()
 let TK_ASSIGNEE_OPTIONS = [''];
 
-const HUMAN_ROLES = [
-  'Scenario Director', 'Consultant', 'Customer', 'New Hire', 'Board Member',
-  'Intern', 'Vendor', 'Investor', 'Auditor', 'Competitor', 'Regulator',
-  'The Press', 'Hacker', 'God',
-];
+let HUMAN_ROLES = [];
+let JOB_TITLES = [];
 
-function populateTicketDropdowns() {
-  // Build assignee list from current personas
+async function loadRoles() {
+  try {
+    const resp = await fetch('/api/roles');
+    const data = await resp.json();
+    HUMAN_ROLES = data.human_roles || [];
+    JOB_TITLES = data.job_titles || [];
+  } catch(e) {
+    HUMAN_ROLES = ['Scenario Director', 'Consultant', 'Customer'];
+    JOB_TITLES = ['PM', 'Senior Eng'];
+  }
+  populateAllRoleDropdowns();
+}
+
+function populateRoleSelect(sel, roles, opts) {
+  if (!sel) return;
+  const defaultVal = opts?.default || '';
+  const includeEmpty = opts?.empty;
+  const emptyLabel = opts?.emptyLabel || '';
+  sel.innerHTML = '';
+  if (includeEmpty) {
+    sel.innerHTML += '<option value="">' + escapeHtml(emptyLabel) + '</option>';
+  }
+  roles.forEach(role => {
+    const selected = role === defaultVal ? ' selected' : '';
+    sel.innerHTML += '<option value="' + escapeHtml(role) + '"' + selected + '>' + escapeHtml(role) + '</option>';
+  });
+}
+
+function populateAllRoleDropdowns() {
+  const agentNames = Object.values(PERSONA_DISPLAY);
+
+  // Build assignee options
   TK_ASSIGNEE_OPTIONS = [''];
-  Object.values(PERSONA_DISPLAY).forEach(name => TK_ASSIGNEE_OPTIONS.push(name));
+  agentNames.forEach(name => TK_ASSIGNEE_OPTIONS.push(name));
 
-  // Populate assignee dropdown (ticket creation)
+  // Chat persona bar role
+  const senderRoleSel = document.getElementById('sender-role');
+  if (senderRoleSel) {
+    const customOpt = '<option value="custom">Custom...</option>';
+    populateRoleSelect(senderRoleSel, HUMAN_ROLES, {empty: true, emptyLabel: 'No role'});
+    senderRoleSel.innerHTML += customOpt;
+  }
+
+  // Doc creation author role
+  populateRoleSelect(document.getElementById('doc-author-role'), HUMAN_ROLES, {empty: true, emptyLabel: 'No role'});
+  // Doc edit author role
+  populateRoleSelect(document.getElementById('doc-edit-author-role'), HUMAN_ROLES, {empty: true, emptyLabel: 'No role'});
+
+  // Ticket creation - assignee (agents only)
   const assigneeSel = document.getElementById('tk-form-assignee');
   if (assigneeSel) {
     assigneeSel.innerHTML = '<option value="">Unassigned</option>';
-    Object.values(PERSONA_DISPLAY).forEach(name => {
+    agentNames.forEach(name => {
       assigneeSel.innerHTML += '<option value="' + escapeHtml(name) + '">' + escapeHtml(name) + '</option>';
     });
   }
 
-  // Populate author dropdown (ticket creation) — human roles + agents
+  // Ticket creation - author (human roles + agents)
   const authorSel = document.getElementById('tk-form-author');
   if (authorSel) {
-    authorSel.innerHTML = '';
-    HUMAN_ROLES.forEach(role => {
-      const selected = role === 'Scenario Director' ? ' selected' : '';
-      authorSel.innerHTML += '<option value="' + escapeHtml(role) + '"' + selected + '>' + escapeHtml(role) + '</option>';
-    });
-    Object.values(PERSONA_DISPLAY).forEach(name => {
+    populateRoleSelect(authorSel, HUMAN_ROLES, {default: 'Scenario Director'});
+    agentNames.forEach(name => {
       authorSel.innerHTML += '<option value="' + escapeHtml(name) + '">' + escapeHtml(name) + '</option>';
     });
   }
 
-  // Populate acting-as dropdown (ticket detail) — same as author
+  // Ticket detail - acting as (human roles + agents)
   const actingSel = document.getElementById('tk-acting-as');
   if (actingSel) {
-    actingSel.innerHTML = '';
-    HUMAN_ROLES.forEach(role => {
-      const selected = role === 'Scenario Director' ? ' selected' : '';
-      actingSel.innerHTML += '<option value="' + escapeHtml(role) + '"' + selected + '>' + escapeHtml(role) + '</option>';
-    });
-    Object.values(PERSONA_DISPLAY).forEach(name => {
+    populateRoleSelect(actingSel, HUMAN_ROLES, {default: 'Scenario Director'});
+    agentNames.forEach(name => {
       actingSel.innerHTML += '<option value="' + escapeHtml(name) + '">' + escapeHtml(name) + '</option>';
     });
+  }
+
+  // Hire modal - role (job titles)
+  const hireSel = document.getElementById('hire-role-preset');
+  if (hireSel) {
+    hireSel.innerHTML = '<option value="">Role...</option>';
+    JOB_TITLES.forEach(title => {
+      hireSel.innerHTML += '<option value="' + escapeHtml(title) + '">' + escapeHtml(title) + '</option>';
+    });
+    hireSel.innerHTML += '<option value="other">Other...</option>';
+  }
+
+  // Email compose role
+  const emailRoleSel = document.getElementById('email-compose-role');
+  if (emailRoleSel) {
+    populateRoleSelect(emailRoleSel, HUMAN_ROLES, {empty: true, emptyLabel: 'No role', default: 'Scenario Director'});
+    emailRoleSel.innerHTML += '<option value="custom">Custom...</option>';
   }
 }
 
@@ -2865,11 +2852,13 @@ document.getElementById('ticket-back-btn').addEventListener('click', () => {
 
 // -- Init --
 loadPersonas().then(() => {
-  loadChannels().then(() => {
-    updateChannelHeader();
-    updateSenderDropdown();
-    loadMessages();
-    connectSSE();
+  loadRoles().then(() => {
+    loadChannels().then(() => {
+      updateChannelHeader();
+      updateSenderDropdown();
+      loadMessages();
+      connectSSE();
+    });
   });
 });
 loadFolders();
@@ -3411,6 +3400,34 @@ async function loadUsage() {
   }
 }
 
+// -- Advanced tab --
+
+document.getElementById('clear-chat-btn').addEventListener('click', async () => {
+  if (!confirm('Clear all chat messages? This cannot be undone.')) return;
+  await fetch('/api/messages/clear', {method: 'POST'});
+  messagesByChannel = {};
+  seenIds.clear();
+  unreadByChannel = {};
+  renderSidebar();
+  renderMessages();
+  showNotice('Chat history cleared.');
+});
+
+document.getElementById('clear-all-btn').addEventListener('click', async () => {
+  if (!confirm('Clear EVERYTHING? Messages, docs, repos, tickets, events, emails, recaps — all gone. This cannot be undone.')) return;
+  if (!confirm('Are you REALLY sure? Save first if you need anything.')) return;
+  const scenario = (await (await fetch('/api/session/current')).json()).scenario;
+  if (scenario) {
+    await fetch('/api/session/new', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({scenario}),
+    });
+    await reloadAllState();
+    showNotice('Everything cleared. Fresh start.');
+  }
+});
+
 // -- Recap tab --
 
 const STYLE_LABELS = {
@@ -3847,7 +3864,9 @@ async function reloadAllState() {
   messagesByChannel = {};
   seenIds.clear();
   unreadByChannel = {};
+  currentChannel = '#general';
   await loadPersonas();
+  await loadRoles();
   await loadChannels();
   await loadMessages();
   renderSidebar();
@@ -4935,6 +4954,7 @@ def create_app() -> Flask:
                         "content": content,
                         "channel": channel,
                         "timestamp": time.time(),
+                        "is_event": True,
                     }
                     _messages.append(msg)
                 _persist_message(msg)
@@ -5132,6 +5152,28 @@ Write a compelling recap of this simulation session in the requested style. Keep
             print(f"[recap] Generated {style} recap ({len(result_holder[0]['response_text'])} chars)")
             return jsonify(recap_entry)
         return jsonify({"error": "Recap generation failed or timed out"}), 500
+
+    # -- Roles API --
+
+    DEFAULT_HUMAN_ROLES = [
+        "Scenario Director", "Consultant", "Customer", "New Hire",
+        "Board Member", "Intern", "Vendor", "Investor", "Auditor",
+        "Competitor", "Regulator", "The Press", "Hacker", "God",
+    ]
+
+    DEFAULT_JOB_TITLES = [
+        "PM", "Eng Manager", "Architect", "Senior Eng", "Junior Eng",
+        "Support Eng", "Sales Eng", "QA Lead", "DevOps", "Designer",
+        "Marketing", "Security Specialist", "CEO", "CFO", "CTO", "COO",
+        "Project Mgr", "Intern", "Contractor",
+    ]
+
+    @app.route("/api/roles", methods=["GET"])
+    def get_roles():
+        from lib.scenario_loader import SCENARIO_SETTINGS
+        human_roles = SCENARIO_SETTINGS.get("human_roles", DEFAULT_HUMAN_ROLES)
+        job_titles = SCENARIO_SETTINGS.get("job_titles", DEFAULT_JOB_TITLES)
+        return jsonify({"human_roles": human_roles, "job_titles": job_titles})
 
     # -- Email/Announcements API --
 
