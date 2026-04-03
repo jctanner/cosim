@@ -139,6 +139,9 @@ _gitlab_lock = threading.Lock()
 _tickets: dict[str, dict] = {}
 _tickets_lock = threading.Lock()
 
+# Recaps: list of generated recaps
+_recaps: list[dict] = []
+
 # Agent online/offline state: persona_key -> True (online) / False (offline)
 _agent_online: dict[str, bool] = {}
 _agent_firing: set[str] = set()  # agents being fired (waiting for session close)
@@ -439,9 +442,12 @@ def _reinitialize():
     _init_tickets()
     _init_agent_online()
     _load_chat_log()
-    # Clear emails (restored separately by session load if needed)
+    # Clear emails and recaps (restored separately by session load if needed)
     from lib.email import clear_inbox
     clear_inbox()
+    from lib.memos import clear_memos
+    clear_memos()
+    _recaps.clear()
 
 
 def _broadcast_tickets_event(action: str, data: dict):
@@ -588,6 +594,21 @@ WEB_UI = """<!DOCTYPE html>
   .usage-card-row .value { color: #e0e0e0; font-weight: 600; font-family: monospace; }
   .usage-card-row .value.cost { color: #2ecc71; }
 
+  /* -- Advanced tab -- */
+  #advanced-pane { padding: 0; }
+
+  /* -- Recap tab -- */
+  #recap-pane { padding: 0; flex-direction: row; }
+  #recap-sidebar { width: 200px; min-width: 200px; background: #121a30; border-right: 1px solid #0f3460;
+                   display: flex; flex-direction: column; overflow-y: auto; padding: 8px 0; }
+  #recap-main { flex: 1; overflow-y: auto; }
+  .recap-item { padding: 8px 14px; cursor: pointer; border-bottom: 1px solid #1a1a2e;
+                font-size: 12px; color: #888; transition: background 0.1s; }
+  .recap-item:hover { background: #1a1a3e; }
+  .recap-item.active { background: #1a1a3e; color: #e0e0e0; border-left: 3px solid #e94560; }
+  .recap-item-style { font-weight: 600; color: #4fc3f7; }
+  .recap-item-time { font-size: 10px; color: #555; margin-top: 2px; }
+
   /* -- Email tab -- */
   #email-pane { padding: 0; flex-direction: row; }
   #email-sidebar { width: 300px; min-width: 300px; background: #121a30; border-right: 1px solid #0f3460;
@@ -600,6 +621,23 @@ WEB_UI = """<!DOCTYPE html>
   .email-item-subject { font-size: 13px; color: #e0e0e0; margin-top: 2px; overflow: hidden;
                         text-overflow: ellipsis; white-space: nowrap; }
   .email-item-date { font-size: 10px; color: #555; margin-top: 2px; }
+
+  /* -- Memos tab -- */
+  #memos-pane { padding: 0; flex-direction: row; }
+  #memos-sidebar { width: 300px; min-width: 300px; background: #121a30; border-right: 1px solid #0f3460;
+                   display: flex; flex-direction: column; overflow: hidden; }
+  #memos-main { flex: 1; overflow-y: auto; padding: 20px; }
+  .memo-thread-item { padding: 10px 12px; border-bottom: 1px solid #1a1a2e; cursor: pointer; transition: background 0.1s; }
+  .memo-thread-item:hover { background: #1a1a3e; }
+  .memo-thread-item.active { background: #1a1a3e; border-left: 3px solid #2ecc71; }
+  .memo-thread-title { font-size: 13px; font-weight: 700; color: #e0e0e0; }
+  .memo-thread-preview { font-size: 11px; color: #666; margin-top: 4px; overflow: hidden;
+                         text-overflow: ellipsis; white-space: nowrap; }
+  .memo-thread-meta { font-size: 10px; color: #555; margin-top: 2px; }
+  .memo-post { background: #1a1a2e; border: 1px solid #333; border-radius: 8px; padding: 14px; margin-bottom: 10px; }
+  .memo-post-author { font-size: 12px; font-weight: 700; color: #4fc3f7; }
+  .memo-post-date { font-size: 10px; color: #555; margin-left: 8px; }
+  .memo-post-text { font-size: 13px; color: #e0e0e0; margin-top: 8px; line-height: 1.5; white-space: pre-wrap; }
 
   /* -- Events tab -- */
   #events-pane { padding: 0; flex-direction: row; }
@@ -989,10 +1027,13 @@ WEB_UI = """<!DOCTYPE html>
   <button class="header-tab" data-tab="docs">Docs</button>
   <button class="header-tab" data-tab="gitlab">GitLab</button>
   <button class="header-tab" data-tab="tickets">Tickets</button>
+  <button class="header-tab" data-tab="email">Email</button>
+  <button class="header-tab" data-tab="memos">Memos</button>
+  <button class="header-tab" data-tab="events">Events</button>
   <button class="header-tab" data-tab="npcs">NPCs</button>
   <button class="header-tab" data-tab="usage">Usage</button>
-  <button class="header-tab" data-tab="events">Events</button>
-  <button class="header-tab" data-tab="email">Email</button>
+  <button class="header-tab" data-tab="recap">Recap</button>
+  <button class="header-tab" data-tab="advanced">Advanced</button>
   <div id="session-controls">
     <span id="orch-status" title="Orchestrator status">
       <span id="orch-dot" class="status-dot disconnected"></span>
@@ -1030,30 +1071,12 @@ WEB_UI = """<!DOCTYPE html>
       <div id="messages-panel"></div>
       <div id="persona-bar">
         <input id="sender-name" type="text" placeholder="Your name..." value="" style="width:120px" />
-        <select id="sender-role">
-          <option value="">No role</option>
-          <option value="Scenario Director">Scenario Director</option>
-          <option value="Consultant">Consultant</option>
-          <option value="Customer">Customer</option>
-          <option value="New Hire">New Hire</option>
-          <option value="Board Member">Board Member</option>
-          <option value="Intern">Intern</option>
-          <option value="Vendor">Vendor</option>
-          <option value="Investor">Investor</option>
-          <option value="Auditor">Auditor</option>
-          <option value="Competitor">Competitor</option>
-          <option value="Regulator">Regulator</option>
-          <option value="The Press">The Press</option>
-          <option value="Hacker">Hacker</option>
-          <option value="God">God</option>
-          <option value="custom">Custom...</option>
-        </select>
+        <select id="sender-role"></select>
         <input id="sender-role-custom" type="text" placeholder="Custom role..." style="width:100px;display:none" />
       </div>
       <div id="input-area">
         <input id="msg-input" type="text" placeholder="Type a message..." autocomplete="off" />
         <button id="send-btn">Send</button>
-        <button id="clear-btn" title="Clear chat">Clear</button>
       </div>
     </div>
   </div>
@@ -1090,22 +1113,7 @@ WEB_UI = """<!DOCTYPE html>
             </select>
             <span style="font-size:11px;color:#555">Author:</span>
             <input id="doc-author-name" type="text" placeholder="Your name..." style="width:120px;background:#111;color:#e0e0e0;border:1px solid #333;padding:5px 8px;border-radius:6px;font-size:12px" />
-            <select id="doc-author-role" style="background:#111;color:#e0e0e0;border:1px solid #333;padding:5px 8px;border-radius:6px;font-size:12px">
-              <option value="">No role</option>
-              <option value="Consultant">Consultant</option>
-              <option value="Customer">Customer</option>
-              <option value="New Hire">New Hire</option>
-              <option value="Board Member">Board Member</option>
-              <option value="Intern">Intern</option>
-              <option value="Vendor">Vendor</option>
-              <option value="Investor">Investor</option>
-              <option value="Auditor">Auditor</option>
-              <option value="Competitor">Competitor</option>
-              <option value="Regulator">Regulator</option>
-              <option value="The Press">The Press</option>
-              <option value="Hacker">Hacker</option>
-              <option value="God">God</option>
-            </select>
+            <select id="doc-author-role" style="background:#111;color:#e0e0e0;border:1px solid #333;padding:5px 8px;border-radius:6px;font-size:12px"></select>
           </div>
           <textarea id="doc-editor-content" placeholder="Write your document content here (Markdown supported)..." rows="16"></textarea>
         </div>
@@ -1133,22 +1141,7 @@ WEB_UI = """<!DOCTYPE html>
           <div style="display:flex;gap:8px;align-items:center">
             <span style="font-size:11px;color:#555">Editing as:</span>
             <input id="doc-edit-author-name" type="text" placeholder="Your name..." style="width:120px;background:#111;color:#e0e0e0;border:1px solid #333;padding:5px 8px;border-radius:6px;font-size:12px" />
-            <select id="doc-edit-author-role" style="background:#111;color:#e0e0e0;border:1px solid #333;padding:5px 8px;border-radius:6px;font-size:12px">
-              <option value="">No role</option>
-              <option value="Consultant">Consultant</option>
-              <option value="Customer">Customer</option>
-              <option value="New Hire">New Hire</option>
-              <option value="Board Member">Board Member</option>
-              <option value="Intern">Intern</option>
-              <option value="Vendor">Vendor</option>
-              <option value="Investor">Investor</option>
-              <option value="Auditor">Auditor</option>
-              <option value="Competitor">Competitor</option>
-              <option value="Regulator">Regulator</option>
-              <option value="The Press">The Press</option>
-              <option value="Hacker">Hacker</option>
-              <option value="God">God</option>
-            </select>
+            <select id="doc-edit-author-role" style="background:#111;color:#e0e0e0;border:1px solid #333;padding:5px 8px;border-radius:6px;font-size:12px"></select>
             <div style="margin-left:auto;display:flex;gap:6px">
               <button id="doc-edit-cancel" class="session-btn" style="font-size:11px">Cancel</button>
               <button id="doc-edit-save" class="session-btn" style="font-size:11px;background:#e94560;border-color:#e94560;color:#fff">Save</button>
@@ -1315,6 +1308,43 @@ WEB_UI = """<!DOCTYPE html>
       </div>
     </div>
   </div>
+  <!-- Recap tab -->
+  <div id="recap-pane" class="tab-pane">
+    <div id="recap-sidebar">
+      <div class="sidebar-section">Generate Recap</div>
+      <div style="padding:8px 14px">
+        <select id="recap-style" style="width:100%;background:#1a1a2e;color:#e0e0e0;border:1px solid #333;padding:6px 10px;border-radius:6px;font-size:12px;margin-bottom:8px">
+          <option value="normal">Normal</option>
+          <option value="ye-olde-english">Ye Olde English</option>
+          <option value="tolkien">Tolkien Fantasy</option>
+          <option value="star-wars">Star Wars Crawl</option>
+          <option value="star-trek">Star Trek Captain's Log</option>
+          <option value="dr-who">Doctor Who</option>
+          <option value="morse-code">Morse Code / Telegraph</option>
+          <option value="dr-seuss">Dr. Seuss</option>
+          <option value="shakespeare">Shakespearean</option>
+          <option value="80s-rock-ballad">80s Rock Ballad</option>
+          <option value="90s-alternative">90s Alternative</option>
+          <option value="heavy-metal">Heavy Metal</option>
+          <option value="dystopian">Dystopian</option>
+          <option value="matrix">The Matrix</option>
+          <option value="pharaoh">Pharaoh's Decree</option>
+          <option value="tombstone">Tombstone Western</option>
+          <option value="survivor">Survivor Tribal Council</option>
+          <option value="hackernews">HackerNews Blog Post</option>
+        </select>
+        <button id="recap-generate-btn" class="session-btn" style="width:100%;background:#e94560;border-color:#e94560;color:#fff;font-size:12px">Generate Recap</button>
+      </div>
+      <hr class="sidebar-divider">
+      <div class="sidebar-section">Saved Recaps</div>
+      <div id="recap-list" style="flex:1;overflow-y:auto"></div>
+    </div>
+    <div id="recap-main">
+      <div id="recap-content" style="padding:20px;font-size:14px;color:#ccc;line-height:1.8;white-space:pre-wrap">
+        <div id="recap-empty" style="color:#666;text-align:center;padding:60px">Pick a style and generate a recap of this session.</div>
+      </div>
+    </div>
+  </div>
   <!-- Email tab -->
   <div id="email-pane" class="tab-pane">
     <div id="email-sidebar">
@@ -1337,18 +1367,7 @@ WEB_UI = """<!DOCTYPE html>
           <label>From</label>
           <div style="display:flex;gap:8px">
             <input id="email-compose-name" type="text" placeholder="Name" style="flex:1" autocomplete="off" />
-            <select id="email-compose-role" style="flex:1">
-              <option value="">No role</option>
-              <option value="Scenario Director">Scenario Director</option>
-              <option value="System">System</option>
-              <option value="CEO">CEO</option>
-              <option value="HR">HR</option>
-              <option value="Legal">Legal</option>
-              <option value="Compliance">Compliance</option>
-              <option value="Customer">Customer</option>
-              <option value="Board Member">Board Member</option>
-              <option value="custom">Custom...</option>
-            </select>
+            <select id="email-compose-role" style="flex:1"></select>
           </div>
           <input id="email-compose-role-custom" type="text" placeholder="Custom role..." style="display:none;width:100%;margin-top:6px" autocomplete="off" />
         </div>
@@ -1366,6 +1385,82 @@ WEB_UI = """<!DOCTYPE html>
         </div>
       </div>
       <div id="email-empty-state" style="color:#666;text-align:center;padding:60px;font-size:14px">Select an email to read, or compose a new one.</div>
+    </div>
+  </div>
+  <!-- Memos tab -->
+  <div id="memos-pane" class="tab-pane">
+    <div id="memos-sidebar">
+      <div style="padding:10px;border-bottom:1px solid #333">
+        <button id="create-memo-thread-btn" class="session-btn" style="width:100%;background:#2ecc71;border-color:#2ecc71;color:#fff;font-size:12px">New Discussion</button>
+      </div>
+      <div id="memo-threads-list" style="flex:1;overflow-y:auto"></div>
+      <div id="memo-threads-empty" style="color:#666;text-align:center;padding:20px;font-size:12px">No discussion threads yet.</div>
+    </div>
+    <div id="memos-main">
+      <div id="memo-thread-viewer" style="display:none">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:16px">
+          <div>
+            <h2 id="memo-thread-title" style="color:#e0e0e0;margin:0 0 4px 0;font-size:18px"></h2>
+            <div id="memo-thread-meta" style="font-size:11px;color:#555"></div>
+            <div id="memo-thread-description" style="font-size:13px;color:#888;margin-top:8px"></div>
+          </div>
+          <button id="memo-delete-btn" style="background:transparent;border:1px solid #e94560;color:#e94560;padding:4px 10px;border-radius:4px;font-size:11px;cursor:pointer" title="Delete thread">Delete</button>
+        </div>
+        <div id="memo-posts-list" style="margin:16px 0"></div>
+        <div style="border-top:1px solid #333;padding-top:12px">
+          <div style="display:flex;gap:8px;margin-bottom:8px">
+            <input id="memo-reply-name" type="text" placeholder="Name" style="flex:1;background:#111;color:#e0e0e0;border:1px solid #333;padding:6px 10px;border-radius:4px;font-size:12px" autocomplete="off" />
+            <select id="memo-reply-role" style="flex:1;background:#111;color:#e0e0e0;border:1px solid #333;padding:6px 10px;border-radius:4px;font-size:12px"></select>
+          </div>
+          <input id="memo-reply-role-custom" type="text" placeholder="Custom role..." style="display:none;width:100%;background:#111;color:#e0e0e0;border:1px solid #333;padding:6px 10px;border-radius:4px;font-size:12px;margin-bottom:8px;box-sizing:border-box" autocomplete="off" />
+          <textarea id="memo-reply-text" placeholder="Post a reply..." style="width:100%;min-height:80px;background:#111;color:#e0e0e0;border:1px solid #333;padding:10px;border-radius:6px;font-family:inherit;resize:vertical;font-size:13px;box-sizing:border-box"></textarea>
+          <div style="display:flex;gap:8px;margin-top:8px;justify-content:flex-end">
+            <button id="memo-reply-send" class="modal-btn-primary" style="background:#2ecc71;font-size:12px">Post Reply</button>
+          </div>
+        </div>
+      </div>
+      <div id="memo-empty-state" style="color:#666;text-align:center;padding:60px;font-size:14px">Select a discussion thread or create a new one.</div>
+    </div>
+  </div>
+  <!-- Advanced tab -->
+  <div id="advanced-pane" class="tab-pane">
+    <div id="advanced-main" style="flex:1;padding:20px;overflow-y:auto">
+      <div style="max-width:600px">
+        <h3 style="color:#e0e0e0;margin-bottom:16px">Advanced Actions</h3>
+        <div style="margin-bottom:24px">
+          <div style="font-size:12px;font-weight:600;color:#e94560;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">Danger Zone</div>
+          <p style="font-size:12px;color:#888;margin-bottom:12px">These actions are destructive and cannot be undone. Save your session first.</p>
+          <button id="clear-chat-btn" class="session-btn" style="border-color:#e94560;color:#e94560;margin-right:8px">Clear Chat History</button>
+          <button id="clear-all-btn" class="session-btn" style="background:#e94560;border-color:#e94560;color:#fff">Clear Everything</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Memo Create Thread Modal -->
+<div class="modal-overlay" id="memo-create-modal">
+  <div class="modal" style="max-width:500px">
+    <h2>New Discussion Thread</h2>
+    <div class="modal-field">
+      <label>Posted by</label>
+      <div style="display:flex;gap:8px">
+        <input id="memo-create-name" type="text" placeholder="Name" style="flex:1" autocomplete="off" />
+        <select id="memo-create-role" style="flex:1"></select>
+      </div>
+      <input id="memo-create-role-custom" type="text" placeholder="Custom role..." style="display:none;width:100%;margin-top:6px" autocomplete="off" />
+    </div>
+    <div class="modal-field">
+      <label>Title</label>
+      <input id="memo-create-title" type="text" placeholder="Discussion thread title..." autocomplete="off" />
+    </div>
+    <div class="modal-field">
+      <label>Description (optional)</label>
+      <textarea id="memo-create-description" style="width:100%;min-height:60px;background:#111;color:#e0e0e0;border:1px solid #333;padding:10px;border-radius:6px;font-family:inherit;resize:vertical;font-size:13px;box-sizing:border-box" placeholder="Brief description of the discussion topic..."></textarea>
+    </div>
+    <div class="modal-actions">
+      <button class="session-btn" id="memo-create-cancel">Cancel</button>
+      <button class="modal-btn-primary" id="memo-create-submit" style="background:#2ecc71">Create Thread</button>
     </div>
   </div>
 </div>
@@ -1511,28 +1606,7 @@ WEB_UI = """<!DOCTYPE html>
         <label>Name / Role / Key</label>
         <div style="display:flex;gap:8px;align-items:center">
           <input id="hire-name" type="text" placeholder="Name" style="flex:2" autocomplete="off" />
-          <select id="hire-role-preset" style="flex:2">
-            <option value="">Role...</option>
-            <option value="PM">PM</option>
-            <option value="Eng Manager">Eng Manager</option>
-            <option value="Architect">Architect</option>
-            <option value="Senior Eng">Senior Eng</option>
-            <option value="Junior Eng">Junior Eng</option>
-            <option value="Support Eng">Support Eng</option>
-            <option value="Sales Eng">Sales Eng</option>
-            <option value="QA Lead">QA Lead</option>
-            <option value="DevOps">DevOps</option>
-            <option value="Designer">Designer</option>
-            <option value="Marketing">Marketing</option>
-            <option value="CEO">CEO</option>
-            <option value="CFO">CFO</option>
-            <option value="CTO">CTO</option>
-            <option value="COO">COO</option>
-            <option value="Project Mgr">Project Mgr</option>
-            <option value="Intern">Intern</option>
-            <option value="Contractor">Contractor</option>
-            <option value="other">Other...</option>
-          </select>
+          <select id="hire-role-preset" style="flex:2"></select>
           <input id="hire-key" type="text" placeholder="key (auto)" style="flex:1" autocomplete="off" />
         </div>
         <input id="hire-role-custom" type="text" placeholder="Enter custom role..." style="display:none;width:100%;margin-top:6px" autocomplete="off" />
@@ -1720,7 +1794,7 @@ async function loadPersonas() {
   styleEl.textContent = css;
 
   // Update ticket dropdowns with current personas
-  populateTicketDropdowns();
+  populateAllRoleDropdowns();
 }
 
 // Known human persona CSS classes
@@ -1794,6 +1868,8 @@ document.querySelectorAll('.header-tab').forEach(tab => {
     if (target === 'npcs') loadNPCs();
     if (target === 'events') loadEventPool();
     if (target === 'email') loadEmails();
+    if (target === 'memos') loadMemoThreads();
+    if (target === 'recap') renderRecapList();
     if (target === 'usage') loadUsage();
   });
 });
@@ -2022,7 +2098,7 @@ async function clearChat() {
 }
 
 sendBtn.addEventListener('click', send);
-document.getElementById('clear-btn').addEventListener('click', clearChat);
+// clear-btn removed — now in Advanced tab
 input.addEventListener('keydown', (e) => { if (e.key === 'Enter') send(); });
 
 // -- Docs tab --
@@ -2576,50 +2652,113 @@ let tkCurrentViewId = null;
 // Built dynamically from PERSONA_DISPLAY after loadPersonas()
 let TK_ASSIGNEE_OPTIONS = [''];
 
-const HUMAN_ROLES = [
-  'Scenario Director', 'Consultant', 'Customer', 'New Hire', 'Board Member',
-  'Intern', 'Vendor', 'Investor', 'Auditor', 'Competitor', 'Regulator',
-  'The Press', 'Hacker', 'God',
-];
+let HUMAN_ROLES = [];
+let JOB_TITLES = [];
 
-function populateTicketDropdowns() {
-  // Build assignee list from current personas
+async function loadRoles() {
+  try {
+    const resp = await fetch('/api/roles');
+    const data = await resp.json();
+    HUMAN_ROLES = data.human_roles || [];
+    JOB_TITLES = data.job_titles || [];
+  } catch(e) {
+    HUMAN_ROLES = ['Scenario Director', 'Consultant', 'Customer'];
+    JOB_TITLES = ['PM', 'Senior Eng'];
+  }
+  populateAllRoleDropdowns();
+}
+
+function populateRoleSelect(sel, roles, opts) {
+  if (!sel) return;
+  const defaultVal = opts?.default || '';
+  const includeEmpty = opts?.empty;
+  const emptyLabel = opts?.emptyLabel || '';
+  sel.innerHTML = '';
+  if (includeEmpty) {
+    sel.innerHTML += '<option value="">' + escapeHtml(emptyLabel) + '</option>';
+  }
+  roles.forEach(role => {
+    const selected = role === defaultVal ? ' selected' : '';
+    sel.innerHTML += '<option value="' + escapeHtml(role) + '"' + selected + '>' + escapeHtml(role) + '</option>';
+  });
+}
+
+function populateAllRoleDropdowns() {
+  const agentNames = Object.values(PERSONA_DISPLAY);
+
+  // Build assignee options
   TK_ASSIGNEE_OPTIONS = [''];
-  Object.values(PERSONA_DISPLAY).forEach(name => TK_ASSIGNEE_OPTIONS.push(name));
+  agentNames.forEach(name => TK_ASSIGNEE_OPTIONS.push(name));
 
-  // Populate assignee dropdown (ticket creation)
+  // Chat persona bar role
+  const senderRoleSel = document.getElementById('sender-role');
+  if (senderRoleSel) {
+    const customOpt = '<option value="custom">Custom...</option>';
+    populateRoleSelect(senderRoleSel, HUMAN_ROLES, {empty: true, emptyLabel: 'No role'});
+    senderRoleSel.innerHTML += customOpt;
+  }
+
+  // Doc creation author role
+  populateRoleSelect(document.getElementById('doc-author-role'), HUMAN_ROLES, {empty: true, emptyLabel: 'No role'});
+  // Doc edit author role
+  populateRoleSelect(document.getElementById('doc-edit-author-role'), HUMAN_ROLES, {empty: true, emptyLabel: 'No role'});
+
+  // Ticket creation - assignee (agents only)
   const assigneeSel = document.getElementById('tk-form-assignee');
   if (assigneeSel) {
     assigneeSel.innerHTML = '<option value="">Unassigned</option>';
-    Object.values(PERSONA_DISPLAY).forEach(name => {
+    agentNames.forEach(name => {
       assigneeSel.innerHTML += '<option value="' + escapeHtml(name) + '">' + escapeHtml(name) + '</option>';
     });
   }
 
-  // Populate author dropdown (ticket creation) — human roles + agents
+  // Ticket creation - author (human roles + agents)
   const authorSel = document.getElementById('tk-form-author');
   if (authorSel) {
-    authorSel.innerHTML = '';
-    HUMAN_ROLES.forEach(role => {
-      const selected = role === 'Scenario Director' ? ' selected' : '';
-      authorSel.innerHTML += '<option value="' + escapeHtml(role) + '"' + selected + '>' + escapeHtml(role) + '</option>';
-    });
-    Object.values(PERSONA_DISPLAY).forEach(name => {
+    populateRoleSelect(authorSel, HUMAN_ROLES, {default: 'Scenario Director'});
+    agentNames.forEach(name => {
       authorSel.innerHTML += '<option value="' + escapeHtml(name) + '">' + escapeHtml(name) + '</option>';
     });
   }
 
-  // Populate acting-as dropdown (ticket detail) — same as author
+  // Ticket detail - acting as (human roles + agents)
   const actingSel = document.getElementById('tk-acting-as');
   if (actingSel) {
-    actingSel.innerHTML = '';
-    HUMAN_ROLES.forEach(role => {
-      const selected = role === 'Scenario Director' ? ' selected' : '';
-      actingSel.innerHTML += '<option value="' + escapeHtml(role) + '"' + selected + '>' + escapeHtml(role) + '</option>';
-    });
-    Object.values(PERSONA_DISPLAY).forEach(name => {
+    populateRoleSelect(actingSel, HUMAN_ROLES, {default: 'Scenario Director'});
+    agentNames.forEach(name => {
       actingSel.innerHTML += '<option value="' + escapeHtml(name) + '">' + escapeHtml(name) + '</option>';
     });
+  }
+
+  // Hire modal - role (job titles)
+  const hireSel = document.getElementById('hire-role-preset');
+  if (hireSel) {
+    hireSel.innerHTML = '<option value="">Role...</option>';
+    JOB_TITLES.forEach(title => {
+      hireSel.innerHTML += '<option value="' + escapeHtml(title) + '">' + escapeHtml(title) + '</option>';
+    });
+    hireSel.innerHTML += '<option value="other">Other...</option>';
+  }
+
+  // Email compose role
+  const emailRoleSel = document.getElementById('email-compose-role');
+  if (emailRoleSel) {
+    populateRoleSelect(emailRoleSel, HUMAN_ROLES, {empty: true, emptyLabel: 'No role', default: 'Scenario Director'});
+    emailRoleSel.innerHTML += '<option value="custom">Custom...</option>';
+  }
+
+  // Memo reply role
+  const memoRoleSel = document.getElementById('memo-reply-role');
+  if (memoRoleSel) {
+    populateRoleSelect(memoRoleSel, HUMAN_ROLES, {empty: true, emptyLabel: 'No role', default: 'Scenario Director'});
+    memoRoleSel.innerHTML += '<option value="custom">Custom...</option>';
+  }
+
+  // Memo create role
+  const memoCreateRoleSel = document.getElementById('memo-create-role');
+  if (memoCreateRoleSel) {
+    populateRoleSelect(memoCreateRoleSel, HUMAN_ROLES, {empty: true, emptyLabel: 'No role', default: 'Scenario Director'});
+    memoCreateRoleSel.innerHTML += '<option value="custom">Custom...</option>';
   }
 }
 
@@ -2810,11 +2949,13 @@ document.getElementById('ticket-back-btn').addEventListener('click', () => {
 
 // -- Init --
 loadPersonas().then(() => {
-  loadChannels().then(() => {
-    updateChannelHeader();
-    updateSenderDropdown();
-    loadMessages();
-    connectSSE();
+  loadRoles().then(() => {
+    loadChannels().then(() => {
+      updateChannelHeader();
+      updateSenderDropdown();
+      loadMessages();
+      connectSSE();
+    });
   });
 });
 loadFolders();
@@ -3356,6 +3497,93 @@ async function loadUsage() {
   }
 }
 
+// -- Advanced tab --
+
+document.getElementById('clear-chat-btn').addEventListener('click', async () => {
+  if (!confirm('Clear all chat messages? This cannot be undone.')) return;
+  await fetch('/api/messages/clear', {method: 'POST'});
+  messagesByChannel = {};
+  seenIds.clear();
+  unreadByChannel = {};
+  renderSidebar();
+  renderMessages();
+  showNotice('Chat history cleared.');
+});
+
+document.getElementById('clear-all-btn').addEventListener('click', async () => {
+  if (!confirm('Clear EVERYTHING? Messages, docs, repos, tickets, events, emails, recaps — all gone. This cannot be undone.')) return;
+  if (!confirm('Are you REALLY sure? Save first if you need anything.')) return;
+  const scenario = (await (await fetch('/api/session/current')).json()).scenario;
+  if (scenario) {
+    await fetch('/api/session/new', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({scenario}),
+    });
+    await reloadAllState();
+    showNotice('Everything cleared. Fresh start.');
+  }
+});
+
+// -- Recap tab --
+
+const STYLE_LABELS = {
+  normal: 'Normal', 'ye-olde-english': 'Ye Olde English', tolkien: 'Tolkien Fantasy',
+  'star-wars': 'Star Wars', 'star-trek': 'Star Trek', 'dr-who': 'Doctor Who',
+  'morse-code': 'Telegraph', 'dr-seuss': 'Dr. Seuss', shakespeare: 'Shakespeare',
+  '80s-rock-ballad': '80s Rock Ballad', '90s-alternative': '90s Alternative',
+  'heavy-metal': 'Heavy Metal', dystopian: 'Dystopian', matrix: 'The Matrix',
+  pharaoh: "Pharaoh's Decree", tombstone: 'Tombstone Western',
+  survivor: 'Survivor Tribal Council', hackernews: 'HackerNews Blog',
+};
+
+document.getElementById('recap-generate-btn').addEventListener('click', async () => {
+  const style = document.getElementById('recap-style').value;
+  const content = document.getElementById('recap-content');
+  const btn = document.getElementById('recap-generate-btn');
+  content.innerHTML = '<div style="color:#888;text-align:center;padding:60px"><div class="spinner" style="margin:0 auto 12px"></div>Generating ' + (STYLE_LABELS[style] || style) + ' recap...</div>';
+  btn.disabled = true;
+  btn.textContent = 'Generating...';
+  try {
+    const resp = await fetch('/api/recap', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({style}),
+    });
+    const data = await resp.json();
+    if (data.recap) {
+      content.textContent = data.recap;
+      renderRecapList();
+    } else {
+      content.textContent = 'Error: ' + (data.error || 'unknown');
+    }
+  } catch(e) {
+    content.textContent = 'Error: ' + e.message;
+  }
+  btn.disabled = false;
+  btn.textContent = 'Generate Recap';
+});
+
+async function renderRecapList() {
+  const list = document.getElementById('recap-list');
+  list.innerHTML = '';
+  const resp = await fetch('/api/recaps');
+  const recaps = await resp.json();
+  [...recaps].reverse().forEach((r) => {
+    const item = document.createElement('div');
+    item.className = 'recap-item';
+    const ts = new Date(r.timestamp * 1000);
+    item.innerHTML = '<div class="recap-item-style">' + escapeHtml(STYLE_LABELS[r.style] || r.style) + '</div>' +
+      '<div class="recap-item-time">' + ts.toLocaleString() + '</div>';
+    item.addEventListener('click', () => {
+      document.querySelectorAll('.recap-item').forEach(el => el.classList.remove('active'));
+      item.classList.add('active');
+      document.getElementById('recap-content').textContent = r.recap;
+    });
+    list.appendChild(item);
+  });
+}
+
 // -- Email tab --
 
 async function loadEmails() {
@@ -3434,6 +3662,163 @@ document.getElementById('email-compose-send').addEventListener('click', async ()
     showNotice('Email sent: ' + subject);
   }
 });
+
+// -- Memos tab --
+
+let _currentMemoThread = null;
+
+async function loadMemoThreads() {
+  const list = document.getElementById('memo-threads-list');
+  const empty = document.getElementById('memo-threads-empty');
+  const resp = await fetch('/api/memos/threads');
+  const threads = await resp.json();
+  list.innerHTML = '';
+  empty.style.display = threads.length ? 'none' : 'block';
+  threads.forEach(t => {
+    const item = document.createElement('div');
+    item.className = 'memo-thread-item' + (t.id === _currentMemoThread ? ' active' : '');
+    item.dataset.id = t.id;
+    const preview = t.last_post_text || t.description || 'No posts yet';
+    const postInfo = t.post_count + ' post' + (t.post_count !== 1 ? 's' : '');
+    const age = _memoTimeAgo(t.last_post_at);
+    item.innerHTML =
+      '<div class="memo-thread-title">' + escapeHtml(t.title) + '</div>' +
+      '<div class="memo-thread-preview">' + escapeHtml(preview.substring(0, 60)) + '</div>' +
+      '<div class="memo-thread-meta">' + escapeHtml(t.creator) + ' &middot; ' + postInfo + ' &middot; ' + age + '</div>';
+    item.addEventListener('click', () => viewMemoThread(t.id));
+    list.appendChild(item);
+  });
+}
+
+function _memoTimeAgo(ts) {
+  const seconds = Math.floor(Date.now() / 1000 - ts);
+  if (seconds < 60) return 'just now';
+  if (seconds < 3600) return Math.floor(seconds / 60) + 'm ago';
+  if (seconds < 86400) return Math.floor(seconds / 3600) + 'h ago';
+  return Math.floor(seconds / 86400) + 'd ago';
+}
+
+async function viewMemoThread(threadId) {
+  _currentMemoThread = threadId;
+  document.querySelectorAll('.memo-thread-item').forEach(el =>
+    el.classList.toggle('active', el.dataset.id === threadId));
+
+  const resp = await fetch('/api/memos/threads/' + threadId);
+  if (!resp.ok) { showNotice('Thread not found'); return; }
+  const thread = await resp.json();
+
+  document.getElementById('memo-thread-title').textContent = thread.title;
+  document.getElementById('memo-thread-meta').textContent =
+    'Started by ' + thread.creator + ' &middot; ' + _memoTimeAgo(thread.created_at);
+  document.getElementById('memo-thread-meta').innerHTML =
+    'Started by ' + escapeHtml(thread.creator) + ' &middot; ' + _memoTimeAgo(thread.created_at);
+  const descEl = document.getElementById('memo-thread-description');
+  descEl.textContent = thread.description || '';
+  descEl.style.display = thread.description ? '' : 'none';
+
+  const postsList = document.getElementById('memo-posts-list');
+  const posts = thread.posts || [];
+  postsList.innerHTML = '';
+  posts.forEach(p => {
+    const div = document.createElement('div');
+    div.className = 'memo-post';
+    const ts = new Date(p.timestamp * 1000).toLocaleString();
+    div.innerHTML =
+      '<div style="display:flex;align-items:baseline">' +
+        '<span class="memo-post-author">' + escapeHtml(p.author) + '</span>' +
+        '<span class="memo-post-date">' + ts + '</span>' +
+      '</div>' +
+      '<div class="memo-post-text">' + escapeHtml(p.text) + '</div>';
+    postsList.appendChild(div);
+  });
+
+  document.getElementById('memo-thread-viewer').style.display = '';
+  document.getElementById('memo-empty-state').style.display = 'none';
+  document.getElementById('memo-reply-text').value = '';
+}
+
+function _getMemoSender(nameId, roleId, customId) {
+  const name = document.getElementById(nameId).value.trim() || 'Anonymous';
+  let role = document.getElementById(roleId).value;
+  if (role === 'custom') role = document.getElementById(customId).value.trim();
+  return role ? name + ' (' + role + ')' : name;
+}
+
+document.getElementById('memo-reply-role').addEventListener('change', (e) => {
+  document.getElementById('memo-reply-role-custom').style.display = e.target.value === 'custom' ? '' : 'none';
+});
+
+document.getElementById('memo-create-role').addEventListener('change', (e) => {
+  document.getElementById('memo-create-role-custom').style.display = e.target.value === 'custom' ? '' : 'none';
+});
+
+document.getElementById('create-memo-thread-btn').addEventListener('click', () => {
+  const modal = document.getElementById('memo-create-modal');
+  document.getElementById('memo-create-title').value = '';
+  document.getElementById('memo-create-description').value = '';
+  document.getElementById('memo-create-name').value = '';
+  document.getElementById('memo-create-role').value = 'Scenario Director';
+  document.getElementById('memo-create-role-custom').style.display = 'none';
+  document.getElementById('memo-create-role-custom').value = '';
+  openModal('memo-create-modal');
+  document.getElementById('memo-create-title').focus();
+});
+
+document.getElementById('memo-create-cancel').addEventListener('click', () => {
+  closeModal('memo-create-modal');
+});
+
+document.getElementById('memo-create-submit').addEventListener('click', async () => {
+  const title = document.getElementById('memo-create-title').value.trim();
+  if (!title) { document.getElementById('memo-create-title').focus(); return; }
+  const description = document.getElementById('memo-create-description').value.trim();
+  const creator = _getMemoSender('memo-create-name', 'memo-create-role', 'memo-create-role-custom');
+  const resp = await fetch('/api/memos/threads', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({title, creator, description})
+  });
+  if (resp.ok) {
+    const thread = await resp.json();
+    closeModal('memo-create-modal');
+    loadMemoThreads();
+    viewMemoThread(thread.id);
+    showNotice('Thread created: ' + title);
+  }
+});
+
+document.getElementById('memo-reply-send').addEventListener('click', async () => {
+  if (!_currentMemoThread) return;
+  const textarea = document.getElementById('memo-reply-text');
+  const text = textarea.value.trim();
+  if (!text) return;
+  const author = _getMemoSender('memo-reply-name', 'memo-reply-role', 'memo-reply-role-custom');
+  const resp = await fetch('/api/memos/threads/' + _currentMemoThread + '/posts', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({text, author})
+  });
+  if (resp.ok) {
+    textarea.value = '';
+    viewMemoThread(_currentMemoThread);
+    loadMemoThreads();
+  }
+});
+
+document.getElementById('memo-delete-btn').addEventListener('click', async () => {
+  if (!_currentMemoThread) return;
+  if (!confirm('Delete this discussion thread and all its posts?')) return;
+  const resp = await fetch('/api/memos/threads/' + _currentMemoThread, {method: 'DELETE'});
+  if (resp.ok) {
+    _currentMemoThread = null;
+    document.getElementById('memo-thread-viewer').style.display = 'none';
+    document.getElementById('memo-empty-state').style.display = '';
+    loadMemoThreads();
+    showNotice('Thread deleted');
+  }
+});
+
+// Load memos when tab is selected — handled by tab click handler below
 
 // -- Events tab --
 
@@ -3733,7 +4118,9 @@ async function reloadAllState() {
   messagesByChannel = {};
   seenIds.clear();
   unreadByChannel = {};
+  currentChannel = '#general';
   await loadPersonas();
+  await loadRoles();
   await loadChannels();
   await loadMessages();
   renderSidebar();
@@ -4821,6 +5208,7 @@ def create_app() -> Flask:
                         "content": content,
                         "channel": channel,
                         "timestamp": time.time(),
+                        "is_event": True,
                     }
                     _messages.append(msg)
                 _persist_message(msg)
@@ -4900,6 +5288,26 @@ def create_app() -> Flask:
                         _messages.append(msg)
                     _persist_message(msg)
                     _broadcast(msg)
+            elif action_type == "memo":
+                from lib.memos import create_thread, post_memo
+                title = action.get("title", action.get("thread_title", ""))
+                creator = action.get("sender", action.get("creator", "System"))
+                description = action.get("description", "")
+                text = action.get("text", action.get("content", ""))
+                thread_id = action.get("thread_id", "")
+                if thread_id and text:
+                    # Post to existing thread
+                    try:
+                        post = post_memo(thread_id, text, creator)
+                        results.append({"type": "memo", "action": "posted", "thread_id": thread_id, "post_id": post["id"]})
+                    except ValueError:
+                        results.append({"type": "memo", "action": "post_failed", "error": "thread not found"})
+                elif title:
+                    # Create new thread, optionally with an initial post
+                    thread = create_thread(title, creator, description)
+                    if text:
+                        post_memo(thread["id"], text, creator)
+                    results.append({"type": "memo", "action": "created", "thread_id": thread["id"], "title": title})
         # Log the event with results
         data["results"] = results
         entry = fire_event(data)
@@ -4909,6 +5317,137 @@ def create_app() -> Flask:
     def get_events_log():
         from lib.events import get_event_log
         return jsonify(get_event_log())
+
+    # -- Recap API --
+
+    @app.route("/api/recaps", methods=["GET"])
+    def list_recaps():
+        return jsonify(_recaps)
+
+    @app.route("/api/recap", methods=["POST"])
+    def generate_recap():
+        import asyncio
+        import threading
+        from lib.agent_runner import run_agent_for_response
+        from pathlib import Path
+
+        data = request.get_json(force=True)
+        style = data.get("style", "normal")
+        print(f"[recap] Generating recap in style: {style}")
+
+        STYLE_PROMPTS = {
+            "normal": "Write a clear, professional summary of what happened.",
+            "ye-olde-english": "Write the recap in Ye Olde English, with 'thee', 'thou', 'hath', 'forsooth', and medieval phrasing throughout.",
+            "tolkien": "Write the recap as if it were a passage from The Lord of the Rings — epic, sweeping, with references to quests, fellowships, and dark forces.",
+            "star-wars": "Write the recap as a Star Wars opening crawl. Start with 'A long time ago, in a codebase far, far away...' and use space opera drama.",
+            "star-trek": "Write the recap as a Captain's Log entry. 'Captain's Log, Stardate...' Include references to the crew, away missions, and the prime directive.",
+            "dr-who": "Write the recap as if The Doctor is explaining what happened to a confused companion. Wibbly-wobbly, timey-wimey.",
+            "morse-code": "Write the recap normally but add STOP after each sentence, like a telegraph message. Keep it terse.",
+            "dr-seuss": "Write the recap in the style of Dr. Seuss — rhyming couplets, whimsical language, 'I do not like green bugs in prod, I do not like them, oh my cod.'",
+            "shakespeare": "Write the recap as a Shakespearean monologue. Iambic pentameter where possible. Include asides and dramatic declarations.",
+            "80s-rock-ballad": "Write the recap as lyrics to an 80s power ballad. Include a key change, a guitar solo section [GUITAR SOLO], and dramatic crescendo.",
+            "90s-alternative": "Write the recap in the style of 90s alternative rock lyrics — angsty, introspective, ironic detachment about the state of the codebase.",
+            "heavy-metal": "Write the recap as HEAVY METAL lyrics. ALL CAPS for emphasis. References to DESTRUCTION, CHAOS, DEPLOYING TO PRODUCTION, and THE ETERNAL VOID OF TECHNICAL DEBT.",
+            "dystopian": "Write the recap as a dystopian narrative. The company is a megacorp. The codebase is a surveillance system. Compliance training is re-education. The open office is a panopticon. Hope is a deprecated feature.",
+            "matrix": "Write the recap as if Morpheus is explaining what happened to Neo. 'What if I told you...' References to the Matrix, agents (the bad kind), red pills, blue pills, the desert of the real. The codebase IS the Matrix.",
+            "pharaoh": "Write the recap as a royal decree from a Pharaoh. 'So let it be written, so let it be done.' Grand proclamations about what was commanded and what was achieved. References to building monuments (features), the Nile (the data pipeline), golden treasures (shipped code), and scribes (developers). End each major point with 'So let it be written, so let it be done.'",
+            "tombstone": "Write the recap in the style of a Western, Tombstone specifically. Narrate like Doc Holliday and Wyatt Earp are reviewing the sprint. 'I'm your huckleberry.' References to showdowns (code reviews), outlaws (bugs), the OK Corral (production), and riding into the sunset. Dry wit, whiskey references, and dramatic standoffs over merge conflicts.",
+            "survivor": "Write the recap as a Survivor tribal council. Jeff Probst is hosting. The team members are contestants. Alliances formed over architecture decisions. Blindsides during code review. 'The tribe has spoken' when a feature gets cut. Confessional-style asides where team members reveal their true feelings. Someone plays a hidden immunity idol (a revert commit). End with 'Grab your torch' and snuff it.",
+            "hackernews": "Write the recap as a Hacker News-worthy blog post. Technical but accessible. Start with a hook that makes people click. Include architecture decisions, tradeoffs considered, and lessons learned. Sprinkle in references to scaling, first principles thinking, and 'we considered X but chose Y because Z.' End with a thoughtful takeaway. The tone should make HN commenters say 'this is actually good' instead of their usual complaints.",
+        }
+
+        style_instruction = STYLE_PROMPTS.get(style, STYLE_PROMPTS["normal"])
+
+        # Collect all state
+        with _lock:
+            msgs = list(_messages)
+
+        msg_summary = []
+        for m in msgs[-100:]:
+            msg_summary.append(f"[{m.get('channel', '#general')}] {m['sender']}: {m['content'][:200]}")
+
+        from lib.events import get_event_log
+        event_log = get_event_log()
+        event_summary = []
+        for e in event_log:
+            event_summary.append(f"[{e.get('severity', 'medium')}] {e.get('name', 'Event')} - {len(e.get('actions', []))} actions")
+
+        nl = chr(10)
+        prompt = f"""You are a recap writer. Summarize what happened in this simulation session.
+
+## Style
+{style_instruction}
+
+## Chat Messages (most recent {len(msg_summary)})
+{nl.join(msg_summary) if msg_summary else "No messages yet."}
+
+## Events Fired ({len(event_log)})
+{nl.join(event_summary) if event_summary else "No events fired."}
+
+## Documents Created
+{len(_docs_index)} documents
+
+## Tickets
+{len(_tickets)} tickets
+
+## Stats
+- Total messages: {len(msgs)}
+- Channels active: {len(set(m.get('channel', '#general') for m in msgs))}
+
+Write a compelling recap of this simulation session in the requested style. Keep it to no more than 15 paragraphs. Make it entertaining and capture the key moments, decisions, and drama."""
+
+        result_holder = [None]
+        error_holder = [None]
+
+        async def _run():
+            try:
+                result = await run_agent_for_response(
+                    name="Recap Writer",
+                    prompt=prompt,
+                    log_dir=Path(__file__).parent.parent / "var" / "logs",
+                    model="sonnet",
+                )
+                result_holder[0] = result
+            except Exception as e:
+                error_holder[0] = str(e)
+
+        def _thread_target():
+            asyncio.run(_run())
+
+        t = threading.Thread(target=_thread_target)
+        t.start()
+        t.join(timeout=120)
+
+        if error_holder[0]:
+            return jsonify({"error": error_holder[0]}), 500
+        if result_holder[0] and result_holder[0].get("success"):
+            recap_entry = {"recap": result_holder[0]["response_text"], "style": style, "timestamp": time.time()}
+            _recaps.append(recap_entry)
+            print(f"[recap] Generated {style} recap ({len(result_holder[0]['response_text'])} chars)")
+            return jsonify(recap_entry)
+        return jsonify({"error": "Recap generation failed or timed out"}), 500
+
+    # -- Roles API --
+
+    DEFAULT_HUMAN_ROLES = [
+        "Scenario Director", "Consultant", "Customer", "New Hire",
+        "Board Member", "Intern", "Vendor", "Investor", "Auditor",
+        "Competitor", "Regulator", "The Press", "Hacker", "God",
+    ]
+
+    DEFAULT_JOB_TITLES = [
+        "PM", "Eng Manager", "Architect", "Senior Eng", "Junior Eng",
+        "Support Eng", "Sales Eng", "QA Lead", "DevOps", "Designer",
+        "Marketing", "Security Specialist", "CEO", "CFO", "CTO", "COO",
+        "Project Mgr", "Intern", "Contractor",
+    ]
+
+    @app.route("/api/roles", methods=["GET"])
+    def get_roles():
+        from lib.scenario_loader import SCENARIO_SETTINGS
+        human_roles = SCENARIO_SETTINGS.get("human_roles", DEFAULT_HUMAN_ROLES)
+        job_titles = SCENARIO_SETTINGS.get("job_titles", DEFAULT_JOB_TITLES)
+        return jsonify({"human_roles": human_roles, "job_titles": job_titles})
 
     # -- Email/Announcements API --
 
@@ -4948,6 +5487,61 @@ def create_app() -> Flask:
         if not entry:
             return jsonify({"error": "not found"}), 404
         return jsonify(entry)
+
+    # -- Memo-list API --
+
+    @app.route("/api/memos/threads", methods=["GET"])
+    def list_memo_threads():
+        from lib.memos import get_threads
+        include_posts = request.args.get("include_posts", "").lower() in ("1", "true")
+        return jsonify(get_threads(include_recent_posts=include_posts))
+
+    @app.route("/api/memos/threads", methods=["POST"])
+    def create_memo_thread_endpoint():
+        from lib.memos import create_thread
+        data = request.get_json(force=True)
+        title = data.get("title", "").strip()
+        if not title:
+            return jsonify({"error": "title required"}), 400
+        creator = data.get("creator", "System")
+        description = data.get("description", "").strip()
+        entry = create_thread(title, creator, description)
+        return jsonify(entry), 201
+
+    @app.route("/api/memos/threads/<thread_id>", methods=["GET"])
+    def get_memo_thread_detail(thread_id):
+        from lib.memos import get_thread, get_posts
+        thread = get_thread(thread_id)
+        if not thread:
+            return jsonify({"error": "not found"}), 404
+        thread["posts"] = get_posts(thread_id)
+        return jsonify(thread)
+
+    @app.route("/api/memos/threads/<thread_id>/posts", methods=["GET"])
+    def list_memo_posts(thread_id):
+        from lib.memos import get_posts
+        return jsonify(get_posts(thread_id))
+
+    @app.route("/api/memos/threads/<thread_id>/posts", methods=["POST"])
+    def post_memo_endpoint(thread_id):
+        from lib.memos import post_memo
+        data = request.get_json(force=True)
+        text = data.get("text", "").strip()
+        if not text:
+            return jsonify({"error": "text required"}), 400
+        author = data.get("author", "System")
+        try:
+            entry = post_memo(thread_id, text, author)
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 404
+        return jsonify(entry), 201
+
+    @app.route("/api/memos/threads/<thread_id>", methods=["DELETE"])
+    def delete_memo_thread_endpoint(thread_id):
+        from lib.memos import delete_thread
+        if delete_thread(thread_id):
+            return jsonify({"ok": True})
+        return jsonify({"error": "not found"}), 404
 
     # -- Character templates API --
 

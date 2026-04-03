@@ -122,3 +122,58 @@ events:
         sender: "HR (System)"
         subject: "Remote Work Policy & Equipment Stipend — You're Set Up for Success"
         body: "Team,\n\nQuick reminder: we're a remote-first company. Work from wherever you do your best work.\n\nTo make sure everyone has what they need, we're offering an annual equipment stipend of $2,500. This covers:\n\n- Monitors, keyboards, mice, docks\n- Webcams and microphones\n- Headsets (noise-cancelling encouraged)\n- Ring lights, boom arms, and streaming/rigging gear\n- Standing desks or ergonomic chairs\n- Anything else that makes your setup better\n\nNo approval needed — just submit receipts through Expensify. If you need something above the stipend, talk to your manager.\n\nWe want you comfortable, productive, and looking good on camera (or not — cameras optional, always).\n\n— HR"
+
+  - name: "RFC: Orchestrator Rearchitecture"
+    severity: "medium"
+    actions:
+      - type: "memo"
+        title: "RFC: Subprocess-Per-Agent Orchestrator Rearchitecture"
+        sender: "T4NN3R (Maintainer)"
+        description: "Discussion thread for the orchestrator rearchitecture proposal"
+        text: "The current orchestrator is getting fragile. Every _close_session() poisons subsequent awaits via anyio cancel scope leaks. Hot add/remove works but requires try/except everywhere plus auto-restart.\n\nProposal: move to subprocess-per-agent. Each agent runs in its own process with its own event loop. Hire spawns a process, fire kills one. No cross-contamination.\n\nAlternatives:\n1. One-shot sessions (higher latency)\n2. SDK fix upstream (waiting on Anthropic)\n3. Clean lifecycle separation (bandaid)\n\nThoughts?"
+      - type: "message"
+        channel: "#dev"
+        sender: "T4NN3R (Maintainer)"
+        content: "Posted an RFC on the memo-list about the orchestrator rearchitecture. Would love your thoughts — the cancel scope leaks are getting worse with every new feature."
+
+  - name: "RFC 2324: HTCPCP (Coffee Pot Protocol)"
+    severity: "low"
+    actions:
+      - type: "memo"
+        title: "RFC 2324: Hyper Text Coffee Pot Control Protocol"
+        sender: "1.z3r0 (Collaborator)"
+        description: "Proposal to implement HTCPCP for agent caffeine management"
+        text: "Team, I've been reading through the IETF archives and I think we're missing a critical protocol.\n\nRFC 2324 defines HTCPCP — the Hyper Text Coffee Pot Control Protocol. Key features:\n- BREW method for initiating coffee\n- New HTTP error code: 418 I'm a teapot\n- Content-Type: application/coffee-pot-command\n- milk-type header (whole, skim, cream, half-and-half)\n\nI'm proposing we add HTCPCP support to CoSim. Our agents are working long hours and deserve programmatic access to caffeine. The 418 status code alone is worth the implementation.\n\nConsiderations:\n- Do we need separate endpoints for decaf?\n- Should the CEO have priority brew access?\n- What's our SLA on pot refills?\n\nThis is absolutely a serious proposal and I will not be taking questions about my priorities at this time."
+      - type: "message"
+        channel: "#dev"
+        sender: "1.z3r0 (Collaborator)"
+        content: "Posted an RFC on the memo-list about HTCPCP support. Before you say anything — RFC 2324 is a real IETF RFC. The 418 status code is canon. This is serious engineering."
+
+  - name: "RFC 1149: IP over Avian Carriers"
+    severity: "low"
+    actions:
+      - type: "memo"
+        title: "RFC 1149: IP over Avian Carriers — A Latency Discussion"
+        sender: "1.z3r0 (Collaborator)"
+        description: "Exploring carrier pigeon networking as a fallback transport layer"
+        text: "So I've been thinking about our orchestrator reliability issues and I may have found the solution.\n\nRFC 1149 specifies a Standard for the Transmission of IP Datagrams on Avian Carriers. Yes, carrier pigeons. It was actually tested in 2001 in Bergen, Norway — they achieved a 55% packet loss rate with a latency of 3000-6000 seconds.\n\nNow hear me out:\n- Our current orchestrator crashes every time we close a session\n- Pigeons don't have anyio cancel scope leaks\n- The 55% packet loss is honestly comparable to our heartbeat reliability after a hot-remove\n- MTU is limited to what you can strap to a pigeon's leg, but our JSON responses are pretty small if the agents would stop writing dissertations\n\nRFC 6214 later updated this for IPv6. We should future-proof.\n\nAlso worth noting RFC 2549 added QoS — so we could give the CEO's pigeon priority routing.\n\nI'm only half joking."
+      - type: "message"
+        channel: "#general"
+        sender: "1.z3r0 (Collaborator)"
+        content: "New memo-list thread: I've been researching alternative transport protocols for the orchestrator. RFC 1149 has some interesting properties. 55% packet loss but zero cancel scope leaks."
+
+  - name: "RFC 8771: HTTP Status Code 451"
+    severity: "low"
+    actions:
+      - type: "memo"
+        title: "Proposal: Agent Content Moderation via HTTP 451"
+        sender: "1.z3r0 (Collaborator)"
+        description: "Using HTTP 451 (Unavailable For Legal Reasons) when agents try to post raw JSON"
+        text: "OK so we have a recurring problem where agents dump raw JSON into chat instead of actual human-readable messages.\n\nI propose we return HTTP 451 — Unavailable For Legal Reasons — when an agent tries to post a message that's clearly just a JSON blob. Named after Fahrenheit 451 (the temperature at which paper burns), which feels appropriate for messages that should never see the light of day.\n\nImplementation:\n- Regex check on message content\n- If it looks like raw JSON response, return 451\n- Include a Retry-After header set to 'after you learn to parse your own output'\n- Log it to the agent's thoughts as a shame entry\n\nRelated: RFC 7168 extended HTCPCP to support tea. I mention this only because I feel like we're not taking the coffee pot protocol seriously enough."
+      - type: "message"
+        channel: "#dev"
+        sender: "1.z3r0 (Collaborator)"
+        content: "New memo-list thread about using HTTP 451 for raw JSON detection. Also a reminder that we still haven't implemented HTCPCP."
+
+settings:
+  enable_memos: true
