@@ -1323,6 +1323,19 @@ async def run_orchestrator(args) -> None:
             personas = get_active_personas(getattr(args, "personas", None))
             print(f"\nStarting session: {scenario_name}")
             print(f"  Personas: {', '.join(p['display_name'] for p in personas)}")
+
+            # Initialize background task executor BEFORE agents start
+            # so build_initial_prompt() can include task command docs
+            from lib.scenario_loader import get_settings
+            from lib.task_executor import init_executor
+            settings = get_settings()
+            if settings.get("enable_background_tasks", False):
+                init_executor(client, model, LOG_DIR / "tasks",
+                              max_concurrent=settings.get("max_concurrent_tasks", 3),
+                              task_timeout=settings.get("task_timeout", 600),
+                              allowed_tools=settings.get("task_allowed_tools"))
+                print(f"Background tasks enabled (max={settings.get('max_concurrent_tasks', 3)})")
+
             try:
                 pool, pending = await _start_agents(client, personas, model, scenario_name)
             except (Exception, BaseException):
@@ -1345,16 +1358,6 @@ async def run_orchestrator(args) -> None:
                 pool = None
                 next_cmd = pending  # re-queue the interrupting command
                 continue
-            # Initialize background task executor if enabled
-            from lib.scenario_loader import get_settings
-            from lib.task_executor import init_executor
-            settings = get_settings()
-            if settings.get("enable_background_tasks", False):
-                init_executor(client, model, LOG_DIR / "tasks",
-                              max_concurrent=settings.get("max_concurrent_tasks", 3),
-                              task_timeout=settings.get("task_timeout", 600),
-                              allowed_tools=settings.get("task_allowed_tools"))
-                print(f"Background tasks enabled (max={settings.get('max_concurrent_tasks', 3)})")
 
             existing = client.get_messages()
             last_seen_id = existing[-1]["id"] if existing else 0
@@ -1393,6 +1396,19 @@ async def run_orchestrator(args) -> None:
 
                 # Reload personas and start new agents
                 personas = get_active_personas(getattr(args, "personas", None))
+
+                # Initialize background task executor BEFORE agents start
+                # so build_initial_prompt() can include task command docs
+                from lib.scenario_loader import get_settings
+                from lib.task_executor import init_executor
+                settings = get_settings()
+                if settings.get("enable_background_tasks", False):
+                    init_executor(client, model, LOG_DIR / "tasks",
+                                  max_concurrent=settings.get("max_concurrent_tasks", 3),
+                                  task_timeout=settings.get("task_timeout", 600),
+                                  allowed_tools=settings.get("task_allowed_tools"))
+                    print(f"Background tasks enabled (max={settings.get('max_concurrent_tasks', 3)})")
+
                 try:
                     pool, pending = await _start_agents(client, personas, model, scenario_name)
                 except (Exception, BaseException):
@@ -1422,16 +1438,6 @@ async def run_orchestrator(args) -> None:
                     except Exception:
                         pass
                     continue
-
-                # Initialize background task executor if enabled
-                from lib.scenario_loader import get_settings
-                from lib.task_executor import init_executor
-                settings = get_settings()
-                if settings.get("enable_background_tasks", False):
-                    init_executor(client, model, LOG_DIR / "tasks",
-                                  max_concurrent=settings.get("max_concurrent_tasks", 3),
-                                  task_timeout=settings.get("task_timeout", 600))
-                    print(f"Background tasks enabled (max={settings.get('max_concurrent_tasks', 3)})")
 
                 # Reset message tracking
                 existing = client.get_messages()
