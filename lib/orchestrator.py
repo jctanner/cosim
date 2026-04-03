@@ -601,8 +601,8 @@ def _parse_multi_channel_response(text: str, default_channel: str) -> dict[str, 
 
 
 def _post_system(client: ChatClient, text: str) -> None:
-    """Post a system message to #system (operator-visible only)."""
-    client.post_message("System", text, channel="#system")
+    """Post a system message to #general so agents can see command results."""
+    client.post_message("System", text, channel="#general")
 
 
 def _log_doc_results(client: ChatClient, persona: dict, results: list[dict]) -> None:
