@@ -241,3 +241,15 @@ events:
         channel: "#sales-external"
         sender: "BigCorp (Customer)"
         content: "Hi, we're evaluating solutions for our 10,000-seat enterprise deployment. Can you walk us through your platform capabilities, pricing model, and SLA guarantees? We have a decision deadline of 30 days."
+
+settings:
+  enable_background_tasks: true
+  max_concurrent_tasks: 3
+  task_timeout: 600
+  task_allowed_tools:
+    - Bash
+    - Read
+    - Write
+    - Edit
+    - WebFetch
+    - WebSearch

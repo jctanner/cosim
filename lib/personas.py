@@ -1,6 +1,7 @@
 """Persona registry and prompt builder for the agent organization."""
 
 import re
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -209,6 +210,51 @@ def build_tickets_index(tickets: list[dict], persona_display_name: str) -> str:
     return "\n".join(lines)
 
 
+def _build_task_command_docs() -> str:
+    """Return task command documentation if background tasks are enabled."""
+    from lib.task_executor import get_executor
+    executor = get_executor()
+    if executor is None:
+        return ""
+    tools_str = ", ".join(executor._allowed_tools)
+    return f"""
+
+**Background task commands** (`type: "task"`):
+
+| action | params |
+|--------|--------|
+| (none) | `goal` (what to accomplish), `context` (optional), `report_to` (channel, default: trigger channel) |
+
+Background tasks spawn a worker with full tool access ({tools_str}). The worker completes autonomously and posts results to the specified channel. Use for implementation work, infrastructure setup, testing, research, or any task requiring tool access. Max 1 task per response. Do not spawn a task if one with the same goal is already running.
+"""
+
+
+def _build_task_command_example() -> str:
+    """Return task command example if background tasks are enabled."""
+    from lib.task_executor import get_executor
+    if get_executor() is None:
+        return ""
+    return """,
+    {{"type": "task", "params": {{"goal": "Implement rate limiting middleware", "context": "See rate limiting spec doc", "report_to": "#engineering"}}}}"""
+
+
+def build_active_tasks_section(persona_key: str) -> str:
+    """Build a section showing the agent's active background tasks."""
+    from lib.task_executor import get_executor
+    executor = get_executor()
+    if not executor:
+        return ""
+    tasks = executor.get_active_tasks(agent_key=persona_key)
+    if not tasks:
+        return ""
+    lines = ["## Your Active Background Tasks", "",
+             "Do NOT spawn duplicate tasks for work already listed here.", ""]
+    for t in tasks:
+        elapsed = time.time() - t["started_at"] if t["started_at"] else 0
+        lines.append(f"- **{t['task_id']}** [{t['status']}] {t['goal'][:100]} ({int(elapsed)}s)")
+    return "\n".join(lines)
+
+
 def build_initial_prompt(persona_key: str, channels: dict[str, dict] | None = None) -> str:
     """Build the one-time session initialization prompt for a persona.
 
@@ -397,7 +443,7 @@ Valid statuses: open, in_progress, resolved, closed. Valid priorities: low, medi
 | (none) | `to` (persona key from team listing, e.g. "engmgr"), `text` |
 
 DMs are private one-shot messages delivered at the recipient's next turn. Max 2 per response. Use the persona key shown in parentheses in the team listing above (e.g. `engmgr`, `pm`, `ceo`). Use for pre-alignment, escalation, or private coordination. Do not use DMs for anything that should be part of the public record.
-
+{_build_task_command_docs()}
 ### Complete Example
 
 ```json
@@ -411,7 +457,7 @@ DMs are private one-shot messages delivered at the recipient's next turn. Max 2 
     {{"type": "doc", "action": "CREATE", "params": {{"folder": "engineering", "title": "Rate Limiting Spec", "content": "## Rate Limiting\\n\\nEndpoints will enforce per-key limits..."}}}},
     {{"type": "tickets", "action": "CREATE", "params": {{"title": "Implement API rate limiting", "assignee": "Alex (Senior Eng)", "priority": "high", "description": "Implement rate limiting per the spec document."}}}},
     {{"type": "channel", "action": "JOIN", "params": {{"channel": "#devops"}}}},
-    {{"type": "dm", "params": {{"to": "engmgr", "text": "Heads up — the rate limiting estimate is aggressive. May need to push back if sales promises a timeline."}}}}
+    {{"type": "dm", "params": {{"to": "engmgr", "text": "Heads up — the rate limiting estimate is aggressive. May need to push back if sales promises a timeline."}}}}{_build_task_command_example()}
   ]
 }}
 ```
@@ -595,6 +641,9 @@ Reply with a single JSON object. Format: {{"action": "respond", "messages": [...
         parts.append(repos_section)
     if tickets_section:
         parts.append(tickets_section)
+    tasks_section = build_active_tasks_section(persona_key)
+    if tasks_section:
+        parts.append(tasks_section)
     parts.append(membership_section)
     # Add verbosity instruction
     verbosity_instruction = VERBOSITY_INSTRUCTIONS.get(verbosity, "")

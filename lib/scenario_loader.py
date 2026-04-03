@@ -6,6 +6,12 @@ from pathlib import Path
 
 SCENARIOS_DIR = Path(__file__).parent.parent / "scenarios"
 
+SCENARIO_SETTINGS: dict = {}
+
+
+def get_settings() -> dict:
+    return dict(SCENARIO_SETTINGS)
+
 
 def load_scenario(scenario_name: str) -> None:
     """Load a scenario by name, populating module-level config dicts.
@@ -75,11 +81,16 @@ def load_scenario(scenario_name: str) -> None:
     events_mod.SCENARIO_EVENTS.extend(config.get("events", []))
     events_mod.init_event_pool()
 
+    # --- Populate SCENARIO_SETTINGS ---
+    SCENARIO_SETTINGS.clear()
+    SCENARIO_SETTINGS.update(config.get("settings", {}))
+
     print(f"Scenario loaded: {config.get('name', scenario_name)}")
     print(f"  Characters: {len(personas_mod.PERSONAS)}")
     print(f"  Channels: {len(personas_mod.DEFAULT_CHANNELS)}")
     print(f"  Events: {len(events_mod.SCENARIO_EVENTS)}")
     print(f"  Folders: {len(docs_mod.DEFAULT_FOLDERS)}")
+    print(f"  Settings: {len(SCENARIO_SETTINGS)}")
 
 
 def list_scenarios() -> list[dict]:
