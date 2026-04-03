@@ -63,9 +63,22 @@ def load_scenario(scenario_name: str) -> None:
     for folder_name, access_list in config["folder_access"].items():
         docs_mod.DEFAULT_FOLDER_ACCESS[folder_name] = set(access_list)
 
+    # --- Populate gitlab.DEFAULT_REPO_ACCESS (optional) ---
+    import lib.gitlab as gitlab_mod
+    gitlab_mod.DEFAULT_REPO_ACCESS.clear()
+    for repo_name, access_list in config.get("repo_access", {}).items():
+        gitlab_mod.DEFAULT_REPO_ACCESS[repo_name] = set(access_list)
+
+    # --- Populate events.SCENARIO_EVENTS (optional) ---
+    import lib.events as events_mod
+    events_mod.SCENARIO_EVENTS.clear()
+    events_mod.SCENARIO_EVENTS.extend(config.get("events", []))
+    events_mod.init_event_pool()
+
     print(f"Scenario loaded: {config.get('name', scenario_name)}")
     print(f"  Characters: {len(personas_mod.PERSONAS)}")
     print(f"  Channels: {len(personas_mod.DEFAULT_CHANNELS)}")
+    print(f"  Events: {len(events_mod.SCENARIO_EVENTS)}")
     print(f"  Folders: {len(docs_mod.DEFAULT_FOLDERS)}")
 
 

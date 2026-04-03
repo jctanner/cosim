@@ -454,6 +454,7 @@ WEB_UI = """<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>CoSim</title>
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/js-yaml@4/dist/js-yaml.min.js"></script>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -571,6 +572,36 @@ WEB_UI = """<!DOCTYPE html>
   .usage-card-row .label { color: #666; }
   .usage-card-row .value { color: #e0e0e0; font-weight: 600; font-family: monospace; }
   .usage-card-row .value.cost { color: #2ecc71; }
+
+  /* -- Events tab -- */
+  #events-pane { padding: 0; flex-direction: row; }
+  .events-sub-tab.active { background: #e94560; border-color: #e94560; color: #fff; }
+  .event-card { background: #1a1a2e; border: 1px solid #333; border-radius: 10px;
+                padding: 14px 16px; flex: 1 1 250px; max-width: 350px; min-width: 220px;
+                transition: border-color 0.15s; }
+  .event-card:hover { border-color: #555; }
+  .event-card-header { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+  .event-card-name { font-size: 14px; font-weight: 700; color: #e0e0e0; }
+  .event-card-severity { font-size: 10px; font-weight: 600; padding: 2px 6px; border-radius: 4px;
+                         text-transform: uppercase; letter-spacing: 0.5px; }
+  .event-sev-critical { background: #e94560; color: #fff; }
+  .event-sev-high { background: #e67e22; color: #fff; }
+  .event-sev-medium { background: #f39c12; color: #111; }
+  .event-sev-low { background: #2ecc71; color: #111; }
+  .event-card-actions { font-size: 11px; color: #888; margin-bottom: 8px; }
+  .event-card-preview { font-size: 11px; color: #555; margin-bottom: 10px; overflow: hidden;
+                        text-overflow: ellipsis; white-space: nowrap; }
+  .event-card-btns { display: flex; gap: 4px; }
+  .event-card-btns button { flex: 1; }
+  .event-trigger-btn { background: #e94560; color: #fff; border: none; padding: 5px; border-radius: 6px;
+                       cursor: pointer; font-size: 11px; font-weight: 600; }
+  .event-trigger-btn:hover { background: #c0392b; }
+  .event-log-row { background: #1a1a2e; border: 1px solid #333; border-radius: 8px;
+                   padding: 10px 14px; margin-bottom: 8px; display: flex; align-items: center; gap: 12px; }
+  .event-log-row:hover { border-color: #555; }
+  .event-log-time { font-size: 11px; color: #555; min-width: 80px; }
+  .event-log-name { font-size: 13px; font-weight: 600; color: #e0e0e0; flex: 1; }
+  .event-log-actions { font-size: 10px; color: #666; }
 
   /* -- Modal overlay -- */
   .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7);
@@ -932,6 +963,7 @@ WEB_UI = """<!DOCTYPE html>
   <button class="header-tab" data-tab="tickets">Tickets</button>
   <button class="header-tab" data-tab="npcs">NPCs</button>
   <button class="header-tab" data-tab="usage">Usage</button>
+  <button class="header-tab" data-tab="events">Events</button>
   <div id="session-controls">
     <span id="orch-status" title="Orchestrator status">
       <span id="orch-dot" class="status-dot disconnected"></span>
@@ -1222,6 +1254,26 @@ WEB_UI = """<!DOCTYPE html>
       </div>
     </div>
   </div>
+  <!-- Events tab -->
+  <div id="events-pane" class="tab-pane">
+    <div style="flex:1;display:flex;flex-direction:column;overflow:hidden">
+      <div style="padding:10px 20px;background:#16213e;border-bottom:1px solid #0f3460;display:flex;align-items:center;gap:8px">
+        <button class="session-btn events-sub-tab active" data-events-tab="pool">Event Pool</button>
+        <button class="session-btn events-sub-tab" data-events-tab="log">Event Log</button>
+        <div style="margin-left:auto">
+          <button id="events-add-btn" class="session-btn" style="background:#2ecc71;border-color:#2ecc71;color:#fff;font-size:11px">+ Add Event</button>
+        </div>
+      </div>
+      <div id="events-pool-view" style="flex:1;overflow-y:auto;padding:20px">
+        <div id="events-pool-grid" style="display:flex;flex-wrap:wrap;gap:12px"></div>
+        <div id="events-pool-empty" style="color:#666;text-align:center;padding:40px">No events configured for this scenario.</div>
+      </div>
+      <div id="events-log-view" style="flex:1;overflow-y:auto;padding:20px;display:none">
+        <div id="events-log-list"></div>
+        <div id="events-log-empty" style="color:#666;text-align:center;padding:40px">No events fired yet.</div>
+      </div>
+    </div>
+  </div>
   <!-- Usage tab -->
   <div id="usage-pane" class="tab-pane">
     <div id="usage-sidebar">
@@ -1446,6 +1498,34 @@ WEB_UI = """<!DOCTYPE html>
   </div>
 </div>
 
+<!-- Event Edit Modal -->
+<div class="modal-overlay" id="event-edit-modal">
+  <div class="modal" style="width:80vw;max-width:900px;height:80vh;display:flex;flex-direction:column">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+      <h2 id="event-edit-title" style="margin:0">Edit Event</h2>
+      <div style="display:flex;gap:6px">
+        <button class="session-btn" id="event-edit-history-btn" style="font-size:11px">History</button>
+        <button class="modal-btn-cancel" id="event-edit-close">Cancel</button>
+      </div>
+    </div>
+    <div style="flex:1;min-height:0;display:flex;gap:0;border-radius:8px;overflow:hidden;border:1px solid #333">
+      <div style="flex:1;display:flex;flex-direction:column">
+        <textarea id="event-edit-yaml" style="flex:1;background:#111;color:#e0e0e0;border:none;padding:16px;font-size:13px;font-family:monospace;line-height:1.5;resize:none;outline:none" placeholder="name: My Event..."></textarea>
+      </div>
+      <div id="event-edit-history" style="display:none;width:200px;min-width:200px;border-left:1px solid #333;background:#121a30;overflow-y:auto">
+        <div style="padding:8px 12px;font-size:11px;font-weight:700;color:#555;text-transform:uppercase;letter-spacing:0.5px">Version History</div>
+        <div id="event-edit-history-list"></div>
+      </div>
+    </div>
+    <div style="display:flex;align-items:center;gap:8px;margin-top:12px">
+      <button class="session-btn" id="event-edit-delete" style="color:#e94560;font-size:11px">Delete Event</button>
+      <div style="flex:1"></div>
+      <button class="modal-btn-cancel" onclick="closeModal('event-edit-modal')">Cancel</button>
+      <button class="modal-btn-primary" id="event-edit-save">Save</button>
+    </div>
+  </div>
+</div>
+
 <!-- Loading Overlay -->
 <div id="loading-overlay">
   <div class="spinner"></div>
@@ -1630,6 +1710,7 @@ document.querySelectorAll('.header-tab').forEach(tab => {
     if (target === 'gitlab') loadRepos();
     if (target === 'tickets') loadTickets();
     if (target === 'npcs') loadNPCs();
+    if (target === 'events') loadEventPool();
     if (target === 'usage') loadUsage();
   });
 });
@@ -3192,6 +3273,235 @@ async function loadUsage() {
   }
 }
 
+// -- Events tab --
+
+let _eventsSubTab = 'pool';
+
+document.querySelectorAll('.events-sub-tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    _eventsSubTab = tab.dataset.eventsTab;
+    document.querySelectorAll('.events-sub-tab').forEach(t => t.classList.toggle('active', t === tab));
+    document.getElementById('events-pool-view').style.display = _eventsSubTab === 'pool' ? '' : 'none';
+    document.getElementById('events-log-view').style.display = _eventsSubTab === 'log' ? '' : 'none';
+    if (_eventsSubTab === 'pool') loadEventPool();
+    if (_eventsSubTab === 'log') loadEventLog();
+  });
+});
+
+async function loadEventPool() {
+  const grid = document.getElementById('events-pool-grid');
+  const empty = document.getElementById('events-pool-empty');
+  const resp = await fetch('/api/events/pool');
+  const pool = await resp.json();
+  grid.innerHTML = '';
+  empty.style.display = pool.length ? 'none' : 'block';
+  pool.forEach((evt, i) => {
+    const actions = evt.actions || [];
+    const actionTypes = [...new Set(actions.map(a => a.type))].join(', ');
+    const preview = actions.find(a => a.type === 'message');
+    const card = document.createElement('div');
+    card.className = 'event-card';
+    card.style.cursor = 'pointer';
+    card.innerHTML =
+      '<div class="event-card-header">' +
+        '<span class="event-card-severity event-sev-' + (evt.severity || 'medium') + '">' + escapeHtml(evt.severity || 'medium') + '</span>' +
+        '<span class="event-card-name">' + escapeHtml(evt.name || 'Unnamed') + '</span>' +
+      '</div>' +
+      '<div class="event-card-actions">' + escapeHtml(actions.length + ' action(s): ' + actionTypes) + '</div>' +
+      (preview ? '<div class="event-card-preview">' + escapeHtml(preview.content || '').substring(0, 80) + '</div>' : '');
+    const trigBtn = document.createElement('button');
+    trigBtn.className = 'event-trigger-btn';
+    trigBtn.style.cssText = 'width:100%;margin-top:8px';
+    trigBtn.textContent = 'Trigger';
+    trigBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      triggerEvent(evt);
+    });
+    card.appendChild(trigBtn);
+    card.addEventListener('click', (e) => {
+      if (e.target === trigBtn) return;
+      openEventEditor(i, evt);
+    });
+    grid.appendChild(card);
+  });
+}
+
+async function triggerEvent(evt) {
+  const resp = await fetch('/api/events/trigger', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(evt),
+  });
+  if (resp.ok) {
+    showNotice('Event triggered: ' + (evt.name || 'Custom Event') + ' (' + (evt.actions || []).length + ' actions fired)');
+  }
+  loadEventLog();
+}
+
+async function loadEventLog() {
+  const list = document.getElementById('events-log-list');
+  const empty = document.getElementById('events-log-empty');
+  const resp = await fetch('/api/events/log');
+  const log = await resp.json();
+  list.innerHTML = '';
+  empty.style.display = log.length ? 'none' : 'block';
+  [...log].reverse().forEach(entry => {
+    const row = document.createElement('div');
+    row.className = 'event-log-row';
+    row.style.cssText = 'cursor:pointer;flex-wrap:wrap';
+    const ts = new Date(entry.timestamp * 1000).toLocaleString();
+    const actionCount = (entry.actions || []).length;
+    row.innerHTML =
+      '<span class="event-log-time">' + ts + '</span>' +
+      '<span class="event-card-severity event-sev-' + (entry.severity || 'medium') + '">' + escapeHtml(entry.severity || 'medium') + '</span>' +
+      '<span class="event-log-name">' + escapeHtml(entry.name || 'Custom') + '</span>' +
+      '<span class="event-log-actions">' + actionCount + ' action(s)</span>';
+    const retrigger = document.createElement('button');
+    retrigger.className = 'session-btn';
+    retrigger.style.cssText = 'font-size:10px';
+    retrigger.textContent = 'Re-trigger';
+    retrigger.addEventListener('click', (e) => {
+      e.stopPropagation();
+      triggerEvent(entry);
+    });
+    row.appendChild(retrigger);
+    // Expandable YAML detail
+    const detail = document.createElement('div');
+    detail.style.cssText = 'display:none;width:100%;margin-top:8px;background:#111;border-radius:6px;padding:10px;font-family:monospace;font-size:12px;color:#ccc;white-space:pre-wrap;max-height:300px;overflow-y:auto';
+    const clean = Object.assign({}, entry);
+    delete clean._history;
+    detail.textContent = eventToYaml(clean);
+    row.appendChild(detail);
+    row.addEventListener('click', () => {
+      detail.style.display = detail.style.display === 'none' ? '' : 'none';
+    });
+    list.appendChild(row);
+  });
+}
+
+let _eventEditIndex = -1; // -1 = new event
+let _eventEditHistory = []; // version history for current event
+
+function eventToYaml(evt) {
+  if (typeof jsyaml !== 'undefined') return jsyaml.dump(evt, {lineWidth: -1});
+  return JSON.stringify(evt, null, 2);
+}
+
+function yamlToEvent(text) {
+  if (typeof jsyaml !== 'undefined') return jsyaml.load(text);
+  return JSON.parse(text);
+}
+
+function openEventEditor(index, evt) {
+  _eventEditIndex = index;
+  _eventEditHistory = evt._history || [];
+  const clean = Object.assign({}, evt);
+  delete clean._history;
+  document.getElementById('event-edit-title').textContent = index >= 0 ? 'Edit Event' : 'New Event';
+  document.getElementById('event-edit-yaml').value = eventToYaml(clean);
+  document.getElementById('event-edit-delete').style.display = index >= 0 ? '' : 'none';
+  document.getElementById('event-edit-history').style.display = 'none';
+  renderEventHistory();
+  openModal('event-edit-modal');
+}
+
+function renderEventHistory() {
+  const list = document.getElementById('event-edit-history-list');
+  list.innerHTML = '';
+  if (!_eventEditHistory.length) {
+    list.innerHTML = '<div style="padding:8px 12px;font-size:11px;color:#888">No previous versions</div>';
+    return;
+  }
+  [..._eventEditHistory].reverse().forEach((v, i) => {
+    const item = document.createElement('div');
+    item.className = 'thought-item';
+    const ts = new Date(v.saved_at * 1000);
+    item.innerHTML = '<div class="thought-item-time">v' + (_eventEditHistory.length - i) + ' - ' + ts.toLocaleString() + '</div>';
+    item.addEventListener('click', () => {
+      document.querySelectorAll('#event-edit-history-list .thought-item').forEach(el => el.classList.remove('active'));
+      item.classList.add('active');
+      document.getElementById('event-edit-yaml').value = eventToYaml(v.event);
+    });
+    list.appendChild(item);
+
+    const restoreBtn = document.createElement('button');
+    restoreBtn.className = 'session-btn';
+    restoreBtn.style.cssText = 'font-size:10px;padding:2px 8px;margin-top:4px;width:100%';
+    restoreBtn.textContent = 'Restore';
+    restoreBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      document.getElementById('event-edit-yaml').value = eventToYaml(v.event);
+    });
+    item.appendChild(restoreBtn);
+    list.appendChild(item);
+  });
+}
+
+document.getElementById('event-edit-history-btn').addEventListener('click', () => {
+  const panel = document.getElementById('event-edit-history');
+  panel.style.display = panel.style.display === 'none' ? '' : 'none';
+});
+
+document.getElementById('event-edit-close').addEventListener('click', () => closeModal('event-edit-modal'));
+
+document.getElementById('event-edit-save').addEventListener('click', async () => {
+  let evt;
+  try {
+    evt = yamlToEvent(document.getElementById('event-edit-yaml').value);
+  } catch(e) {
+    showNotice('Invalid YAML: ' + e.message);
+    return;
+  }
+  // Save version history
+  if (_eventEditIndex >= 0) {
+    const oldResp = await fetch('/api/events/pool');
+    const oldPool = await oldResp.json();
+    const oldEvt = oldPool[_eventEditIndex];
+    if (oldEvt) {
+      if (!evt._history) evt._history = oldEvt._history || [];
+      const clean = Object.assign({}, oldEvt);
+      delete clean._history;
+      evt._history.push({event: clean, saved_at: Date.now() / 1000});
+    }
+    await fetch('/api/events/pool/' + _eventEditIndex, {
+      method: 'PUT',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(evt),
+    });
+  } else {
+    evt._history = [];
+    await fetch('/api/events/pool', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(evt),
+    });
+  }
+  closeModal('event-edit-modal');
+  loadEventPool();
+});
+
+document.getElementById('event-edit-delete').addEventListener('click', async () => {
+  if (_eventEditIndex < 0) return;
+  if (!confirm('Delete this event?')) return;
+  await fetch('/api/events/pool/' + _eventEditIndex, {method: 'DELETE'});
+  closeModal('event-edit-modal');
+  loadEventPool();
+});
+
+document.getElementById('events-add-btn').addEventListener('click', () => {
+  const template = {
+    name: 'New Event',
+    severity: 'medium',
+    actions: [
+      {type: 'message', channel: '#general', sender: 'System', content: 'Something happened!'}
+    ]
+  };
+  openEventEditor(-1, template);
+});
+
+// Add Events tab loading to tab switch
+// (handled in the existing tab switch handler below)
+
 // -- Orchestrator status polling --
 
 const orchDot = document.getElementById('orch-dot');
@@ -3271,6 +3581,8 @@ async function reloadAllState() {
   loadRepos();
   loadTickets();
   loadNPCs();
+  if (_eventsSubTab === 'pool') loadEventPool();
+  else loadEventLog();
 }
 
 // -- New Session Modal --
@@ -4300,6 +4612,121 @@ def create_app() -> Flask:
         _persist_message(sys_msg)
         _broadcast(sys_msg)
         return jsonify({"key": key, "online": new_state, "display_name": display_name})
+
+    # -- Events API --
+
+    @app.route("/api/events/pool", methods=["GET"])
+    def get_event_pool():
+        from lib.events import get_event_pool as _get_pool
+        return jsonify(_get_pool())
+
+    @app.route("/api/events/pool", methods=["POST"])
+    def add_event_to_pool():
+        from lib.events import add_event
+        data = request.get_json(force=True)
+        idx = add_event(data)
+        return jsonify({"ok": True, "index": idx}), 201
+
+    @app.route("/api/events/pool/<int:index>", methods=["PUT"])
+    def update_event_in_pool(index):
+        from lib.events import update_event
+        data = request.get_json(force=True)
+        update_event(index, data)
+        return jsonify({"ok": True})
+
+    @app.route("/api/events/pool/<int:index>", methods=["DELETE"])
+    def delete_event_from_pool(index):
+        from lib.events import delete_event
+        delete_event(index)
+        return jsonify({"ok": True})
+
+    @app.route("/api/events/trigger", methods=["POST"])
+    def trigger_event():
+        from lib.events import fire_event
+        data = request.get_json(force=True)
+        results = []
+        # Execute each action
+        for action in data.get("actions", []):
+            action_type = action.get("type", "")
+            if action_type == "message":
+                sender = action.get("sender", "System")
+                content = action.get("content", "")
+                channel = action.get("channel", "#general")
+                with _lock:
+                    msg = {
+                        "id": len(_messages) + 1,
+                        "sender": sender,
+                        "content": content,
+                        "channel": channel,
+                        "timestamp": time.time(),
+                    }
+                    _messages.append(msg)
+                _persist_message(msg)
+                _broadcast(msg)
+                results.append({"type": "message", "channel": channel, "sender": sender})
+            elif action_type == "ticket":
+                title = action.get("title", "")
+                if title:
+                    author = action.get("author", "System")
+                    ticket_id = generate_ticket_id(title, time.time())
+                    now = time.time()
+                    ticket = {
+                        "id": ticket_id,
+                        "title": title,
+                        "description": action.get("description", ""),
+                        "status": "open",
+                        "priority": action.get("priority", "medium"),
+                        "assignee": action.get("assignee", ""),
+                        "created_by": author,
+                        "created_at": now,
+                        "updated_at": now,
+                        "comments": [],
+                        "blocked_by": [],
+                        "blocks": [],
+                    }
+                    with _tickets_lock:
+                        _tickets[ticket_id] = ticket
+                        save_tickets_index(dict(_tickets))
+                    _broadcast_tickets_event("created", ticket)
+                    results.append({"type": "ticket", "id": ticket_id, "title": title})
+            elif action_type == "document":
+                title = action.get("title", "")
+                if title:
+                    from lib.docs import slugify
+                    author = action.get("author", "System")
+                    folder = action.get("folder", "shared")
+                    content = action.get("content", "")
+                    slug = slugify(title)
+                    folder_dir = DOCS_DIR / folder
+                    folder_dir.mkdir(parents=True, exist_ok=True)
+                    doc_path = folder_dir / f"{slug}.txt"
+                    with _docs_lock:
+                        if slug not in _docs_index:
+                            doc_path.write_text(content, encoding="utf-8")
+                            now = time.time()
+                            meta = {
+                                "slug": slug,
+                                "title": title,
+                                "folder": folder,
+                                "created_at": now,
+                                "updated_at": now,
+                                "created_by": author,
+                                "size": len(content.encode("utf-8")),
+                                "preview": content[:100],
+                            }
+                            _docs_index[slug] = meta
+                            _save_index()
+                            _broadcast_doc_event("created", meta)
+                            results.append({"type": "document", "title": title, "folder": folder, "slug": slug})
+        # Log the event with results
+        data["results"] = results
+        entry = fire_event(data)
+        return jsonify(entry)
+
+    @app.route("/api/events/log", methods=["GET"])
+    def get_events_log():
+        from lib.events import get_event_log
+        return jsonify(get_event_log())
 
     # -- Character templates API --
 

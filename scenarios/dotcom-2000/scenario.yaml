@@ -88,3 +88,49 @@ folder_access:
   tiffany: ["designer"]
   kevin: ["pm"]
   monica: ["bizdev"]
+
+events:
+  - name: "Server Crash"
+    severity: "critical"
+    actions:
+      - type: "message"
+        channel: "#general"
+        sender: "Apache (System)"
+        content: "FATAL: The Apache box just died. httpd segfault. The site is DOWN. Someone needs to SSH in and restart it. Derek, you have the password."
+      - type: "ticket"
+        title: "CRITICAL: Web server down — Apache segfault"
+        description: "Apache httpd crashed with a segfault. All client sites are offline. Need to SSH into the box, check the error logs, and restart the service."
+        priority: "critical"
+        author: "Apache (System)"
+
+  - name: "Y2K Client Panic"
+    severity: "high"
+    actions:
+      - type: "message"
+        channel: "#client"
+        sender: "Bob Peterson (Customer)"
+        content: "We just read an article about Y2K and we're FREAKING OUT. Is our website Y2K compliant?? What happens when the clock strikes midnight on December 31st? Will our shopping cart lose all the orders? We need a full compliance audit BY FRIDAY."
+
+  - name: "Netscape Update Broke Everything"
+    severity: "medium"
+    actions:
+      - type: "message"
+        channel: "#dev"
+        sender: "QA Bot (System)"
+        content: "Netscape Navigator 4.7 just dropped and it broke our CSS on the Peterson site. The navigation bar is now overlapping the content area. Tables still render fine though. Derek is going to have opinions about this."
+
+  - name: "Client Wants Flash Intro"
+    severity: "low"
+    actions:
+      - type: "message"
+        channel: "#client"
+        sender: "Lisa Thompson (Customer)"
+        content: "We visited our competitor's website and they have this AMAZING animated intro with music and flying logos. We want one of those! Can you add a Flash splash page with a Skip Intro button? Our CEO says it needs to have our logo spinning in 3D."
+
+  - name: "Domain Squatter"
+    severity: "medium"
+    actions:
+      - type: "message"
+        channel: "#general"
+        sender: "Network Solutions (System)"
+        content: "ALERT: The domain petersonenterprises.com has been registered by a third party. Your client currently uses peterson-enterprises.com but customers keep going to the wrong one. The squatter is asking $5,000 for the domain."

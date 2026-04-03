@@ -745,6 +745,19 @@ async def _process_regex_response(
     if cleaned.upper() == "PASS" or not cleaned:
         return {}
 
+    # 5.5. Last-ditch JSON parse attempt — if regex couldn't strip commands
+    # but the text is still JSON, try one more time
+    stripped = cleaned.strip()
+    if stripped.startswith("{") and stripped.endswith("}"):
+        try:
+            import json as _json
+            parsed = _json.loads(stripped)
+            if isinstance(parsed, dict) and parsed.get("action") in ("respond", "pass", "ready"):
+                print(f"  {persona['display_name']}: recovered JSON in regex fallback")
+                return await _process_json_response(client, parsed, persona, default_channel)
+        except (ValueError, _json.JSONDecodeError):
+            pass
+
     # 6. Parse multi-channel response
     return _parse_multi_channel_response(cleaned, default_channel)
 
