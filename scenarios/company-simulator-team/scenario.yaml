@@ -55,3 +55,46 @@ folder_access:
   dev: ["maintainer", "collaborator"]
   tanner: ["maintainer"]
   acp: ["collaborator"]
+
+events:
+  - name: "SDK Breaking Change"
+    severity: "high"
+    actions:
+      - type: "message"
+        channel: "#dev"
+        sender: "Dependabot (System)"
+        content: "claude-agent-sdk v0.2.0 released with BREAKING CHANGES. The ClaudeSDKClient constructor signature changed. Our AgentPool initialization will fail on upgrade. Migration guide: https://docs.anthropic.com/sdk/migration"
+      - type: "ticket"
+        title: "SDK upgrade: claude-agent-sdk v0.2.0 breaking changes"
+        description: "New SDK version changes ClaudeSDKClient constructor. Need to update AgentPool and agent_runner.py before upgrading."
+        priority: "high"
+        author: "Dependabot (System)"
+
+  - name: "Context Window Exceeded"
+    severity: "critical"
+    actions:
+      - type: "message"
+        channel: "#bugs"
+        sender: "Error Monitor (System)"
+        content: "ALERT: Agent 'Sarah (PM)' hit context window limit during response generation. The prompt is too large — chat history + docs + tickets exceeds the model's token limit. Agents may start losing context or failing silently."
+
+  - name: "PR Review Requested"
+    severity: "low"
+    actions:
+      - type: "message"
+        channel: "#dev"
+        sender: "GitHub (System)"
+        content: "T4NN3R requested a review from 1.z3r0 on PR #42: 'Add event system with scenario-defined event pools'. 6 files changed, +450 -20."
+
+  - name: "UI Bug Report"
+    severity: "medium"
+    actions:
+      - type: "message"
+        channel: "#bugs"
+        sender: "Beta Tester (User)"
+        content: "Bug report: The NPC page cards are overlapping on mobile viewport widths. Also the 'Being Fired' status dot animation is causing layout jank in Firefox. Screenshots attached (not really, imagine them)."
+      - type: "ticket"
+        title: "UI Bug: NPC cards overlap on mobile + Firefox animation jank"
+        description: "1. NPC cards overlap below 768px viewport width\n2. 'Being Fired' CSS animation causes layout jank in Firefox\n\nPriority: medium — desktop works fine, mobile is stretch goal"
+        priority: "medium"
+        author: "Beta Tester (User)"
