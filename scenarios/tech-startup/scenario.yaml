@@ -270,6 +270,7 @@ settings:
   enable_background_tasks: true
   max_concurrent_tasks: 3
   task_timeout: 600
+  enable_memos: true
   task_allowed_tools:
     - Bash
     - Read

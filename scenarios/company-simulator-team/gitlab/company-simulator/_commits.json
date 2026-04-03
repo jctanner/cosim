@@ -108,5 +108,23 @@
       "docs/style-guide.md",
       "docs/ui-component-guide.md"
     ]
+  },
+  {
+    "id": "a3b7d920",
+    "message": "Add memo-list (threaded async discussion board), fix READ bug, add Name (Role) identity",
+    "author": "1.z3r0 (Collaborator)",
+    "timestamp": 1775249550.0,
+    "files": [
+      "lib/memos.py",
+      "lib/webapp.py",
+      "lib/orchestrator.py",
+      "lib/personas.py",
+      "lib/response_schema.py",
+      "lib/chat_client.py",
+      "lib/session.py",
+      "scenarios/company-simulator-team/scenario.yaml",
+      "scenarios/tech-startup/scenario.yaml",
+      "scenarios/dotcom-2000/scenario.yaml"
+    ]
   }
 ]

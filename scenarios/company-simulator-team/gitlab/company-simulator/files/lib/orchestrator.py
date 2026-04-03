@@ -601,8 +601,8 @@ def _parse_multi_channel_response(text: str, default_channel: str) -> dict[str, 
 
 
 def _post_system(client: ChatClient, text: str) -> None:
-    """Post a system message to #system (operator-visible only)."""
-    client.post_message("System", text, channel="#system")
+    """Post a system message to #general so agents can see command results."""
+    client.post_message("System", text, channel="#general")
 
 
 def _log_doc_results(client: ChatClient, persona: dict, results: list[dict]) -> None:
@@ -649,6 +649,65 @@ def _log_tickets_results(client: ChatClient, persona: dict, results: list[dict])
             print(f"  {persona['display_name']}: ticket {r['action']} failed - {r.get('error', '?')}")
 
 
+def _execute_memo_commands(
+    client: ChatClient,
+    commands: list[dict],
+    author: str,
+) -> list[dict]:
+    """Execute memo-list commands via ChatClient."""
+    results = []
+    for cmd in commands:
+        action = cmd.get("action", "").upper()
+        try:
+            if action == "CREATE":
+                result = client.create_memo_thread(
+                    cmd.get("title", "Untitled"),
+                    author,
+                    cmd.get("description", ""),
+                )
+                results.append({"action": "created", "ok": True, **result})
+            elif action == "POST":
+                result = client.post_memo(
+                    cmd.get("thread_id", ""),
+                    cmd.get("text", ""),
+                    author,
+                )
+                results.append({"action": "posted", "ok": True, **result})
+            elif action == "READ":
+                thread = client.get_memo_thread(cmd.get("thread_id", ""))
+                results.append({"action": "read", "ok": True, **(thread or {})})
+            elif action == "LIST":
+                threads = client.get_memo_threads()
+                results.append({"action": "list", "ok": True, "threads": threads})
+        except Exception as e:
+            results.append({"action": action.lower(), "ok": False, "error": str(e)})
+    return results
+
+
+def _log_memo_results(client: ChatClient, persona: dict, results: list[dict]) -> None:
+    """Log memo command results. READ/LIST are silent (data goes in turn prompt).
+    CREATE/POST broadcast a short notification so other agents know about new activity."""
+    display = persona["display_name"]
+    for r in results:
+        action = r.get("action", "?")
+        if action == "list":
+            # Silent — agent sees threads in the turn prompt memo section
+            print(f"  {display}: memo list -> {len(r.get('threads', []))} threads")
+        elif action == "read":
+            # Silent — agent sees thread content via turn prompt memo section
+            print(f"  {display}: memo read '{r.get('title', '?')}' -> {len(r.get('posts', []))} posts")
+        elif action == "created":
+            title = r.get("title", "?")
+            _post_system(client, f"[Memos] {display} started a discussion: **{title}**")
+            print(f"  {display}: memo created '{title}'")
+        elif action == "posted":
+            thread_id = r.get("thread_id", "?")
+            _post_system(client, f"[Memos] {display} replied in thread {thread_id}")
+            print(f"  {display}: memo posted to '{thread_id}'")
+        elif not r.get("ok"):
+            print(f"  {display}: memo {action} failed - {r.get('error', '?')}")
+
+
 async def _process_json_response(
     client: ChatClient,
     parsed: dict,
@@ -663,7 +722,7 @@ async def _process_json_response(
     author = persona["display_name"]
 
     # 1. Normalize and execute commands
-    doc_cmds, gitlab_cmds, tickets_cmds, channels_to_join, dm_cmds = normalize_commands(parsed)
+    doc_cmds, gitlab_cmds, tickets_cmds, channels_to_join, dm_cmds, task_cmds, memo_cmds = normalize_commands(parsed)
 
     if doc_cmds:
         if on_activity:
@@ -692,6 +751,27 @@ async def _process_json_response(
 
     if dm_cmds:
         _queue_dms(client, persona, dm_cmds)
+
+    if task_cmds:
+        from lib.task_executor import get_executor
+        executor = get_executor()
+        if executor:
+            for tcmd in task_cmds[:1]:  # Max 1 task per turn
+                goal = tcmd.get("goal", "")
+                context = tcmd.get("context", "")
+                report_to = tcmd.get("report_to", default_channel)
+                if goal:
+                    task = executor.submit_task(persona["name"], author, goal, context, report_to)
+                    if task:
+                        print(f"  {author}: spawned task {task['task_id']}")
+                    else:
+                        print(f"  {author}: task rejected (at capacity)")
+
+    if memo_cmds:
+        if on_activity:
+            on_activity("posting to memos")
+        memo_results = _execute_memo_commands(client, memo_cmds, author)
+        _log_memo_results(client, persona, memo_results)
 
     # 2. Extract channel-routed messages
     return extract_messages(parsed, default_channel)
@@ -782,7 +862,9 @@ async def _process_agent_response(
 
 
 def _is_agent_message(msg: dict) -> bool:
-    """Return True if the message was posted by an agent."""
+    """Return True if the message was posted by an agent (not an event or human)."""
+    if msg.get("is_event"):
+        return False  # Event-triggered messages should be treated as external input
     return msg["sender"] in _get_agent_display_names()
 
 
@@ -884,6 +966,7 @@ async def _run_loop(
             docs = client.list_docs()
             repos = client.list_repos()
             tickets = client.list_tickets()
+            memo_threads = client.get_memo_threads(include_posts=True)
 
             # 2. Build prompts and launch all sends in parallel
             async def _run_agent(pk, trigger_ch):
@@ -904,6 +987,7 @@ async def _run_loop(
                     offline_agents=offline_keys,
                     pending_dms=pending_dms,
                     verbosity=verbosity_map.get(pk, "normal"),
+                    memos=memo_threads,
                 )
                 # Show typing indicator and update agent status
                 display_name = persona["display_name"]
@@ -1308,6 +1392,19 @@ async def run_orchestrator(args) -> None:
             personas = get_active_personas(getattr(args, "personas", None))
             print(f"\nStarting session: {scenario_name}")
             print(f"  Personas: {', '.join(p['display_name'] for p in personas)}")
+
+            # Initialize background task executor BEFORE agents start
+            # so build_initial_prompt() can include task command docs
+            from lib.scenario_loader import get_settings
+            from lib.task_executor import init_executor
+            settings = get_settings()
+            if settings.get("enable_background_tasks", False):
+                init_executor(client, model, LOG_DIR / "tasks",
+                              max_concurrent=settings.get("max_concurrent_tasks", 3),
+                              task_timeout=settings.get("task_timeout", 600),
+                              allowed_tools=settings.get("task_allowed_tools"))
+                print(f"Background tasks enabled (max={settings.get('max_concurrent_tasks', 3)})")
+
             try:
                 pool, pending = await _start_agents(client, personas, model, scenario_name)
             except (Exception, BaseException):
@@ -1330,6 +1427,7 @@ async def run_orchestrator(args) -> None:
                 pool = None
                 next_cmd = pending  # re-queue the interrupting command
                 continue
+
             existing = client.get_messages()
             last_seen_id = existing[-1]["id"] if existing else 0
             print(f"Skipping {len(existing)} existing messages (last_seen_id={last_seen_id})")
@@ -1367,6 +1465,19 @@ async def run_orchestrator(args) -> None:
 
                 # Reload personas and start new agents
                 personas = get_active_personas(getattr(args, "personas", None))
+
+                # Initialize background task executor BEFORE agents start
+                # so build_initial_prompt() can include task command docs
+                from lib.scenario_loader import get_settings
+                from lib.task_executor import init_executor
+                settings = get_settings()
+                if settings.get("enable_background_tasks", False):
+                    init_executor(client, model, LOG_DIR / "tasks",
+                                  max_concurrent=settings.get("max_concurrent_tasks", 3),
+                                  task_timeout=settings.get("task_timeout", 600),
+                                  allowed_tools=settings.get("task_allowed_tools"))
+                    print(f"Background tasks enabled (max={settings.get('max_concurrent_tasks', 3)})")
+
                 try:
                     pool, pending = await _start_agents(client, personas, model, scenario_name)
                 except (Exception, BaseException):
@@ -1520,6 +1631,13 @@ async def run_orchestrator(args) -> None:
 
             print(f"\nWaiting for new messages (last_seen_id={last_seen_id})...")
     finally:
+        try:
+            from lib.task_executor import get_executor
+            executor = get_executor()
+            if executor:
+                executor.shutdown()
+        except Exception:
+            pass
         try:
             await _stop_agents(client, pool, personas, scenario_name)
         except (Exception, BaseException):
