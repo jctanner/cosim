@@ -193,6 +193,15 @@ def save_session(name: str | None = None) -> dict:
     except Exception:
         pass
 
+    # Save memos
+    try:
+        from lib.memos import get_memo_snapshot
+        memo_data = get_memo_snapshot()
+        if memo_data.get("threads") or memo_data.get("posts"):
+            (instance_dir / "memos.json").write_text(json.dumps(memo_data, indent=2))
+    except Exception:
+        pass
+
     # Save recaps
     try:
         from lib.webapp import _recaps
@@ -350,6 +359,16 @@ def load_session(instance_name: str) -> dict:
         except Exception:
             pass
 
+    # Restore memos
+    memos_path = instance_dir / "memos.json"
+    if memos_path.exists():
+        try:
+            from lib.memos import restore_memos
+            memo_data = json.loads(memos_path.read_text())
+            restore_memos(memo_data.get("threads", {}), memo_data.get("posts", []))
+        except Exception:
+            pass
+
     # Restore recaps
     recaps_path = instance_dir / "recaps.json"
     if recaps_path.exists():
@@ -393,6 +412,11 @@ def new_session(scenario_name: str | None = None) -> dict:
     try:
         from lib.email import clear_inbox
         clear_inbox()
+    except Exception:
+        pass
+    try:
+        from lib.memos import clear_memos
+        clear_memos()
     except Exception:
         pass
     try:

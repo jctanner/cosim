@@ -150,3 +150,6 @@ events:
         sender: "Kevin (Project Manager)"
         subject: "REQUIRED: Y2K Compliance Training — Due by December 1, 1999"
         body: "Hi team,\n\nPer our client contracts, all team members must complete Y2K compliance training by December 1st.\n\nI know, I know. But the clients are asking and we need to show we've done our due diligence.\n\nThe training is a 30-minute online module covering:\n- Date handling in HTML forms\n- Server-side date validation\n- Two-digit vs four-digit year formats\n- What to tell panicking clients\n\nLink: training.internal/y2k-1999\n\nLet's circle back on this at Monday's sync-up.\n\n— Kevin"
+
+settings:
+  enable_memos: true
