@@ -134,3 +134,19 @@ events:
         channel: "#general"
         sender: "Network Solutions (System)"
         content: "ALERT: The domain petersonenterprises.com has been registered by a third party. Your client currently uses peterson-enterprises.com but customers keep going to the wrong one. The squatter is asking $5,000 for the domain."
+
+  - name: "All-Hands From The Boss"
+    severity: "low"
+    actions:
+      - type: "email"
+        sender: "Monica (Biz Dev)"
+        subject: "TEAM UPDATE: Big Things Happening — Read This!"
+        body: "Team!\n\nI've got THREE warm leads this week. One of them is a regional bank that wants a full e-commerce portal. This could be our biggest contract yet.\n\nAlso — I'm putting together our pitch deck for the VC meeting next month. If anyone has screenshots of our best work, send them my way. The flashier the better.\n\nOnwards!\n— Monica"
+
+  - name: "Mandatory Y2K Training"
+    severity: "medium"
+    actions:
+      - type: "email"
+        sender: "Kevin (Project Manager)"
+        subject: "REQUIRED: Y2K Compliance Training — Due by December 1, 1999"
+        body: "Hi team,\n\nPer our client contracts, all team members must complete Y2K compliance training by December 1st.\n\nI know, I know. But the clients are asking and we need to show we've done our due diligence.\n\nThe training is a 30-minute online module covering:\n- Date handling in HTML forms\n- Server-side date validation\n- Two-digit vs four-digit year formats\n- What to tell panicking clients\n\nLink: training.internal/y2k-1999\n\nLet's circle back on this at Monday's sync-up.\n\n— Kevin"

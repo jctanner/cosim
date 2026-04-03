@@ -196,6 +196,16 @@ def _init_channels():
         }
         _channel_members["#dms"] = set()
 
+        # Create #announcements channel for company-wide emails
+        _channels["#announcements"] = {
+            "description": "Company-wide announcements and emails",
+            "is_external": False,
+            "is_system": False,  # agents should see this channel
+            "created_at": now,
+        }
+        # All agents are members of #announcements
+        _channel_members["#announcements"] = set(PERSONAS.keys())
+
         # Create director channels for each persona
         for pk, p_info in PERSONAS.items():
             ch_name = f"#director-{pk}"
@@ -210,6 +220,8 @@ def _init_channels():
             _channel_members[ch_name] = set()
 
         for persona_key, ch_set in DEFAULT_MEMBERSHIPS.items():
+            # Auto-add all agents to #announcements
+            ch_set.add("#announcements")
             for ch_name in ch_set:
                 if ch_name in _channel_members:
                     _channel_members[ch_name].add(persona_key)
@@ -427,6 +439,9 @@ def _reinitialize():
     _init_tickets()
     _init_agent_online()
     _load_chat_log()
+    # Clear emails (restored separately by session load if needed)
+    from lib.email import clear_inbox
+    clear_inbox()
 
 
 def _broadcast_tickets_event(action: str, data: dict):
@@ -572,6 +587,19 @@ WEB_UI = """<!DOCTYPE html>
   .usage-card-row .label { color: #666; }
   .usage-card-row .value { color: #e0e0e0; font-weight: 600; font-family: monospace; }
   .usage-card-row .value.cost { color: #2ecc71; }
+
+  /* -- Email tab -- */
+  #email-pane { padding: 0; flex-direction: row; }
+  #email-sidebar { width: 300px; min-width: 300px; background: #121a30; border-right: 1px solid #0f3460;
+                   display: flex; flex-direction: column; overflow: hidden; }
+  #email-main { flex: 1; overflow-y: auto; padding: 20px; }
+  .email-item { padding: 10px 12px; border-bottom: 1px solid #1a1a2e; cursor: pointer; transition: background 0.1s; }
+  .email-item:hover { background: #1a1a3e; }
+  .email-item.active { background: #1a1a3e; border-left: 3px solid #3498db; }
+  .email-item-from { font-size: 12px; font-weight: 700; color: #4fc3f7; }
+  .email-item-subject { font-size: 13px; color: #e0e0e0; margin-top: 2px; overflow: hidden;
+                        text-overflow: ellipsis; white-space: nowrap; }
+  .email-item-date { font-size: 10px; color: #555; margin-top: 2px; }
 
   /* -- Events tab -- */
   #events-pane { padding: 0; flex-direction: row; }
@@ -964,6 +992,7 @@ WEB_UI = """<!DOCTYPE html>
   <button class="header-tab" data-tab="npcs">NPCs</button>
   <button class="header-tab" data-tab="usage">Usage</button>
   <button class="header-tab" data-tab="events">Events</button>
+  <button class="header-tab" data-tab="email">Email</button>
   <div id="session-controls">
     <span id="orch-status" title="Orchestrator status">
       <span id="orch-dot" class="status-dot disconnected"></span>
@@ -1284,6 +1313,59 @@ WEB_UI = """<!DOCTYPE html>
       <div id="usage-content">
         <div id="usage-empty">No usage data yet. Send messages so agents produce responses.</div>
       </div>
+    </div>
+  </div>
+  <!-- Email tab -->
+  <div id="email-pane" class="tab-pane">
+    <div id="email-sidebar">
+      <div style="padding:10px;border-bottom:1px solid #333">
+        <button id="compose-email-btn" class="session-btn" style="width:100%;background:#3498db;border-color:#3498db;color:#fff;font-size:12px">Compose Email</button>
+      </div>
+      <div id="email-list" style="flex:1;overflow-y:auto"></div>
+      <div id="email-list-empty" style="color:#666;text-align:center;padding:20px;font-size:12px">No emails sent yet.</div>
+    </div>
+    <div id="email-main">
+      <div id="email-viewer" style="display:none">
+        <div id="email-viewer-from" style="font-size:13px;color:#4fc3f7;font-weight:700;margin-bottom:4px"></div>
+        <div id="email-viewer-subject" style="font-size:18px;font-weight:700;color:#e0e0e0;margin-bottom:4px"></div>
+        <div id="email-viewer-date" style="font-size:11px;color:#555;margin-bottom:16px"></div>
+        <div id="email-viewer-body" style="font-size:14px;color:#ccc;line-height:1.6;white-space:pre-wrap"></div>
+      </div>
+      <div id="email-compose" style="display:none;max-width:600px">
+        <h3 style="color:#e0e0e0;margin-bottom:12px">Compose Email</h3>
+        <div class="modal-field">
+          <label>From</label>
+          <div style="display:flex;gap:8px">
+            <input id="email-compose-name" type="text" placeholder="Name" style="flex:1" autocomplete="off" />
+            <select id="email-compose-role" style="flex:1">
+              <option value="">No role</option>
+              <option value="Scenario Director">Scenario Director</option>
+              <option value="System">System</option>
+              <option value="CEO">CEO</option>
+              <option value="HR">HR</option>
+              <option value="Legal">Legal</option>
+              <option value="Compliance">Compliance</option>
+              <option value="Customer">Customer</option>
+              <option value="Board Member">Board Member</option>
+              <option value="custom">Custom...</option>
+            </select>
+          </div>
+          <input id="email-compose-role-custom" type="text" placeholder="Custom role..." style="display:none;width:100%;margin-top:6px" autocomplete="off" />
+        </div>
+        <div class="modal-field">
+          <label>Subject</label>
+          <input id="email-compose-subject" type="text" placeholder="Subject line..." autocomplete="off" />
+        </div>
+        <div class="modal-field">
+          <label>Body</label>
+          <textarea id="email-compose-body" style="width:100%;min-height:200px;background:#111;color:#e0e0e0;border:1px solid #333;padding:14px;border-radius:8px;font-size:14px;font-family:inherit;resize:vertical;line-height:1.6" placeholder="Write your email..."></textarea>
+        </div>
+        <div style="display:flex;gap:8px;justify-content:flex-end">
+          <button class="session-btn" id="email-compose-cancel">Cancel</button>
+          <button class="modal-btn-primary" id="email-compose-send" style="background:#3498db">Send</button>
+        </div>
+      </div>
+      <div id="email-empty-state" style="color:#666;text-align:center;padding:60px;font-size:14px">Select an email to read, or compose a new one.</div>
     </div>
   </div>
 </div>
@@ -1711,6 +1793,7 @@ document.querySelectorAll('.header-tab').forEach(tab => {
     if (target === 'tickets') loadTickets();
     if (target === 'npcs') loadNPCs();
     if (target === 'events') loadEventPool();
+    if (target === 'email') loadEmails();
     if (target === 'usage') loadUsage();
   });
 });
@@ -3273,6 +3356,85 @@ async function loadUsage() {
   }
 }
 
+// -- Email tab --
+
+async function loadEmails() {
+  const list = document.getElementById('email-list');
+  const empty = document.getElementById('email-list-empty');
+  const resp = await fetch('/api/emails');
+  const emails = await resp.json();
+  list.innerHTML = '';
+  empty.style.display = emails.length ? 'none' : 'block';
+  [...emails].reverse().forEach(e => {
+    const item = document.createElement('div');
+    item.className = 'email-item';
+    item.dataset.id = e.id;
+    const ts = new Date(e.timestamp * 1000);
+    item.innerHTML =
+      '<div class="email-item-from">' + escapeHtml(e.sender) + '</div>' +
+      '<div class="email-item-subject">' + escapeHtml(e.subject) + '</div>' +
+      '<div class="email-item-date">' + ts.toLocaleString() + '</div>';
+    item.addEventListener('click', () => viewEmail(e));
+    list.appendChild(item);
+  });
+}
+
+function viewEmail(e) {
+  document.querySelectorAll('.email-item').forEach(el => el.classList.remove('active'));
+  const active = document.querySelector('.email-item[data-id="' + e.id + '"]');
+  if (active) active.classList.add('active');
+  document.getElementById('email-viewer-from').textContent = e.sender;
+  document.getElementById('email-viewer-subject').textContent = e.subject;
+  document.getElementById('email-viewer-date').textContent = new Date(e.timestamp * 1000).toLocaleString();
+  document.getElementById('email-viewer-body').textContent = e.body;
+  document.getElementById('email-viewer').style.display = '';
+  document.getElementById('email-compose').style.display = 'none';
+  document.getElementById('email-empty-state').style.display = 'none';
+}
+
+document.getElementById('compose-email-btn').addEventListener('click', () => {
+  document.getElementById('email-compose-name').value = '';
+  document.getElementById('email-compose-role').value = 'Scenario Director';
+  document.getElementById('email-compose-role-custom').style.display = 'none';
+  document.getElementById('email-compose-subject').value = '';
+  document.getElementById('email-compose-body').value = '';
+  document.getElementById('email-viewer').style.display = 'none';
+  document.getElementById('email-compose').style.display = '';
+  document.getElementById('email-empty-state').style.display = 'none';
+  document.getElementById('email-compose-subject').focus();
+});
+
+document.getElementById('email-compose-role').addEventListener('change', (e) => {
+  const custom = document.getElementById('email-compose-role-custom');
+  custom.style.display = e.target.value === 'custom' ? '' : 'none';
+});
+
+document.getElementById('email-compose-cancel').addEventListener('click', () => {
+  document.getElementById('email-compose').style.display = 'none';
+  document.getElementById('email-empty-state').style.display = '';
+});
+
+document.getElementById('email-compose-send').addEventListener('click', async () => {
+  const name = document.getElementById('email-compose-name').value.trim() || 'Anonymous';
+  let role = document.getElementById('email-compose-role').value;
+  if (role === 'custom') role = document.getElementById('email-compose-role-custom').value.trim();
+  const sender = role ? name + ' (' + role + ')' : name;
+  const subject = document.getElementById('email-compose-subject').value.trim();
+  const body = document.getElementById('email-compose-body').value.trim();
+  if (!subject) { document.getElementById('email-compose-subject').focus(); return; }
+  const resp = await fetch('/api/emails', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({sender, subject, body}),
+  });
+  if (resp.ok) {
+    document.getElementById('email-compose').style.display = 'none';
+    document.getElementById('email-empty-state').style.display = '';
+    loadEmails();
+    showNotice('Email sent: ' + subject);
+  }
+});
+
 // -- Events tab --
 
 let _eventsSubTab = 'pool';
@@ -4718,6 +4880,26 @@ def create_app() -> Flask:
                             _save_index()
                             _broadcast_doc_event("created", meta)
                             results.append({"type": "document", "title": title, "folder": folder, "slug": slug})
+            elif action_type == "email":
+                from lib.email import send_email
+                sender = action.get("sender", action.get("from", "System"))
+                subject = action.get("subject", "")
+                body = action.get("body", action.get("content", ""))
+                if subject:
+                    entry = send_email(sender, subject, body)
+                    results.append({"type": "email", "id": entry["id"], "subject": subject})
+                    # Also post to #announcements so agents see it in chat
+                    with _lock:
+                        msg = {
+                            "id": len(_messages) + 1,
+                            "sender": sender,
+                            "content": f"**[EMAIL] {subject}**\n\n{body}",
+                            "channel": "#announcements",
+                            "timestamp": time.time(),
+                        }
+                        _messages.append(msg)
+                    _persist_message(msg)
+                    _broadcast(msg)
         # Log the event with results
         data["results"] = results
         entry = fire_event(data)
@@ -4727,6 +4909,45 @@ def create_app() -> Flask:
     def get_events_log():
         from lib.events import get_event_log
         return jsonify(get_event_log())
+
+    # -- Email/Announcements API --
+
+    @app.route("/api/emails", methods=["GET"])
+    def list_emails():
+        from lib.email import get_inbox
+        return jsonify(get_inbox())
+
+    @app.route("/api/emails", methods=["POST"])
+    def create_email():
+        from lib.email import send_email
+        data = request.get_json(force=True)
+        sender = data.get("sender", "System")
+        subject = data.get("subject", "").strip()
+        body = data.get("body", "").strip()
+        if not subject:
+            return jsonify({"error": "subject required"}), 400
+        entry = send_email(sender, subject, body)
+        # Also post to #announcements
+        with _lock:
+            msg = {
+                "id": len(_messages) + 1,
+                "sender": sender,
+                "content": f"**[EMAIL] {subject}**\n\n{body}",
+                "channel": "#announcements",
+                "timestamp": time.time(),
+            }
+            _messages.append(msg)
+        _persist_message(msg)
+        _broadcast(msg)
+        return jsonify(entry), 201
+
+    @app.route("/api/emails/<int:email_id>", methods=["GET"])
+    def get_email_detail(email_id):
+        from lib.email import get_email
+        entry = get_email(email_id)
+        if not entry:
+            return jsonify({"error": "not found"}), 404
+        return jsonify(entry)
 
     # -- Character templates API --
 
