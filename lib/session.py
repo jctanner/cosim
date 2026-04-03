@@ -173,6 +173,17 @@ def save_session(name: str | None = None) -> dict:
     except Exception:
         pass
 
+    # Save background tasks
+    try:
+        from lib.task_executor import get_executor
+        executor = get_executor()
+        if executor:
+            task_data = executor.get_all_tasks()
+            if task_data:
+                (instance_dir / "background_tasks.json").write_text(json.dumps(task_data, indent=2))
+    except Exception:
+        pass
+
     # Write metadata
     now = time.time()
     meta = {
@@ -301,6 +312,17 @@ def load_session(instance_name: str) -> dict:
             init_event_pool()  # fall back to scenario defaults
     except Exception:
         pass
+
+    # Restore background tasks
+    bg_path = instance_dir / "background_tasks.json"
+    if bg_path.exists():
+        try:
+            from lib.task_executor import get_executor
+            executor = get_executor()
+            if executor:
+                executor.restore_tasks(json.loads(bg_path.read_text()))
+        except Exception:
+            pass
 
     # Update current session tracking
     _current_session["scenario"] = meta.get("scenario", _current_session["scenario"])

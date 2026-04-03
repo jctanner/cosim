@@ -663,7 +663,7 @@ async def _process_json_response(
     author = persona["display_name"]
 
     # 1. Normalize and execute commands
-    doc_cmds, gitlab_cmds, tickets_cmds, channels_to_join, dm_cmds = normalize_commands(parsed)
+    doc_cmds, gitlab_cmds, tickets_cmds, channels_to_join, dm_cmds, task_cmds = normalize_commands(parsed)
 
     if doc_cmds:
         if on_activity:
@@ -692,6 +692,21 @@ async def _process_json_response(
 
     if dm_cmds:
         _queue_dms(client, persona, dm_cmds)
+
+    if task_cmds:
+        from lib.task_executor import get_executor
+        executor = get_executor()
+        if executor:
+            for tcmd in task_cmds[:1]:  # Max 1 task per turn
+                goal = tcmd.get("goal", "")
+                context = tcmd.get("context", "")
+                report_to = tcmd.get("report_to", default_channel)
+                if goal:
+                    task = executor.submit_task(persona["name"], author, goal, context, report_to)
+                    if task:
+                        print(f"  {author}: spawned task {task['task_id']}")
+                    else:
+                        print(f"  {author}: task rejected (at capacity)")
 
     # 2. Extract channel-routed messages
     return extract_messages(parsed, default_channel)
@@ -1330,6 +1345,17 @@ async def run_orchestrator(args) -> None:
                 pool = None
                 next_cmd = pending  # re-queue the interrupting command
                 continue
+            # Initialize background task executor if enabled
+            from lib.scenario_loader import get_settings
+            from lib.task_executor import init_executor
+            settings = get_settings()
+            if settings.get("enable_background_tasks", False):
+                init_executor(client, model, LOG_DIR / "tasks",
+                              max_concurrent=settings.get("max_concurrent_tasks", 3),
+                              task_timeout=settings.get("task_timeout", 600),
+                              allowed_tools=settings.get("task_allowed_tools"))
+                print(f"Background tasks enabled (max={settings.get('max_concurrent_tasks', 3)})")
+
             existing = client.get_messages()
             last_seen_id = existing[-1]["id"] if existing else 0
             print(f"Skipping {len(existing)} existing messages (last_seen_id={last_seen_id})")
@@ -1396,6 +1422,16 @@ async def run_orchestrator(args) -> None:
                     except Exception:
                         pass
                     continue
+
+                # Initialize background task executor if enabled
+                from lib.scenario_loader import get_settings
+                from lib.task_executor import init_executor
+                settings = get_settings()
+                if settings.get("enable_background_tasks", False):
+                    init_executor(client, model, LOG_DIR / "tasks",
+                                  max_concurrent=settings.get("max_concurrent_tasks", 3),
+                                  task_timeout=settings.get("task_timeout", 600))
+                    print(f"Background tasks enabled (max={settings.get('max_concurrent_tasks', 3)})")
 
                 # Reset message tracking
                 existing = client.get_messages()
@@ -1520,6 +1556,13 @@ async def run_orchestrator(args) -> None:
 
             print(f"\nWaiting for new messages (last_seen_id={last_seen_id})...")
     finally:
+        try:
+            from lib.task_executor import get_executor
+            executor = get_executor()
+            if executor:
+                executor.shutdown()
+        except Exception:
+            pass
         try:
             await _stop_agents(client, pool, personas, scenario_name)
         except (Exception, BaseException):
