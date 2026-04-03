@@ -238,6 +238,35 @@ def _build_task_command_example() -> str:
     {{"type": "task", "params": {{"goal": "Implement rate limiting middleware", "context": "See rate limiting spec doc", "report_to": "#engineering"}}}}"""
 
 
+def _build_memo_command_docs() -> str:
+    """Return memo-list command documentation if memos are enabled."""
+    from lib.scenario_loader import get_settings
+    if not get_settings().get("enable_memos", False):
+        return ""
+    return """
+
+**Memo-list commands** (`type: "memo"`):
+
+Use memo-list for proposals, RFCs, and async discussions that deserve threaded replies. Do NOT use memo-list for quick questions (use chat) or trackable work items (use tickets).
+
+| action | params |
+|--------|--------|
+| `CREATE` | `title`, `description` (optional) — start a new discussion thread |
+| `POST` | `thread_id`, `text` — reply to an existing thread |
+| `READ` | `thread_id` — read all posts in a thread |
+| `LIST` | (no params) — list all discussion threads |
+"""
+
+
+def _build_memo_command_example() -> str:
+    """Return memo command example if memos are enabled."""
+    from lib.scenario_loader import get_settings
+    if not get_settings().get("enable_memos", False):
+        return ""
+    return """,
+    {{"type": "memo", "action": "CREATE", "params": {{"title": "RFC: API Rate Limiting Strategy", "description": "Discussion thread for rate limiting design decisions"}}}}"""
+
+
 def build_active_tasks_section(persona_key: str) -> str:
     """Build a section showing the agent's active background tasks."""
     from lib.task_executor import get_executor
@@ -443,7 +472,7 @@ Valid statuses: open, in_progress, resolved, closed. Valid priorities: low, medi
 | (none) | `to` (persona key from team listing, e.g. "engmgr"), `text` |
 
 DMs are private one-shot messages delivered at the recipient's next turn. Max 2 per response. Use the persona key shown in parentheses in the team listing above (e.g. `engmgr`, `pm`, `ceo`). Use for pre-alignment, escalation, or private coordination. Do not use DMs for anything that should be part of the public record.
-{_build_task_command_docs()}
+{_build_task_command_docs()}{_build_memo_command_docs()}
 ### Complete Example
 
 ```json
@@ -457,7 +486,7 @@ DMs are private one-shot messages delivered at the recipient's next turn. Max 2 
     {{"type": "doc", "action": "CREATE", "params": {{"folder": "engineering", "title": "Rate Limiting Spec", "content": "## Rate Limiting\\n\\nEndpoints will enforce per-key limits..."}}}},
     {{"type": "tickets", "action": "CREATE", "params": {{"title": "Implement API rate limiting", "assignee": "Alex (Senior Eng)", "priority": "high", "description": "Implement rate limiting per the spec document."}}}},
     {{"type": "channel", "action": "JOIN", "params": {{"channel": "#devops"}}}},
-    {{"type": "dm", "params": {{"to": "engmgr", "text": "Heads up — the rate limiting estimate is aggressive. May need to push back if sales promises a timeline."}}}}{_build_task_command_example()}
+    {{"type": "dm", "params": {{"to": "engmgr", "text": "Heads up — the rate limiting estimate is aggressive. May need to push back if sales promises a timeline."}}}}{_build_task_command_example()}{_build_memo_command_example()}
   ]
 }}
 ```
@@ -511,6 +540,49 @@ VERBOSITY_INSTRUCTIONS = {
 }
 
 
+def _build_memos_section(memos: list[dict] | None) -> str:
+    """Build a section showing active memo-list threads with recent posts for agents.
+
+    Shows thread titles and the last 2 posts per thread (capped at 200 chars each)
+    so agents can follow discussions without needing a READ command. Agents can still
+    READ for full content if needed.
+    """
+    from lib.scenario_loader import get_settings
+    if not get_settings().get("enable_memos", False):
+        return ""
+    if not memos:
+        return (
+            "## Discussion Threads (Memo-List)\n\n"
+            "No active discussion threads. Use memo commands to create one for "
+            "proposals, RFCs, or async discussions that deserve threaded replies.\n"
+            "Use chat for quick conversation. Use tickets for trackable work items."
+        )
+    lines = [
+        "## Discussion Threads (Memo-List)",
+        "",
+        "Use memo-list for proposals, RFCs, and async discussions that deserve threaded replies.",
+        "Use chat for quick real-time conversation. Use tickets for trackable work items.",
+        "",
+    ]
+    for t in memos[:10]:  # Cap at 10 threads in prompt
+        post_info = f"{t['post_count']} post(s)"
+        if t.get("last_post_author"):
+            post_info += f", last by {t['last_post_author']}"
+        lines.append(f"### {t['title']} (id: {t['id']}) — {post_info}")
+        if t.get("description"):
+            lines.append(f"_{t['description']}_")
+        # Show last 2 posts preview so agents can follow the discussion
+        posts = t.get("recent_posts", [])
+        if posts:
+            for p in posts[-2:]:
+                text = p.get("text", "")
+                if len(text) > 200:
+                    text = text[:200] + "..."
+                lines.append(f"  - **{p.get('author', '?')}**: {text}")
+        lines.append("")
+    return "\n".join(lines)
+
+
 def build_turn_prompt(
     persona_key: str,
     messages: list[dict],
@@ -522,6 +594,7 @@ def build_turn_prompt(
     offline_agents: set[str] | None = None,
     pending_dms: list[dict] | None = None,
     verbosity: str = "normal",
+    memos: list[dict] | None = None,
 ) -> str:
     """Build a lean per-turn prompt for a persistent session.
 
@@ -644,6 +717,9 @@ Reply with a single JSON object. Format: {{"action": "respond", "messages": [...
     tasks_section = build_active_tasks_section(persona_key)
     if tasks_section:
         parts.append(tasks_section)
+    memos_section = _build_memos_section(memos)
+    if memos_section:
+        parts.append(memos_section)
     parts.append(membership_section)
     # Add verbosity instruction
     verbosity_instruction = VERBOSITY_INSTRUCTIONS.get(verbosity, "")

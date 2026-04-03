@@ -173,12 +173,40 @@ def save_session(name: str | None = None) -> dict:
     except Exception:
         pass
 
+    # Save background tasks
+    try:
+        from lib.task_executor import get_executor
+        executor = get_executor()
+        if executor:
+            task_data = executor.get_all_tasks()
+            if task_data:
+                (instance_dir / "background_tasks.json").write_text(json.dumps(task_data, indent=2))
+    except Exception:
+        pass
+
     # Save emails
     try:
         from lib.email import get_inbox_snapshot
         emails = get_inbox_snapshot()
         if emails:
             (instance_dir / "emails.json").write_text(json.dumps(emails, indent=2))
+    except Exception:
+        pass
+
+    # Save memos
+    try:
+        from lib.memos import get_memo_snapshot
+        memo_data = get_memo_snapshot()
+        if memo_data.get("threads") or memo_data.get("posts"):
+            (instance_dir / "memos.json").write_text(json.dumps(memo_data, indent=2))
+    except Exception:
+        pass
+
+    # Save recaps
+    try:
+        from lib.webapp import _recaps
+        if _recaps:
+            (instance_dir / "recaps.json").write_text(json.dumps(_recaps, indent=2))
     except Exception:
         pass
 
@@ -311,12 +339,44 @@ def load_session(instance_name: str) -> dict:
     except Exception:
         pass
 
+    # Restore background tasks
+    bg_path = instance_dir / "background_tasks.json"
+    if bg_path.exists():
+        try:
+            from lib.task_executor import get_executor
+            executor = get_executor()
+            if executor:
+                executor.restore_tasks(json.loads(bg_path.read_text()))
+        except Exception:
+            pass
+
     # Restore emails
     emails_path = instance_dir / "emails.json"
     if emails_path.exists():
         try:
             from lib.email import restore_inbox
             restore_inbox(json.loads(emails_path.read_text()))
+        except Exception:
+            pass
+
+    # Restore memos
+    memos_path = instance_dir / "memos.json"
+    if memos_path.exists():
+        try:
+            from lib.memos import restore_memos
+            memo_data = json.loads(memos_path.read_text())
+            restore_memos(memo_data.get("threads", {}), memo_data.get("posts", []))
+        except Exception:
+            pass
+
+    # Restore recaps
+    recaps_path = instance_dir / "recaps.json"
+    if recaps_path.exists():
+        try:
+            from lib.webapp import _recaps
+            data = json.loads(recaps_path.read_text())
+            _recaps.clear()
+            _recaps.extend(data)
         except Exception:
             pass
 
@@ -335,12 +395,37 @@ def new_session(scenario_name: str | None = None) -> dict:
     if not scenario:
         raise RuntimeError("No scenario specified")
 
-    # If switching scenarios, reload the scenario config
-    if scenario != _current_session.get("scenario"):
-        from lib.scenario_loader import load_scenario
-        load_scenario(scenario)
+    # Always reload scenario config on new session (ensures clean state)
+    from lib.scenario_loader import load_scenario
+    load_scenario(scenario)
 
+    # Clear all runtime files
     _clear_runtime_dirs()
+
+    # Clear all in-memory state
+    try:
+        from lib.events import clear_events, init_event_pool
+        clear_events()
+        init_event_pool()
+    except Exception:
+        pass
+    try:
+        from lib.email import clear_inbox
+        clear_inbox()
+    except Exception:
+        pass
+    try:
+        from lib.memos import clear_memos
+        clear_memos()
+    except Exception:
+        pass
+    try:
+        from lib.webapp import _recaps, _agent_thoughts, _agent_online_lock
+        _recaps.clear()
+        with _agent_online_lock:
+            _agent_thoughts.clear()
+    except Exception:
+        pass
 
     # Copy scenario seed data (docs, gitlab, tickets) if present
     from lib.scenario_loader import SCENARIOS_DIR

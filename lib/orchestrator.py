@@ -649,6 +649,65 @@ def _log_tickets_results(client: ChatClient, persona: dict, results: list[dict])
             print(f"  {persona['display_name']}: ticket {r['action']} failed - {r.get('error', '?')}")
 
 
+def _execute_memo_commands(
+    client: ChatClient,
+    commands: list[dict],
+    author: str,
+) -> list[dict]:
+    """Execute memo-list commands via ChatClient."""
+    results = []
+    for cmd in commands:
+        action = cmd.get("action", "").upper()
+        try:
+            if action == "CREATE":
+                result = client.create_memo_thread(
+                    cmd.get("title", "Untitled"),
+                    author,
+                    cmd.get("description", ""),
+                )
+                results.append({"action": "created", "ok": True, **result})
+            elif action == "POST":
+                result = client.post_memo(
+                    cmd.get("thread_id", ""),
+                    cmd.get("text", ""),
+                    author,
+                )
+                results.append({"action": "posted", "ok": True, **result})
+            elif action == "READ":
+                thread = client.get_memo_thread(cmd.get("thread_id", ""))
+                results.append({"action": "read", "ok": True, **(thread or {})})
+            elif action == "LIST":
+                threads = client.get_memo_threads()
+                results.append({"action": "list", "ok": True, "threads": threads})
+        except Exception as e:
+            results.append({"action": action.lower(), "ok": False, "error": str(e)})
+    return results
+
+
+def _log_memo_results(client: ChatClient, persona: dict, results: list[dict]) -> None:
+    """Log memo command results. READ/LIST are silent (data goes in turn prompt).
+    CREATE/POST broadcast a short notification so other agents know about new activity."""
+    display = persona["display_name"]
+    for r in results:
+        action = r.get("action", "?")
+        if action == "list":
+            # Silent — agent sees threads in the turn prompt memo section
+            print(f"  {display}: memo list -> {len(r.get('threads', []))} threads")
+        elif action == "read":
+            # Silent — agent sees thread content via turn prompt memo section
+            print(f"  {display}: memo read '{r.get('title', '?')}' -> {len(r.get('posts', []))} posts")
+        elif action == "created":
+            title = r.get("title", "?")
+            _post_system(client, f"[Memos] {display} started a discussion: **{title}**")
+            print(f"  {display}: memo created '{title}'")
+        elif action == "posted":
+            thread_id = r.get("thread_id", "?")
+            _post_system(client, f"[Memos] {display} replied in thread {thread_id}")
+            print(f"  {display}: memo posted to '{thread_id}'")
+        elif not r.get("ok"):
+            print(f"  {display}: memo {action} failed - {r.get('error', '?')}")
+
+
 async def _process_json_response(
     client: ChatClient,
     parsed: dict,
@@ -663,7 +722,7 @@ async def _process_json_response(
     author = persona["display_name"]
 
     # 1. Normalize and execute commands
-    doc_cmds, gitlab_cmds, tickets_cmds, channels_to_join, dm_cmds, task_cmds = normalize_commands(parsed)
+    doc_cmds, gitlab_cmds, tickets_cmds, channels_to_join, dm_cmds, task_cmds, memo_cmds = normalize_commands(parsed)
 
     if doc_cmds:
         if on_activity:
@@ -707,6 +766,12 @@ async def _process_json_response(
                         print(f"  {author}: spawned task {task['task_id']}")
                     else:
                         print(f"  {author}: task rejected (at capacity)")
+
+    if memo_cmds:
+        if on_activity:
+            on_activity("posting to memos")
+        memo_results = _execute_memo_commands(client, memo_cmds, author)
+        _log_memo_results(client, persona, memo_results)
 
     # 2. Extract channel-routed messages
     return extract_messages(parsed, default_channel)
@@ -901,6 +966,7 @@ async def _run_loop(
             docs = client.list_docs()
             repos = client.list_repos()
             tickets = client.list_tickets()
+            memo_threads = client.get_memo_threads(include_posts=True)
 
             # 2. Build prompts and launch all sends in parallel
             async def _run_agent(pk, trigger_ch):
@@ -921,6 +987,7 @@ async def _run_loop(
                     offline_agents=offline_keys,
                     pending_dms=pending_dms,
                     verbosity=verbosity_map.get(pk, "normal"),
+                    memos=memo_threads,
                 )
                 # Show typing indicator and update agent status
                 display_name = persona["display_name"]

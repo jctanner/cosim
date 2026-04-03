@@ -304,6 +304,49 @@ class ChatClient:
         resp.raise_for_status()
         return resp.json()
 
+    # -- Memo-list API --
+
+    def get_memo_threads(self, include_posts: bool = False) -> list[dict]:
+        """Return list of memo-list discussion threads.
+
+        If include_posts=True, each thread includes 'recent_posts' with the last 2 posts.
+        """
+        try:
+            params = {}
+            if include_posts:
+                params["include_posts"] = "1"
+            resp = requests.get(f"{self.base_url}/api/memos/threads", params=params, timeout=10)
+            resp.raise_for_status()
+            return resp.json()
+        except Exception:
+            return []
+
+    def get_memo_thread(self, thread_id: str) -> dict | None:
+        """Get a single thread with its posts."""
+        resp = requests.get(f"{self.base_url}/api/memos/threads/{thread_id}", timeout=10)
+        resp.raise_for_status()
+        return resp.json()
+
+    def create_memo_thread(self, title: str, creator: str, description: str = "") -> dict:
+        """Create a new discussion thread."""
+        resp = requests.post(
+            f"{self.base_url}/api/memos/threads",
+            json={"title": title, "creator": creator, "description": description},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def post_memo(self, thread_id: str, text: str, author: str) -> dict:
+        """Post a reply to a discussion thread."""
+        resp = requests.post(
+            f"{self.base_url}/api/memos/threads/{thread_id}/posts",
+            json={"text": text, "author": author},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
     # -- Agent thoughts --
 
     def post_thoughts(self, persona_key: str, thinking: str, response: str):

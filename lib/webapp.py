@@ -445,6 +445,8 @@ def _reinitialize():
     # Clear emails and recaps (restored separately by session load if needed)
     from lib.email import clear_inbox
     clear_inbox()
+    from lib.memos import clear_memos
+    clear_memos()
     _recaps.clear()
 
 
@@ -619,6 +621,23 @@ WEB_UI = """<!DOCTYPE html>
   .email-item-subject { font-size: 13px; color: #e0e0e0; margin-top: 2px; overflow: hidden;
                         text-overflow: ellipsis; white-space: nowrap; }
   .email-item-date { font-size: 10px; color: #555; margin-top: 2px; }
+
+  /* -- Memos tab -- */
+  #memos-pane { padding: 0; flex-direction: row; }
+  #memos-sidebar { width: 300px; min-width: 300px; background: #121a30; border-right: 1px solid #0f3460;
+                   display: flex; flex-direction: column; overflow: hidden; }
+  #memos-main { flex: 1; overflow-y: auto; padding: 20px; }
+  .memo-thread-item { padding: 10px 12px; border-bottom: 1px solid #1a1a2e; cursor: pointer; transition: background 0.1s; }
+  .memo-thread-item:hover { background: #1a1a3e; }
+  .memo-thread-item.active { background: #1a1a3e; border-left: 3px solid #2ecc71; }
+  .memo-thread-title { font-size: 13px; font-weight: 700; color: #e0e0e0; }
+  .memo-thread-preview { font-size: 11px; color: #666; margin-top: 4px; overflow: hidden;
+                         text-overflow: ellipsis; white-space: nowrap; }
+  .memo-thread-meta { font-size: 10px; color: #555; margin-top: 2px; }
+  .memo-post { background: #1a1a2e; border: 1px solid #333; border-radius: 8px; padding: 14px; margin-bottom: 10px; }
+  .memo-post-author { font-size: 12px; font-weight: 700; color: #4fc3f7; }
+  .memo-post-date { font-size: 10px; color: #555; margin-left: 8px; }
+  .memo-post-text { font-size: 13px; color: #e0e0e0; margin-top: 8px; line-height: 1.5; white-space: pre-wrap; }
 
   /* -- Events tab -- */
   #events-pane { padding: 0; flex-direction: row; }
@@ -1009,6 +1028,7 @@ WEB_UI = """<!DOCTYPE html>
   <button class="header-tab" data-tab="gitlab">GitLab</button>
   <button class="header-tab" data-tab="tickets">Tickets</button>
   <button class="header-tab" data-tab="email">Email</button>
+  <button class="header-tab" data-tab="memos">Memos</button>
   <button class="header-tab" data-tab="events">Events</button>
   <button class="header-tab" data-tab="npcs">NPCs</button>
   <button class="header-tab" data-tab="usage">Usage</button>
@@ -1367,6 +1387,41 @@ WEB_UI = """<!DOCTYPE html>
       <div id="email-empty-state" style="color:#666;text-align:center;padding:60px;font-size:14px">Select an email to read, or compose a new one.</div>
     </div>
   </div>
+  <!-- Memos tab -->
+  <div id="memos-pane" class="tab-pane">
+    <div id="memos-sidebar">
+      <div style="padding:10px;border-bottom:1px solid #333">
+        <button id="create-memo-thread-btn" class="session-btn" style="width:100%;background:#2ecc71;border-color:#2ecc71;color:#fff;font-size:12px">New Discussion</button>
+      </div>
+      <div id="memo-threads-list" style="flex:1;overflow-y:auto"></div>
+      <div id="memo-threads-empty" style="color:#666;text-align:center;padding:20px;font-size:12px">No discussion threads yet.</div>
+    </div>
+    <div id="memos-main">
+      <div id="memo-thread-viewer" style="display:none">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:16px">
+          <div>
+            <h2 id="memo-thread-title" style="color:#e0e0e0;margin:0 0 4px 0;font-size:18px"></h2>
+            <div id="memo-thread-meta" style="font-size:11px;color:#555"></div>
+            <div id="memo-thread-description" style="font-size:13px;color:#888;margin-top:8px"></div>
+          </div>
+          <button id="memo-delete-btn" style="background:transparent;border:1px solid #e94560;color:#e94560;padding:4px 10px;border-radius:4px;font-size:11px;cursor:pointer" title="Delete thread">Delete</button>
+        </div>
+        <div id="memo-posts-list" style="margin:16px 0"></div>
+        <div style="border-top:1px solid #333;padding-top:12px">
+          <div style="display:flex;gap:8px;margin-bottom:8px">
+            <input id="memo-reply-name" type="text" placeholder="Name" style="flex:1;background:#111;color:#e0e0e0;border:1px solid #333;padding:6px 10px;border-radius:4px;font-size:12px" autocomplete="off" />
+            <select id="memo-reply-role" style="flex:1;background:#111;color:#e0e0e0;border:1px solid #333;padding:6px 10px;border-radius:4px;font-size:12px"></select>
+          </div>
+          <input id="memo-reply-role-custom" type="text" placeholder="Custom role..." style="display:none;width:100%;background:#111;color:#e0e0e0;border:1px solid #333;padding:6px 10px;border-radius:4px;font-size:12px;margin-bottom:8px;box-sizing:border-box" autocomplete="off" />
+          <textarea id="memo-reply-text" placeholder="Post a reply..." style="width:100%;min-height:80px;background:#111;color:#e0e0e0;border:1px solid #333;padding:10px;border-radius:6px;font-family:inherit;resize:vertical;font-size:13px;box-sizing:border-box"></textarea>
+          <div style="display:flex;gap:8px;margin-top:8px;justify-content:flex-end">
+            <button id="memo-reply-send" class="modal-btn-primary" style="background:#2ecc71;font-size:12px">Post Reply</button>
+          </div>
+        </div>
+      </div>
+      <div id="memo-empty-state" style="color:#666;text-align:center;padding:60px;font-size:14px">Select a discussion thread or create a new one.</div>
+    </div>
+  </div>
   <!-- Advanced tab -->
   <div id="advanced-pane" class="tab-pane">
     <div id="advanced-main" style="flex:1;padding:20px;overflow-y:auto">
@@ -1379,6 +1434,33 @@ WEB_UI = """<!DOCTYPE html>
           <button id="clear-all-btn" class="session-btn" style="background:#e94560;border-color:#e94560;color:#fff">Clear Everything</button>
         </div>
       </div>
+    </div>
+  </div>
+</div>
+
+<!-- Memo Create Thread Modal -->
+<div class="modal-overlay" id="memo-create-modal">
+  <div class="modal" style="max-width:500px">
+    <h2>New Discussion Thread</h2>
+    <div class="modal-field">
+      <label>Posted by</label>
+      <div style="display:flex;gap:8px">
+        <input id="memo-create-name" type="text" placeholder="Name" style="flex:1" autocomplete="off" />
+        <select id="memo-create-role" style="flex:1"></select>
+      </div>
+      <input id="memo-create-role-custom" type="text" placeholder="Custom role..." style="display:none;width:100%;margin-top:6px" autocomplete="off" />
+    </div>
+    <div class="modal-field">
+      <label>Title</label>
+      <input id="memo-create-title" type="text" placeholder="Discussion thread title..." autocomplete="off" />
+    </div>
+    <div class="modal-field">
+      <label>Description (optional)</label>
+      <textarea id="memo-create-description" style="width:100%;min-height:60px;background:#111;color:#e0e0e0;border:1px solid #333;padding:10px;border-radius:6px;font-family:inherit;resize:vertical;font-size:13px;box-sizing:border-box" placeholder="Brief description of the discussion topic..."></textarea>
+    </div>
+    <div class="modal-actions">
+      <button class="session-btn" id="memo-create-cancel">Cancel</button>
+      <button class="modal-btn-primary" id="memo-create-submit" style="background:#2ecc71">Create Thread</button>
     </div>
   </div>
 </div>
@@ -1786,6 +1868,7 @@ document.querySelectorAll('.header-tab').forEach(tab => {
     if (target === 'npcs') loadNPCs();
     if (target === 'events') loadEventPool();
     if (target === 'email') loadEmails();
+    if (target === 'memos') loadMemoThreads();
     if (target === 'recap') renderRecapList();
     if (target === 'usage') loadUsage();
   });
@@ -2662,6 +2745,20 @@ function populateAllRoleDropdowns() {
   if (emailRoleSel) {
     populateRoleSelect(emailRoleSel, HUMAN_ROLES, {empty: true, emptyLabel: 'No role', default: 'Scenario Director'});
     emailRoleSel.innerHTML += '<option value="custom">Custom...</option>';
+  }
+
+  // Memo reply role
+  const memoRoleSel = document.getElementById('memo-reply-role');
+  if (memoRoleSel) {
+    populateRoleSelect(memoRoleSel, HUMAN_ROLES, {empty: true, emptyLabel: 'No role', default: 'Scenario Director'});
+    memoRoleSel.innerHTML += '<option value="custom">Custom...</option>';
+  }
+
+  // Memo create role
+  const memoCreateRoleSel = document.getElementById('memo-create-role');
+  if (memoCreateRoleSel) {
+    populateRoleSelect(memoCreateRoleSel, HUMAN_ROLES, {empty: true, emptyLabel: 'No role', default: 'Scenario Director'});
+    memoCreateRoleSel.innerHTML += '<option value="custom">Custom...</option>';
   }
 }
 
@@ -3565,6 +3662,163 @@ document.getElementById('email-compose-send').addEventListener('click', async ()
     showNotice('Email sent: ' + subject);
   }
 });
+
+// -- Memos tab --
+
+let _currentMemoThread = null;
+
+async function loadMemoThreads() {
+  const list = document.getElementById('memo-threads-list');
+  const empty = document.getElementById('memo-threads-empty');
+  const resp = await fetch('/api/memos/threads');
+  const threads = await resp.json();
+  list.innerHTML = '';
+  empty.style.display = threads.length ? 'none' : 'block';
+  threads.forEach(t => {
+    const item = document.createElement('div');
+    item.className = 'memo-thread-item' + (t.id === _currentMemoThread ? ' active' : '');
+    item.dataset.id = t.id;
+    const preview = t.last_post_text || t.description || 'No posts yet';
+    const postInfo = t.post_count + ' post' + (t.post_count !== 1 ? 's' : '');
+    const age = _memoTimeAgo(t.last_post_at);
+    item.innerHTML =
+      '<div class="memo-thread-title">' + escapeHtml(t.title) + '</div>' +
+      '<div class="memo-thread-preview">' + escapeHtml(preview.substring(0, 60)) + '</div>' +
+      '<div class="memo-thread-meta">' + escapeHtml(t.creator) + ' &middot; ' + postInfo + ' &middot; ' + age + '</div>';
+    item.addEventListener('click', () => viewMemoThread(t.id));
+    list.appendChild(item);
+  });
+}
+
+function _memoTimeAgo(ts) {
+  const seconds = Math.floor(Date.now() / 1000 - ts);
+  if (seconds < 60) return 'just now';
+  if (seconds < 3600) return Math.floor(seconds / 60) + 'm ago';
+  if (seconds < 86400) return Math.floor(seconds / 3600) + 'h ago';
+  return Math.floor(seconds / 86400) + 'd ago';
+}
+
+async function viewMemoThread(threadId) {
+  _currentMemoThread = threadId;
+  document.querySelectorAll('.memo-thread-item').forEach(el =>
+    el.classList.toggle('active', el.dataset.id === threadId));
+
+  const resp = await fetch('/api/memos/threads/' + threadId);
+  if (!resp.ok) { showNotice('Thread not found'); return; }
+  const thread = await resp.json();
+
+  document.getElementById('memo-thread-title').textContent = thread.title;
+  document.getElementById('memo-thread-meta').textContent =
+    'Started by ' + thread.creator + ' &middot; ' + _memoTimeAgo(thread.created_at);
+  document.getElementById('memo-thread-meta').innerHTML =
+    'Started by ' + escapeHtml(thread.creator) + ' &middot; ' + _memoTimeAgo(thread.created_at);
+  const descEl = document.getElementById('memo-thread-description');
+  descEl.textContent = thread.description || '';
+  descEl.style.display = thread.description ? '' : 'none';
+
+  const postsList = document.getElementById('memo-posts-list');
+  const posts = thread.posts || [];
+  postsList.innerHTML = '';
+  posts.forEach(p => {
+    const div = document.createElement('div');
+    div.className = 'memo-post';
+    const ts = new Date(p.timestamp * 1000).toLocaleString();
+    div.innerHTML =
+      '<div style="display:flex;align-items:baseline">' +
+        '<span class="memo-post-author">' + escapeHtml(p.author) + '</span>' +
+        '<span class="memo-post-date">' + ts + '</span>' +
+      '</div>' +
+      '<div class="memo-post-text">' + escapeHtml(p.text) + '</div>';
+    postsList.appendChild(div);
+  });
+
+  document.getElementById('memo-thread-viewer').style.display = '';
+  document.getElementById('memo-empty-state').style.display = 'none';
+  document.getElementById('memo-reply-text').value = '';
+}
+
+function _getMemoSender(nameId, roleId, customId) {
+  const name = document.getElementById(nameId).value.trim() || 'Anonymous';
+  let role = document.getElementById(roleId).value;
+  if (role === 'custom') role = document.getElementById(customId).value.trim();
+  return role ? name + ' (' + role + ')' : name;
+}
+
+document.getElementById('memo-reply-role').addEventListener('change', (e) => {
+  document.getElementById('memo-reply-role-custom').style.display = e.target.value === 'custom' ? '' : 'none';
+});
+
+document.getElementById('memo-create-role').addEventListener('change', (e) => {
+  document.getElementById('memo-create-role-custom').style.display = e.target.value === 'custom' ? '' : 'none';
+});
+
+document.getElementById('create-memo-thread-btn').addEventListener('click', () => {
+  const modal = document.getElementById('memo-create-modal');
+  document.getElementById('memo-create-title').value = '';
+  document.getElementById('memo-create-description').value = '';
+  document.getElementById('memo-create-name').value = '';
+  document.getElementById('memo-create-role').value = 'Scenario Director';
+  document.getElementById('memo-create-role-custom').style.display = 'none';
+  document.getElementById('memo-create-role-custom').value = '';
+  openModal('memo-create-modal');
+  document.getElementById('memo-create-title').focus();
+});
+
+document.getElementById('memo-create-cancel').addEventListener('click', () => {
+  closeModal('memo-create-modal');
+});
+
+document.getElementById('memo-create-submit').addEventListener('click', async () => {
+  const title = document.getElementById('memo-create-title').value.trim();
+  if (!title) { document.getElementById('memo-create-title').focus(); return; }
+  const description = document.getElementById('memo-create-description').value.trim();
+  const creator = _getMemoSender('memo-create-name', 'memo-create-role', 'memo-create-role-custom');
+  const resp = await fetch('/api/memos/threads', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({title, creator, description})
+  });
+  if (resp.ok) {
+    const thread = await resp.json();
+    closeModal('memo-create-modal');
+    loadMemoThreads();
+    viewMemoThread(thread.id);
+    showNotice('Thread created: ' + title);
+  }
+});
+
+document.getElementById('memo-reply-send').addEventListener('click', async () => {
+  if (!_currentMemoThread) return;
+  const textarea = document.getElementById('memo-reply-text');
+  const text = textarea.value.trim();
+  if (!text) return;
+  const author = _getMemoSender('memo-reply-name', 'memo-reply-role', 'memo-reply-role-custom');
+  const resp = await fetch('/api/memos/threads/' + _currentMemoThread + '/posts', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({text, author})
+  });
+  if (resp.ok) {
+    textarea.value = '';
+    viewMemoThread(_currentMemoThread);
+    loadMemoThreads();
+  }
+});
+
+document.getElementById('memo-delete-btn').addEventListener('click', async () => {
+  if (!_currentMemoThread) return;
+  if (!confirm('Delete this discussion thread and all its posts?')) return;
+  const resp = await fetch('/api/memos/threads/' + _currentMemoThread, {method: 'DELETE'});
+  if (resp.ok) {
+    _currentMemoThread = null;
+    document.getElementById('memo-thread-viewer').style.display = 'none';
+    document.getElementById('memo-empty-state').style.display = '';
+    loadMemoThreads();
+    showNotice('Thread deleted');
+  }
+});
+
+// Load memos when tab is selected — handled by tab click handler below
 
 // -- Events tab --
 
@@ -5034,6 +5288,26 @@ def create_app() -> Flask:
                         _messages.append(msg)
                     _persist_message(msg)
                     _broadcast(msg)
+            elif action_type == "memo":
+                from lib.memos import create_thread, post_memo
+                title = action.get("title", action.get("thread_title", ""))
+                creator = action.get("sender", action.get("creator", "System"))
+                description = action.get("description", "")
+                text = action.get("text", action.get("content", ""))
+                thread_id = action.get("thread_id", "")
+                if thread_id and text:
+                    # Post to existing thread
+                    try:
+                        post = post_memo(thread_id, text, creator)
+                        results.append({"type": "memo", "action": "posted", "thread_id": thread_id, "post_id": post["id"]})
+                    except ValueError:
+                        results.append({"type": "memo", "action": "post_failed", "error": "thread not found"})
+                elif title:
+                    # Create new thread, optionally with an initial post
+                    thread = create_thread(title, creator, description)
+                    if text:
+                        post_memo(thread["id"], text, creator)
+                    results.append({"type": "memo", "action": "created", "thread_id": thread["id"], "title": title})
         # Log the event with results
         data["results"] = results
         entry = fire_event(data)
@@ -5213,6 +5487,61 @@ Write a compelling recap of this simulation session in the requested style. Keep
         if not entry:
             return jsonify({"error": "not found"}), 404
         return jsonify(entry)
+
+    # -- Memo-list API --
+
+    @app.route("/api/memos/threads", methods=["GET"])
+    def list_memo_threads():
+        from lib.memos import get_threads
+        include_posts = request.args.get("include_posts", "").lower() in ("1", "true")
+        return jsonify(get_threads(include_recent_posts=include_posts))
+
+    @app.route("/api/memos/threads", methods=["POST"])
+    def create_memo_thread_endpoint():
+        from lib.memos import create_thread
+        data = request.get_json(force=True)
+        title = data.get("title", "").strip()
+        if not title:
+            return jsonify({"error": "title required"}), 400
+        creator = data.get("creator", "System")
+        description = data.get("description", "").strip()
+        entry = create_thread(title, creator, description)
+        return jsonify(entry), 201
+
+    @app.route("/api/memos/threads/<thread_id>", methods=["GET"])
+    def get_memo_thread_detail(thread_id):
+        from lib.memos import get_thread, get_posts
+        thread = get_thread(thread_id)
+        if not thread:
+            return jsonify({"error": "not found"}), 404
+        thread["posts"] = get_posts(thread_id)
+        return jsonify(thread)
+
+    @app.route("/api/memos/threads/<thread_id>/posts", methods=["GET"])
+    def list_memo_posts(thread_id):
+        from lib.memos import get_posts
+        return jsonify(get_posts(thread_id))
+
+    @app.route("/api/memos/threads/<thread_id>/posts", methods=["POST"])
+    def post_memo_endpoint(thread_id):
+        from lib.memos import post_memo
+        data = request.get_json(force=True)
+        text = data.get("text", "").strip()
+        if not text:
+            return jsonify({"error": "text required"}), 400
+        author = data.get("author", "System")
+        try:
+            entry = post_memo(thread_id, text, author)
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 404
+        return jsonify(entry), 201
+
+    @app.route("/api/memos/threads/<thread_id>", methods=["DELETE"])
+    def delete_memo_thread_endpoint(thread_id):
+        from lib.memos import delete_thread
+        if delete_thread(thread_id):
+            return jsonify({"ok": True})
+        return jsonify({"error": "not found"}), 404
 
     # -- Character templates API --
 
