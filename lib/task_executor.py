@@ -134,6 +134,14 @@ class TaskExecutor:
             f.write(f"{'=' * 60}\n\n")
             f.write(f"PROMPT:\n{prompt}\n\n{'=' * 60}\n\n")
 
+        # Create a scratch file so the worker can Write to it later
+        # (the SDK enforces a read-before-write guard per session).
+        scratch_dir = self._log_dir / "scratch"
+        scratch_dir.mkdir(parents=True, exist_ok=True)
+        scratch_file = scratch_dir / f"{record['task_id']}.md"
+        scratch_file.write_text("")
+        record["_scratch_file"] = str(scratch_file)
+
         cwd = str(Path(__file__).parent.parent)
         options = ClaudeAgentOptions(
             cwd=cwd,
@@ -170,8 +178,14 @@ class TaskExecutor:
         if record["context"]:
             context_section = f"\n**Context:** {record['context']}\n"
 
+        scratch_file = record.get("_scratch_file", "/tmp/worker_scratch.md")
         tools_str = ", ".join(self._allowed_tools)
         return f"""You are a background worker executing a task for {record['agent_name']}.
+
+## FIRST STEP — Read your scratch file
+Before doing anything else, use the Read tool to read this file:
+  {scratch_file}
+This is your scratch file. You may use it for notes or drafts during your work.
 
 ## Your Task
 **Goal:** {record['goal']}
@@ -185,7 +199,7 @@ class TaskExecutor:
 - Do NOT write files directly to `var/docs/` — documents must go through the structured output below to be indexed properly.
 - Do NOT write files directly to `var/gitlab/` — commits must go through the structured output below.
 - You CAN read files from those directories to understand existing content.
-- You CAN write temporary/working files elsewhere as needed.
+- You CAN write to your scratch file (`{scratch_file}`) or other temporary files as needed.
 
 ## Output Format
 When finished, output a JSON block with this structure:
