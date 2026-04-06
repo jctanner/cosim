@@ -725,6 +725,10 @@ Reply with a single JSON object. Format: {{"action": "respond", "messages": [...
     verbosity_instruction = VERBOSITY_INSTRUCTIONS.get(verbosity, "")
     if verbosity_instruction:
         parts.append(verbosity_instruction)
+    # Add per-persona word limit if configured
+    max_words = persona.get("max_words")
+    if max_words:
+        parts.append(f"**WORD LIMIT: Keep each message under {max_words} words. This is a hard limit.**")
     parts.append(action)
 
     return "\n\n---\n\n".join(parts)

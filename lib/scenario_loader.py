@@ -40,6 +40,7 @@ def load_scenario(scenario_name: str) -> None:
             "display_name": char_info["display_name"],
             "team_description": char_info.get("team_description", key),
             "character_file": str(scenario_dir / char_file),
+            "max_words": char_info.get("max_words"),
         }
 
     # --- Populate personas.DEFAULT_CHANNELS ---
