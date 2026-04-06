@@ -450,6 +450,71 @@ def _reinitialize():
     _recaps.clear()
 
 
+def _restore_session_extras(instance_name: str):
+    """Re-restore session data that gets cleared by _load_scenario / _reinitialize.
+
+    load_session() restores memos, events, emails, and recaps, but
+    _load_scenario() resets the event pool and _reinitialize() clears
+    memos, emails, and recaps. This function re-applies the saved data.
+    """
+    import json
+    from lib.session import INSTANCES_DIR
+
+    instance_dir = INSTANCES_DIR / instance_name
+
+    # Memos
+    memos_path = instance_dir / "memos.json"
+    if memos_path.exists():
+        try:
+            from lib.memos import restore_memos
+            memo_data = json.loads(memos_path.read_text())
+            restore_memos(memo_data.get("threads", {}), memo_data.get("posts", []))
+        except Exception:
+            pass
+
+    # Events (pool + log)
+    pool_path = instance_dir / "event_pool.json"
+    log_path = instance_dir / "event_log.json"
+    if pool_path.exists():
+        try:
+            from lib.events import restore_events
+            pool = json.loads(pool_path.read_text())
+            log = json.loads(log_path.read_text()) if log_path.exists() else []
+            restore_events(pool, log)
+        except Exception:
+            pass
+
+    # Emails
+    emails_path = instance_dir / "emails.json"
+    if emails_path.exists():
+        try:
+            from lib.email import restore_inbox
+            restore_inbox(json.loads(emails_path.read_text()))
+        except Exception:
+            pass
+
+    # Recaps
+    recaps_path = instance_dir / "recaps.json"
+    if recaps_path.exists():
+        try:
+            data = json.loads(recaps_path.read_text())
+            _recaps.clear()
+            _recaps.extend(data)
+        except Exception:
+            pass
+
+    # Agent thoughts
+    thoughts_path = instance_dir / "thoughts.json"
+    if thoughts_path.exists():
+        try:
+            thoughts = json.loads(thoughts_path.read_text())
+            with _agent_thoughts_lock:
+                _agent_thoughts.clear()
+                _agent_thoughts.update(thoughts)
+        except Exception:
+            pass
+
+
 def _broadcast_tickets_event(action: str, data: dict):
     """Send a tickets_event through the existing SSE subscribers."""
     payload = {"type": "tickets_event", "action": action}
@@ -720,7 +785,17 @@ WEB_UI = """<!DOCTYPE html>
   .memo-post { background: var(--bg); border: 1px solid var(--border-dark); border-radius: 8px; padding: 14px; margin-bottom: 10px; }
   .memo-post-author { font-size: 12px; font-weight: 700; color: var(--highlight); }
   .memo-post-date { font-size: 10px; color: var(--text-dimmer); margin-left: 8px; }
-  .memo-post-text { font-size: 13px; color: var(--text); margin-top: 8px; line-height: 1.5; white-space: pre-wrap; }
+  .memo-post-text { font-size: 13px; color: var(--text); margin-top: 8px; line-height: 1.5; }
+  .memo-post-text p { margin: 0 0 8px 0; }
+  .memo-post-text p:last-child { margin-bottom: 0; }
+  .memo-post-text ul, .memo-post-text ol { margin: 4px 0 8px 20px; padding: 0; }
+  .memo-post-text pre { background: var(--input-bg); padding: 8px 10px; border-radius: 4px; overflow-x: auto; margin: 8px 0; }
+  .memo-post-text code { background: var(--input-bg); padding: 1px 4px; border-radius: 3px; font-size: 12px; }
+  .memo-post-text pre code { background: none; padding: 0; }
+  .memo-post-text h1, .memo-post-text h2, .memo-post-text h3, .memo-post-text h4 { margin: 12px 0 6px 0; color: var(--text-bright); }
+  .memo-post-text blockquote { border-left: 3px solid var(--border-dark); margin: 8px 0; padding: 4px 12px; color: var(--text-dim); }
+  .memo-post-text table { border-collapse: collapse; margin: 8px 0; }
+  .memo-post-text th, .memo-post-text td { border: 1px solid var(--border-dark); padding: 4px 8px; font-size: 12px; }
 
   /* -- Events tab -- */
   #events-pane { padding: 0; flex-direction: row; }
@@ -3817,7 +3892,7 @@ async function viewMemoThread(threadId) {
   document.getElementById('memo-thread-meta').innerHTML =
     'Started by ' + escapeHtml(thread.creator) + ' &middot; ' + _memoTimeAgo(thread.created_at);
   const descEl = document.getElementById('memo-thread-description');
-  descEl.textContent = thread.description || '';
+  descEl.innerHTML = thread.description ? renderMarkdown(thread.description) : '';
   descEl.style.display = thread.description ? '' : 'none';
 
   const postsList = document.getElementById('memo-posts-list');
@@ -3832,7 +3907,7 @@ async function viewMemoThread(threadId) {
         '<span class="memo-post-author">' + escapeHtml(p.author) + '</span>' +
         '<span class="memo-post-date">' + ts + '</span>' +
       '</div>' +
-      '<div class="memo-post-text">' + escapeHtml(p.text) + '</div>';
+      '<div class="memo-post-text">' + renderMarkdown(p.text) + '</div>';
     postsList.appendChild(div);
   });
 
@@ -5990,6 +6065,9 @@ Write a compelling recap of this simulation session in the requested style. Keep
                 _load_scenario(scenario)
                 set_scenario(scenario)
             _reinitialize()
+            # Re-restore memos, events, emails, and recaps that were
+            # cleared by _load_scenario / _reinitialize
+            _restore_session_extras(instance_name)
             # Apply saved memberships on top of defaults
             memberships = get_memberships_from_instance(instance_name)
             if memberships:
