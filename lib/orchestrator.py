@@ -601,8 +601,8 @@ def _parse_multi_channel_response(text: str, default_channel: str) -> dict[str, 
 
 
 def _post_system(client: ChatClient, text: str) -> None:
-    """Post a system message to #general so agents can see command results."""
-    client.post_message("System", text, channel="#general")
+    """Post a system message to #system so agents can see command results."""
+    client.post_message("System", text, channel="#system")
 
 
 def _log_doc_results(client: ChatClient, persona: dict, results: list[dict]) -> None:
@@ -1151,7 +1151,6 @@ async def _process_single_command(client, pool, personas, scenario_name, cmd):
                     await pool._open_session(agent_key, build_initial_prompt)
                     personas = list(pool._personas.values())
                     client.post_message("System", f"{persona['display_name']} has joined the team!", channel="#system")
-                    client.post_message("System", f"Welcome {persona['display_name']} to the team!", channel="#general")
                     print(f"  Agent added: {persona['display_name']}")
                 except (Exception, BaseException) as e:
                     print(f"  Failed to add agent: {e}")
@@ -1193,7 +1192,6 @@ async def _process_single_command(client, pool, personas, scenario_name, cmd):
             except Exception:
                 pass
             client.post_message("System", f"{display_name} has left the company.", channel="#system")
-            client.post_message("System", f"{display_name} has left the company.", channel="#general")
             print(f"  Agent removed: {display_name}")
 
     elif action == "restart":
