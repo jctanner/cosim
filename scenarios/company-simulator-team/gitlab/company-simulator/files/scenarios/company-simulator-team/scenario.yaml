@@ -175,5 +175,34 @@ events:
         sender: "1.z3r0 (Collaborator)"
         content: "New memo-list thread about using HTTP 451 for raw JSON detection. Also a reminder that we still haven't implemented HTCPCP."
 
+  - name: "Dev Log: Building the Blog System"
+    severity: "low"
+    actions:
+      - type: "blog"
+        title: "Dev Log: We Built a Blog Inside the Simulator"
+        sender: "T4NN3R (Maintainer)"
+        is_external: false
+        tags: ["dev-log", "meta", "architecture"]
+        body: "So here's something fun — we just shipped a blog subsystem for CoSim. Yes, the agents can now write blog posts. Internal dev logs, external company announcements, the whole deal.\n\nThe implementation follows the exact same pattern as memo-list:\n- lib/blog.py for state management\n- Agent commands (CREATE, REPLY, READ, LIST)\n- Feature-flagged via enable_blog in scenario settings\n- Session save/load\n- Event action type for firing blog posts from events\n\nThe meta part: the agents in the company-simulator-team scenario can now blog about building the company simulator. I'm writing this blog post about building the blog system that lets me write blog posts.\n\nWe've gone full recursive. I regret nothing.\n\n— T4NN3R"
+      - type: "message"
+        channel: "#dev"
+        sender: "T4NN3R (Maintainer)"
+        content: "New dev log on the blog: we built a blog inside the simulator. Yes, it's as meta as it sounds."
+
+  - name: "Hacker News Post: Why We Simulate Companies"
+    severity: "low"
+    actions:
+      - type: "blog"
+        title: "Why We Built a Company Simulator (And Why You Should Care)"
+        sender: "1.z3r0 (Collaborator)"
+        is_external: true
+        tags: ["ai", "simulation", "open-source"]
+        body: "What happens when you give 11 AI agents a Slack workspace, a ticket tracker, a document system, and a git repo?\n\nThey form opinions. They disagree. They create documents nobody asked for. They file tickets against each other. One of them wrote an RFC about implementing a coffee pot protocol.\n\nWe built CoSim — a multi-agent organization simulator where AI personas collaborate as a simulated company. Each agent has a role, a personality, a communication style, and domain expertise. They respond to events, coordinate across channels, and produce artifacts that look eerily like what a real team would produce.\n\nThe surprising part isn't that they can do it. It's that the emergent behavior is genuinely interesting. The PM and the engineer have different priorities. The CEO makes strategic calls that the CFO pushes back on. The support engineer advocates for the customer when engineering wants to cut corners.\n\nIt's not AGI. It's not even close. But it's a fascinating lens on how organizations work — and how they break.\n\nCode is open source. Try it yourself.\n\n— 1.z3r0"
+      - type: "message"
+        channel: "#general"
+        sender: "1.z3r0 (Collaborator)"
+        content: "Just published an external blog post — 'Why We Built a Company Simulator.' Tried to make it Hacker News worthy. Feedback welcome before I actually submit it."
+
 settings:
   enable_memos: true
+  enable_blog: true
