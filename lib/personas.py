@@ -267,6 +267,83 @@ def _build_memo_command_example() -> str:
     {{"type": "memo", "action": "CREATE", "params": {{"title": "RFC: API Rate Limiting Strategy", "description": "Discussion thread for rate limiting design decisions"}}}}"""
 
 
+def _build_blog_command_docs() -> str:
+    """Return blog command documentation if blog is enabled."""
+    from lib.scenario_loader import get_settings
+    if not get_settings().get("enable_blog", False):
+        return ""
+    return """
+
+**Blog commands** (`type: "blog"`):
+
+Use blog for authored long-form content — dev logs, shipping announcements, thought pieces. Internal posts are visible to the team only. External posts are customer-facing — be professional and polished. Do NOT use blog for quick discussions (use memo-list) or reference docs (use docs).
+
+| action | params |
+|--------|--------|
+| `CREATE` | `title`, `body`, `is_external` (bool, default false), `tags` (optional list) |
+| `REPLY` | `post_slug`, `text` — reply to a blog post |
+| `UPDATE` | `post_slug`, plus any of: `title`, `body`, `status` (draft/published/unpublished), `is_external`, `tags` |
+| `READ` | `post_slug` — read a blog post and its replies |
+| `LIST` | `filter` (optional: "internal", "external", or omit for all) |
+"""
+
+
+def _build_blog_command_example() -> str:
+    """Return blog command example if blog is enabled."""
+    from lib.scenario_loader import get_settings
+    if not get_settings().get("enable_blog", False):
+        return ""
+    return """,
+    {{"type": "blog", "action": "CREATE", "params": {{"title": "Shipping Update: Rate Limiting is Live", "body": "We shipped API rate limiting today. Here's what changed...", "is_external": true, "tags": ["engineering", "api"]}}}}"""
+
+
+def _build_blog_section(blog_posts: list[dict] | None) -> str:
+    """Build a section showing recent blog posts with latest reply for agents."""
+    from lib.scenario_loader import get_settings
+    if not get_settings().get("enable_blog", False):
+        return ""
+    if not blog_posts:
+        return (
+            "## Company Blog\n\n"
+            "No blog posts yet. Use blog commands to write dev logs, shipping updates, "
+            "or customer-facing announcements.\n"
+            "Internal posts are team-only. External posts are public — write professionally."
+        )
+    lines = [
+        "## Company Blog",
+        "",
+        "Use blog for authored long-form content. Internal = team-only, External = customer-facing.",
+        "",
+    ]
+    for p in blog_posts[:10]:
+        status = p.get("status", "published")
+        visibility = "EXTERNAL" if p.get("is_external") else "internal"
+        if status != "published":
+            visibility += f", {status}"
+        reply_info = f"{p['reply_count']} replies"
+        if p.get("last_reply_author"):
+            reply_info += f", last by {p['last_reply_author']}"
+        tags_str = f" [{', '.join(p.get('tags', []))}]" if p.get("tags") else ""
+        lines.append(f"### {p['title']} [{visibility}]{tags_str}")
+        lines.append(f"_by {p['author']}_ — {reply_info}")
+        # Show body preview
+        body = p.get("body", "")
+        if len(body) > 200:
+            body = body[:200] + "..."
+        lines.append(body)
+        # Show last reply if available
+        replies = p.get("recent_replies", [])
+        if replies:
+            r = replies[-1]
+            rtext = r.get("text", "")
+            if len(rtext) > 150:
+                rtext = rtext[:150] + "..."
+            lines.append(f"  > **{r.get('author', '?')}** replied: {rtext}")
+        lines.append(f"  (slug: {p['slug']})")
+        lines.append("")
+    return "\n".join(lines)
+
+
 def build_active_tasks_section(persona_key: str) -> str:
     """Build a section showing the agent's active background tasks."""
     from lib.task_executor import get_executor
@@ -474,7 +551,7 @@ Valid statuses: open, in_progress, resolved, closed. Valid priorities: low, medi
 | (none) | `to` (persona key from team listing, e.g. "engmgr"), `text` |
 
 DMs are private one-shot messages delivered at the recipient's next turn. Max 2 per response. Use the persona key shown in parentheses in the team listing above (e.g. `engmgr`, `pm`, `ceo`). Use for pre-alignment, escalation, or private coordination. Do not use DMs for anything that should be part of the public record.
-{_build_task_command_docs()}{_build_memo_command_docs()}
+{_build_task_command_docs()}{_build_memo_command_docs()}{_build_blog_command_docs()}
 ### Complete Example
 
 ```json
@@ -488,7 +565,7 @@ DMs are private one-shot messages delivered at the recipient's next turn. Max 2 
     {{"type": "doc", "action": "CREATE", "params": {{"folder": "engineering", "title": "Rate Limiting Spec", "content": "## Rate Limiting\\n\\nEndpoints will enforce per-key limits..."}}}},
     {{"type": "tickets", "action": "CREATE", "params": {{"title": "Implement API rate limiting", "assignee": "Alex (Senior Eng)", "priority": "high", "description": "Implement rate limiting per the spec document."}}}},
     {{"type": "channel", "action": "JOIN", "params": {{"channel": "#devops"}}}},
-    {{"type": "dm", "params": {{"to": "engmgr", "text": "Heads up — the rate limiting estimate is aggressive. May need to push back if sales promises a timeline."}}}}{_build_task_command_example()}{_build_memo_command_example()}
+    {{"type": "dm", "params": {{"to": "engmgr", "text": "Heads up — the rate limiting estimate is aggressive. May need to push back if sales promises a timeline."}}}}{_build_task_command_example()}{_build_memo_command_example()}{_build_blog_command_example()}
   ]
 }}
 ```
@@ -597,6 +674,7 @@ def build_turn_prompt(
     pending_dms: list[dict] | None = None,
     verbosity: str = "normal",
     memos: list[dict] | None = None,
+    blog_posts: list[dict] | None = None,
 ) -> str:
     """Build a lean per-turn prompt for a persistent session.
 
@@ -722,6 +800,9 @@ Reply with a single JSON object. Format: {{"action": "respond", "messages": [...
     memos_section = _build_memos_section(memos)
     if memos_section:
         parts.append(memos_section)
+    blog_section = _build_blog_section(blog_posts)
+    if blog_section:
+        parts.append(blog_section)
     parts.append(membership_section)
     # Add verbosity instruction
     verbosity_instruction = VERBOSITY_INSTRUCTIONS.get(verbosity, "")

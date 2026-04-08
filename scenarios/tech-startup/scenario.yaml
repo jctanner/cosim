@@ -277,11 +277,40 @@ events:
         subject: "REQUIRED: Annual Security Awareness Training — Due by March 15"
         body: "All team members,\n\nIt's that time of year. Annual Security Awareness Training is now available and MANDATORY for all employees.\n\nTopics covered:\n- Phishing and social engineering\n- Data handling and classification\n- Incident reporting procedures\n- Password and access management\n\nDeadline: March 15, 2026\n\nFailure to complete by the deadline will result in access restrictions.\n\nAccess the training at: training.internal/security-2026\n\n— Compliance Team"
 
+  - name: "Engineering Blog: Q2 Shipping Update"
+    severity: "low"
+    actions:
+      - type: "blog"
+        title: "Q2 Shipping Update: What We Built This Quarter"
+        sender: "Marcus (Eng Manager)"
+        is_external: false
+        tags: ["engineering", "quarterly-update"]
+        body: "Team,\n\nQuick recap of what the engineering team shipped in Q2:\n\n1. API rate limiting — per-key limits with sliding window counters\n2. Customer dashboard v2 — real-time metrics, export to CSV\n3. SSO integration — SAML 2.0 support for enterprise customers\n4. Infrastructure — migrated to multi-region deployment\n\nBiggest wins: rate limiting reduced abuse by 40%, dashboard v2 cut support tickets by 25%.\n\nBiggest miss: we didn't ship the webhook system. Pushed to Q3.\n\nLet's discuss priorities for Q3 in the comments.\n\n— Marcus"
+      - type: "message"
+        channel: "#engineering"
+        sender: "Marcus (Eng Manager)"
+        content: "Posted a Q2 shipping update on the engineering blog. Would love everyone's input on Q3 priorities."
+
+  - name: "Company Blog: Introducing Our API"
+    severity: "low"
+    actions:
+      - type: "blog"
+        title: "Introducing the StreamLine API: Build Integrations in Minutes"
+        sender: "Riley (Marketing)"
+        is_external: true
+        tags: ["product", "api", "launch"]
+        body: "We're excited to announce the public release of the StreamLine API.\n\nWith our REST API, you can:\n- Create and manage projects programmatically\n- Automate workflows with webhooks\n- Build custom dashboards with real-time data\n- Integrate with your existing tools\n\nOur API is designed for developers, by developers. Full documentation, client libraries in Python, Node.js, and Go, and a generous free tier.\n\nGet started at docs.streamline.io/api\n\nWe can't wait to see what you build."
+      - type: "message"
+        channel: "#marketing"
+        sender: "Riley (Marketing)"
+        content: "Just published the API launch blog post on the external blog. Can everyone take a look and make sure the messaging is on point?"
+
 settings:
   enable_background_tasks: true
   max_concurrent_tasks: 3
   task_timeout: 600
   enable_memos: true
+  enable_blog: true
   task_allowed_tools:
     - Bash
     - Read

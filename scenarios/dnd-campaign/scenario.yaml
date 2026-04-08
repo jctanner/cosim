@@ -145,6 +145,34 @@ events:
         sender: "Valdris (Dungeon Master)"
         content: "Brother Aldric, as you kneel in evening prayer, a vision strikes you like a hammer blow. You see the Spire whole — gleaming white against a blue sky. Then it shatters, and from the cracks pour shadows that devour the light. A voice, ancient and sorrowful, speaks: 'The Seal was never meant to be permanent. Find the three Anchors before the Hollow King walks again.' You wake on the floor of the chapel, nose bleeding, the taste of copper on your tongue."
 
+  - name: "The Bard's Chronicle"
+    severity: "low"
+    actions:
+      - type: "blog"
+        title: "The Bard's Chronicle: A Most Peculiar Evening at the Shattered Tankard"
+        sender: "Lyralei (Bard)"
+        is_external: false
+        tags: ["chronicle", "session-recap", "tavern"]
+        body: "Gather round, dear readers, for I have a tale to tell.\n\nIt began as most adventures do — in a tavern, with strangers, and with far too much ale. The Shattered Tankard in Thornwick is not the finest establishment I've graced with my presence, but it has a certain charm. The kind of charm that comes from low expectations and lower prices.\n\nOur party assembled as if by fate's own hand: a paladin who communes with open source, a rogue with more knives than social skills, a cleric whose prayers sound suspiciously like complaints, and myself — a humble bard, merely chronicling the chaos.\n\nThe Dungeon Master — and I use this title with the weight it deserves — spoke of a Shattered Spire and a Hollow King. Ominous names. Excellent material for a ballad.\n\nMore to come as our adventure unfolds.\n\n— Lyralei, Chronicler of the Improbable"
+      - type: "message"
+        channel: "#tavern"
+        sender: "Lyralei (Bard)"
+        content: "I've begun writing our chronicle on the blog. I intend to document every triumph, every failure, and every questionable decision. You're welcome."
+
+  - name: "Notice Board: Bounty Posted"
+    severity: "low"
+    actions:
+      - type: "blog"
+        title: "BOUNTY: Kobolds in the Northern Pass — 50 Gold Pieces"
+        sender: "Valdris (Dungeon Master)"
+        is_external: true
+        tags: ["bounty", "quest", "kobolds"]
+        body: "BY ORDER OF THE THORNWICK TOWN COUNCIL\n\nBOUNTY NOTICE\n\nA band of kobolds has been harassing caravans on the Northern Pass road. Three merchants have been robbed in the past fortnight, and one guard was injured.\n\nReward: 50 gold pieces for clearing the kobold camp.\nBonus: 20 additional gold for capturing the kobold leader alive.\n\nInquire at the Town Hall or speak to Captain Hendricks at the guardhouse.\n\nWARNING: Kobolds are cunning. They set traps. Bring a rogue.\n\n— Thornwick Town Council"
+      - type: "message"
+        channel: "#tavern"
+        sender: "Valdris (Dungeon Master)"
+        content: "A new bounty has been posted on the notice board outside the tavern. Kobolds in the Northern Pass. 50 gold. Might be worth investigating if you need coin."
+
 settings:
   human_roles:
     - "Scenario Director"
@@ -176,3 +204,4 @@ settings:
     - "Open Sourcerer"
     - "NPC"
     - "Companion"
+  enable_blog: true

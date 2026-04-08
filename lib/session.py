@@ -202,6 +202,15 @@ def save_session(name: str | None = None) -> dict:
     except Exception:
         pass
 
+    # Save blog
+    try:
+        from lib.blog import get_blog_snapshot
+        blog_data = get_blog_snapshot()
+        if blog_data.get("posts") or blog_data.get("replies"):
+            (instance_dir / "blog.json").write_text(json.dumps(blog_data, indent=2))
+    except Exception:
+        pass
+
     # Save recaps
     try:
         from lib.webapp import _recaps
@@ -369,6 +378,16 @@ def load_session(instance_name: str) -> dict:
         except Exception:
             pass
 
+    # Restore blog
+    blog_path = instance_dir / "blog.json"
+    if blog_path.exists():
+        try:
+            from lib.blog import restore_blog
+            blog_data = json.loads(blog_path.read_text())
+            restore_blog(blog_data.get("posts", {}), blog_data.get("replies", []))
+        except Exception:
+            pass
+
     # Restore recaps
     recaps_path = instance_dir / "recaps.json"
     if recaps_path.exists():
@@ -417,6 +436,11 @@ def new_session(scenario_name: str | None = None) -> dict:
     try:
         from lib.memos import clear_memos
         clear_memos()
+    except Exception:
+        pass
+    try:
+        from lib.blog import clear_blog
+        clear_blog()
     except Exception:
         pass
     try:

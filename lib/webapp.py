@@ -447,6 +447,8 @@ def _reinitialize():
     clear_inbox()
     from lib.memos import clear_memos
     clear_memos()
+    from lib.blog import clear_blog
+    clear_blog()
     _recaps.clear()
 
 
@@ -796,6 +798,33 @@ WEB_UI = """<!DOCTYPE html>
   .memo-post-text blockquote { border-left: 3px solid var(--border-dark); margin: 8px 0; padding: 4px 12px; color: var(--text-dim); }
   .memo-post-text table { border-collapse: collapse; margin: 8px 0; }
   .memo-post-text th, .memo-post-text td { border: 1px solid var(--border-dark); padding: 4px 8px; font-size: 12px; }
+
+  /* -- Blog tab -- */
+  #blog-pane { padding: 0; flex-direction: row; }
+  #blog-sidebar { width: 300px; min-width: 300px; background: var(--sidebar); border-right: 1px solid var(--border);
+                  display: flex; flex-direction: column; overflow: hidden; }
+  #blog-main { flex: 1; overflow-y: auto; padding: 20px; }
+  .blog-filter-bar { display: flex; gap: 4px; padding: 8px 10px; border-bottom: 1px solid var(--border-dark); }
+  .blog-filter-btn { flex: 1; background: transparent; border: 1px solid var(--border-dark); color: var(--text-dim);
+                     padding: 4px 8px; border-radius: 4px; font-size: 11px; cursor: pointer; font-weight: 600; }
+  .blog-filter-btn.active { background: var(--accent); border-color: var(--accent); color: var(--text-bright); }
+  .blog-post-item { padding: 10px 12px; border-bottom: 1px solid var(--border-mid); cursor: pointer; transition: background 0.1s; }
+  .blog-post-item:hover { background: var(--border-mid); }
+  .blog-post-item.active { background: var(--border-mid); border-left: 3px solid var(--accent); }
+  .blog-post-title { font-size: 13px; font-weight: 700; color: var(--text); }
+  .blog-post-preview { font-size: 11px; color: var(--text-dimmer); margin-top: 4px; overflow: hidden;
+                       text-overflow: ellipsis; white-space: nowrap; }
+  .blog-post-meta { font-size: 10px; color: var(--text-dimmer); margin-top: 2px; }
+  .blog-external-badge { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;
+                         background: #2ecc71; color: var(--text-bright); padding: 1px 5px; border-radius: 3px; margin-left: 6px; }
+  .blog-internal-badge { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;
+                         background: var(--border-dark); color: var(--text-dim); padding: 1px 5px; border-radius: 3px; margin-left: 6px; }
+  .blog-tag { font-size: 10px; background: var(--input-bg); color: var(--text-dim); padding: 1px 6px;
+              border-radius: 4px; margin-right: 3px; display: inline-block; }
+  .blog-reply { background: var(--bg); border: 1px solid var(--border-dark); border-radius: 8px; padding: 12px; margin-bottom: 8px; }
+  .blog-reply-author { font-size: 12px; font-weight: 700; color: var(--highlight); }
+  .blog-reply-date { font-size: 10px; color: var(--text-dimmer); margin-left: 8px; }
+  .blog-reply-text { font-size: 13px; color: var(--text); margin-top: 6px; line-height: 1.5; white-space: pre-wrap; }
 
   /* -- Events tab -- */
   #events-pane { padding: 0; flex-direction: row; }
@@ -1187,6 +1216,7 @@ WEB_UI = """<!DOCTYPE html>
   <button class="header-tab" data-tab="tickets">Tickets</button>
   <button class="header-tab" data-tab="email">Email</button>
   <button class="header-tab" data-tab="memos">Memos</button>
+  <button class="header-tab" data-tab="blog">Blog</button>
   <button class="header-tab" data-tab="events">Events</button>
   <button class="header-tab" data-tab="npcs">NPCs</button>
   <button class="header-tab" data-tab="usage">Usage</button>
@@ -1587,6 +1617,56 @@ WEB_UI = """<!DOCTYPE html>
       <div id="memo-empty-state" style="color:var(--text-dimmer);text-align:center;padding:60px;font-size:14px">Select a discussion thread or create a new one.</div>
     </div>
   </div>
+  <!-- Blog tab -->
+  <div id="blog-pane" class="tab-pane">
+    <div id="blog-sidebar">
+      <div style="padding:10px;border-bottom:1px solid var(--border-dark)">
+        <button id="create-blog-post-btn" class="session-btn" style="width:100%;background:var(--accent);border-color:var(--accent);color:var(--text-bright);font-size:12px">New Post</button>
+      </div>
+      <div class="blog-filter-bar">
+        <button class="blog-filter-btn active" data-blog-filter="all">All</button>
+        <button class="blog-filter-btn" data-blog-filter="internal">Internal</button>
+        <button class="blog-filter-btn" data-blog-filter="external">External</button>
+      </div>
+      <div id="blog-posts-list" style="flex:1;overflow-y:auto"></div>
+      <div id="blog-posts-empty" style="color:var(--text-dimmer);text-align:center;padding:20px;font-size:12px">No blog posts yet.</div>
+    </div>
+    <div id="blog-main">
+      <div id="blog-post-viewer" style="display:none">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:16px">
+          <div>
+            <div style="display:flex;align-items:center">
+              <h2 id="blog-post-title" style="color:var(--text);margin:0;font-size:20px"></h2>
+              <span id="blog-post-badge"></span>
+            </div>
+            <div id="blog-post-author" style="font-size:13px;color:var(--highlight);font-weight:700;margin-top:4px"></div>
+            <div id="blog-post-date" style="font-size:11px;color:var(--text-dimmer);margin-top:2px"></div>
+            <div id="blog-post-tags" style="margin-top:6px"></div>
+          </div>
+          <div style="display:flex;gap:4px">
+            <button id="blog-publish-btn" style="background:#2ecc71;border:none;color:var(--text-bright);padding:4px 10px;border-radius:4px;font-size:11px;cursor:pointer;display:none" title="Publish">Publish</button>
+            <button id="blog-unpublish-btn" style="background:transparent;border:1px solid #f39c12;color:#f39c12;padding:4px 10px;border-radius:4px;font-size:11px;cursor:pointer;display:none" title="Unpublish">Unpublish</button>
+            <button id="blog-delete-btn" style="background:transparent;border:1px solid var(--accent);color:var(--accent);padding:4px 10px;border-radius:4px;font-size:11px;cursor:pointer" title="Delete post">Delete</button>
+          </div>
+        </div>
+        <div id="blog-post-body" style="font-size:14px;color:var(--text);line-height:1.7;margin-bottom:20px;white-space:pre-wrap"></div>
+        <div style="border-top:1px solid var(--border-dark);padding-top:12px">
+          <h3 id="blog-replies-header" style="font-size:14px;color:var(--text);margin-bottom:10px"></h3>
+          <div id="blog-replies-list" style="margin-bottom:16px"></div>
+          <div style="display:flex;gap:8px;margin-bottom:8px">
+            <input id="blog-reply-name" type="text" placeholder="Name" style="flex:1;background:var(--input-bg);color:var(--text);border:1px solid var(--border-dark);padding:6px 10px;border-radius:4px;font-size:12px" autocomplete="off" />
+            <select id="blog-reply-role" style="flex:1;background:var(--input-bg);color:var(--text);border:1px solid var(--border-dark);padding:6px 10px;border-radius:4px;font-size:12px"></select>
+          </div>
+          <input id="blog-reply-role-custom" type="text" placeholder="Custom role..." style="display:none;width:100%;background:var(--input-bg);color:var(--text);border:1px solid var(--border-dark);padding:6px 10px;border-radius:4px;font-size:12px;margin-bottom:8px;box-sizing:border-box" autocomplete="off" />
+          <textarea id="blog-reply-text" placeholder="Write a reply..." style="width:100%;min-height:60px;background:var(--input-bg);color:var(--text);border:1px solid var(--border-dark);padding:10px;border-radius:6px;font-family:inherit;resize:vertical;font-size:13px;box-sizing:border-box"></textarea>
+          <div style="display:flex;gap:8px;margin-top:8px;justify-content:flex-end">
+            <button id="blog-reply-send" class="modal-btn-primary" style="font-size:12px">Post Reply</button>
+          </div>
+        </div>
+      </div>
+      <div id="blog-empty-state" style="color:var(--text-dimmer);text-align:center;padding:60px;font-size:14px">No blog posts yet — write the first one.</div>
+    </div>
+  </div>
   <!-- Advanced tab -->
   <div id="advanced-pane" class="tab-pane">
     <div id="advanced-main" style="flex:1;padding:20px;overflow-y:auto">
@@ -1599,6 +1679,42 @@ WEB_UI = """<!DOCTYPE html>
           <button id="clear-all-btn" class="session-btn" style="background:var(--accent);border-color:var(--accent);color:var(--text-bright)">Clear Everything</button>
         </div>
       </div>
+    </div>
+  </div>
+</div>
+
+<!-- Blog Create Post Modal -->
+<div class="modal-overlay" id="blog-create-modal">
+  <div class="modal" style="max-width:600px">
+    <h2>New Blog Post</h2>
+    <div class="modal-field">
+      <label>Author</label>
+      <div style="display:flex;gap:8px">
+        <input id="blog-create-name" type="text" placeholder="Name" style="flex:1" autocomplete="off" />
+        <select id="blog-create-role" style="flex:1"></select>
+      </div>
+      <input id="blog-create-role-custom" type="text" placeholder="Custom role..." style="display:none;width:100%;margin-top:6px" autocomplete="off" />
+    </div>
+    <div class="modal-field">
+      <label>Title</label>
+      <input id="blog-create-title" type="text" placeholder="Blog post title..." autocomplete="off" />
+    </div>
+    <div class="modal-field">
+      <label>Body</label>
+      <textarea id="blog-create-body" style="width:100%;min-height:200px;background:var(--input-bg);color:var(--text);border:1px solid var(--border-dark);padding:14px;border-radius:8px;font-size:14px;font-family:inherit;resize:vertical;line-height:1.6;box-sizing:border-box" placeholder="Write your blog post..."></textarea>
+    </div>
+    <div class="modal-field">
+      <label>Tags (comma-separated)</label>
+      <input id="blog-create-tags" type="text" placeholder="engineering, api, release" autocomplete="off" />
+    </div>
+    <div class="modal-field" style="display:flex;align-items:center;gap:8px">
+      <input id="blog-create-external" type="checkbox" style="accent-color:var(--accent)" />
+      <label style="margin:0;text-transform:none;letter-spacing:0;font-size:13px;color:var(--text)">External (customer-facing)</label>
+    </div>
+    <div class="modal-actions">
+      <button class="session-btn" id="blog-create-cancel">Cancel</button>
+      <button class="session-btn" id="blog-create-draft" style="border-color:#f39c12;color:#f39c12">Save Draft</button>
+      <button class="modal-btn-primary" id="blog-create-submit">Publish</button>
     </div>
   </div>
 </div>
@@ -2048,6 +2164,7 @@ document.querySelectorAll('.header-tab').forEach(tab => {
     if (target === 'events') loadEventPool();
     if (target === 'email') loadEmails();
     if (target === 'memos') loadMemoThreads();
+    if (target === 'blog') loadBlogPosts();
     if (target === 'recap') renderRecapList();
     if (target === 'usage') loadUsage();
   });
@@ -2938,6 +3055,20 @@ function populateAllRoleDropdowns() {
   if (memoCreateRoleSel) {
     populateRoleSelect(memoCreateRoleSel, HUMAN_ROLES, {empty: true, emptyLabel: 'No role', default: 'Scenario Director'});
     memoCreateRoleSel.innerHTML += '<option value="custom">Custom...</option>';
+  }
+
+  // Blog reply role
+  const blogReplySel = document.getElementById('blog-reply-role');
+  if (blogReplySel) {
+    populateRoleSelect(blogReplySel, HUMAN_ROLES, {empty: true, emptyLabel: 'No role', default: 'Scenario Director'});
+    blogReplySel.innerHTML += '<option value="custom">Custom...</option>';
+  }
+
+  // Blog create role
+  const blogCreateRoleSel = document.getElementById('blog-create-role');
+  if (blogCreateRoleSel) {
+    populateRoleSelect(blogCreateRoleSel, HUMAN_ROLES, {empty: true, emptyLabel: 'No role', default: 'Scenario Director'});
+    blogCreateRoleSel.innerHTML += '<option value="custom">Custom...</option>';
   }
 }
 
@@ -3998,6 +4129,222 @@ document.getElementById('memo-delete-btn').addEventListener('click', async () =>
 });
 
 // Load memos when tab is selected — handled by tab click handler below
+
+// -- Blog tab --
+
+let _currentBlogPost = null;
+let _blogFilter = 'all';
+
+async function loadBlogPosts() {
+  const list = document.getElementById('blog-posts-list');
+  const empty = document.getElementById('blog-posts-empty');
+  let url = '/api/blog/posts';
+  if (_blogFilter !== 'all') url += '?filter=' + _blogFilter;
+  const resp = await fetch(url);
+  const posts = await resp.json();
+  list.innerHTML = '';
+  empty.style.display = posts.length ? 'none' : 'block';
+  posts.forEach(p => {
+    const item = document.createElement('div');
+    item.className = 'blog-post-item' + (p.slug === _currentBlogPost ? ' active' : '');
+    item.dataset.slug = p.slug;
+    let badge = p.is_external
+      ? '<span class="blog-external-badge">External</span>'
+      : '<span class="blog-internal-badge">Internal</span>';
+    const pStatus = p.status || 'published';
+    if (pStatus === 'draft') badge += ' <span class="blog-internal-badge" style="background:#f39c12;color:var(--text-bright)">Draft</span>';
+    if (pStatus === 'unpublished') badge += ' <span class="blog-internal-badge" style="background:var(--accent);color:var(--text-bright)">Unpub</span>';
+    const preview = (p.body || '').substring(0, 60);
+    const replyInfo = p.reply_count + ' repl' + (p.reply_count !== 1 ? 'ies' : 'y');
+    const age = _memoTimeAgo(p.created_at);
+    item.innerHTML =
+      '<div style="display:flex;align-items:center"><span class="blog-post-title">' + escapeHtml(p.title) + '</span>' + badge + '</div>' +
+      '<div class="blog-post-preview">' + escapeHtml(preview) + '</div>' +
+      '<div class="blog-post-meta">' + escapeHtml(p.author) + ' &middot; ' + replyInfo + ' &middot; ' + age + '</div>';
+    item.addEventListener('click', () => viewBlogPost(p.slug));
+    list.appendChild(item);
+  });
+}
+
+document.querySelectorAll('.blog-filter-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    _blogFilter = btn.dataset.blogFilter;
+    document.querySelectorAll('.blog-filter-btn').forEach(b => b.classList.toggle('active', b === btn));
+    loadBlogPosts();
+  });
+});
+
+async function viewBlogPost(slug) {
+  _currentBlogPost = slug;
+  document.querySelectorAll('.blog-post-item').forEach(el =>
+    el.classList.toggle('active', el.dataset.slug === slug));
+
+  const resp = await fetch('/api/blog/posts/' + slug);
+  if (!resp.ok) { showNotice('Post not found'); return; }
+  const post = await resp.json();
+
+  document.getElementById('blog-post-title').textContent = post.title;
+  let badgeHtml = post.is_external
+    ? '<span class="blog-external-badge">External</span>'
+    : '<span class="blog-internal-badge">Internal</span>';
+  const status = post.status || 'published';
+  if (status === 'draft') badgeHtml += ' <span class="blog-internal-badge" style="background:#f39c12;color:var(--text-bright)">Draft</span>';
+  if (status === 'unpublished') badgeHtml += ' <span class="blog-internal-badge" style="background:var(--accent);color:var(--text-bright)">Unpublished</span>';
+  document.getElementById('blog-post-badge').innerHTML = badgeHtml;
+  document.getElementById('blog-post-author').textContent = post.author;
+  document.getElementById('blog-post-date').textContent = new Date(post.created_at * 1000).toLocaleString();
+
+  // Show/hide publish/unpublish buttons based on status
+  document.getElementById('blog-publish-btn').style.display = (status !== 'published') ? '' : 'none';
+  document.getElementById('blog-unpublish-btn').style.display = (status === 'published') ? '' : 'none';
+
+  const tagsEl = document.getElementById('blog-post-tags');
+  tagsEl.innerHTML = '';
+  (post.tags || []).forEach(tag => {
+    const span = document.createElement('span');
+    span.className = 'blog-tag';
+    span.textContent = tag;
+    tagsEl.appendChild(span);
+  });
+
+  document.getElementById('blog-post-body').textContent = post.body || '';
+
+  const replies = post.replies || [];
+  document.getElementById('blog-replies-header').textContent = replies.length + ' Repl' + (replies.length !== 1 ? 'ies' : 'y');
+  const repliesList = document.getElementById('blog-replies-list');
+  repliesList.innerHTML = '';
+  replies.forEach(r => {
+    const div = document.createElement('div');
+    div.className = 'blog-reply';
+    const ts = new Date(r.timestamp * 1000).toLocaleString();
+    div.innerHTML =
+      '<div style="display:flex;align-items:baseline">' +
+        '<span class="blog-reply-author">' + escapeHtml(r.author) + '</span>' +
+        '<span class="blog-reply-date">' + ts + '</span>' +
+      '</div>' +
+      '<div class="blog-reply-text">' + escapeHtml(r.text) + '</div>';
+    repliesList.appendChild(div);
+  });
+
+  document.getElementById('blog-post-viewer').style.display = '';
+  document.getElementById('blog-empty-state').style.display = 'none';
+  document.getElementById('blog-reply-text').value = '';
+}
+
+function _getBlogSender(nameId, roleId, customId) {
+  const name = document.getElementById(nameId).value.trim() || 'Anonymous';
+  let role = document.getElementById(roleId).value;
+  if (role === 'custom') role = document.getElementById(customId).value.trim();
+  return role ? name + ' (' + role + ')' : name;
+}
+
+document.getElementById('blog-reply-role').addEventListener('change', (e) => {
+  document.getElementById('blog-reply-role-custom').style.display = e.target.value === 'custom' ? '' : 'none';
+});
+
+document.getElementById('blog-create-role').addEventListener('change', (e) => {
+  document.getElementById('blog-create-role-custom').style.display = e.target.value === 'custom' ? '' : 'none';
+});
+
+document.getElementById('create-blog-post-btn').addEventListener('click', () => {
+  document.getElementById('blog-create-title').value = '';
+  document.getElementById('blog-create-body').value = '';
+  document.getElementById('blog-create-tags').value = '';
+  document.getElementById('blog-create-name').value = '';
+  document.getElementById('blog-create-role').value = 'Scenario Director';
+  document.getElementById('blog-create-role-custom').style.display = 'none';
+  document.getElementById('blog-create-role-custom').value = '';
+  document.getElementById('blog-create-external').checked = false;
+  openModal('blog-create-modal');
+  document.getElementById('blog-create-title').focus();
+});
+
+document.getElementById('blog-create-cancel').addEventListener('click', () => {
+  closeModal('blog-create-modal');
+});
+
+async function _submitBlogPost(status) {
+  const title = document.getElementById('blog-create-title').value.trim();
+  if (!title) { document.getElementById('blog-create-title').focus(); return; }
+  const body = document.getElementById('blog-create-body').value.trim();
+  const author = _getBlogSender('blog-create-name', 'blog-create-role', 'blog-create-role-custom');
+  const is_external = document.getElementById('blog-create-external').checked;
+  const tagsRaw = document.getElementById('blog-create-tags').value.trim();
+  const tags = tagsRaw ? tagsRaw.split(',').map(t => t.trim()).filter(t => t) : [];
+  const resp = await fetch('/api/blog/posts', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({title, body, author, is_external, tags, status})
+  });
+  if (resp.ok) {
+    const post = await resp.json();
+    closeModal('blog-create-modal');
+    loadBlogPosts();
+    viewBlogPost(post.slug);
+    showNotice((status === 'draft' ? 'Draft saved: ' : 'Published: ') + title);
+  }
+}
+document.getElementById('blog-create-submit').addEventListener('click', () => _submitBlogPost('published'));
+document.getElementById('blog-create-draft').addEventListener('click', () => _submitBlogPost('draft'));
+
+document.getElementById('blog-reply-send').addEventListener('click', async () => {
+  if (!_currentBlogPost) return;
+  const textarea = document.getElementById('blog-reply-text');
+  const text = textarea.value.trim();
+  if (!text) return;
+  const author = _getBlogSender('blog-reply-name', 'blog-reply-role', 'blog-reply-role-custom');
+  const resp = await fetch('/api/blog/posts/' + _currentBlogPost + '/replies', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({text, author})
+  });
+  if (resp.ok) {
+    textarea.value = '';
+    viewBlogPost(_currentBlogPost);
+    loadBlogPosts();
+  }
+});
+
+document.getElementById('blog-publish-btn').addEventListener('click', async () => {
+  if (!_currentBlogPost) return;
+  const resp = await fetch('/api/blog/posts/' + _currentBlogPost, {
+    method: 'PUT',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({status: 'published'})
+  });
+  if (resp.ok) {
+    viewBlogPost(_currentBlogPost);
+    loadBlogPosts();
+    showNotice('Post published');
+  }
+});
+
+document.getElementById('blog-unpublish-btn').addEventListener('click', async () => {
+  if (!_currentBlogPost) return;
+  const resp = await fetch('/api/blog/posts/' + _currentBlogPost, {
+    method: 'PUT',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({status: 'unpublished'})
+  });
+  if (resp.ok) {
+    viewBlogPost(_currentBlogPost);
+    loadBlogPosts();
+    showNotice('Post unpublished');
+  }
+});
+
+document.getElementById('blog-delete-btn').addEventListener('click', async () => {
+  if (!_currentBlogPost) return;
+  if (!confirm('Delete this blog post and all its replies?')) return;
+  const resp = await fetch('/api/blog/posts/' + _currentBlogPost, {method: 'DELETE'});
+  if (resp.ok) {
+    _currentBlogPost = null;
+    document.getElementById('blog-post-viewer').style.display = 'none';
+    document.getElementById('blog-empty-state').style.display = '';
+    loadBlogPosts();
+    showNotice('Post deleted');
+  }
+});
 
 // -- Events tab --
 
@@ -5487,6 +5834,26 @@ def create_app() -> Flask:
                     if text:
                         post_memo(thread["id"], text, creator)
                     results.append({"type": "memo", "action": "created", "thread_id": thread["id"], "title": title})
+            elif action_type == "blog":
+                from lib.blog import create_post as create_blog, reply_to_post as reply_blog
+                title = action.get("title", "")
+                body = action.get("body", action.get("content", ""))
+                creator = action.get("sender", action.get("author", "System"))
+                is_external = action.get("is_external", False)
+                tags = action.get("tags", [])
+                post_slug = action.get("post_slug", "")
+                text = action.get("text", "")
+                if post_slug and text:
+                    # Reply to existing post
+                    try:
+                        reply = reply_blog(post_slug, text, creator)
+                        results.append({"type": "blog", "action": "replied", "post_slug": post_slug, "reply_id": reply["id"]})
+                    except ValueError:
+                        results.append({"type": "blog", "action": "reply_failed", "error": "post not found"})
+                elif title:
+                    # Create new blog post
+                    post = create_blog(title, body, creator, is_external=is_external, tags=tags)
+                    results.append({"type": "blog", "action": "created", "slug": post["slug"], "title": title})
         # Log the event with results
         data["results"] = results
         entry = fire_event(data)
@@ -5719,6 +6086,85 @@ Write a compelling recap of this simulation session in the requested style. Keep
     def delete_memo_thread_endpoint(thread_id):
         from lib.memos import delete_thread
         if delete_thread(thread_id):
+            return jsonify({"ok": True})
+        return jsonify({"error": "not found"}), 404
+
+    # -- Blog API --
+
+    @app.route("/api/blog/posts", methods=["GET"])
+    def list_blog_posts():
+        from lib.blog import get_posts
+        include_replies = request.args.get("include_replies", "").lower() in ("1", "true")
+        posts = get_posts(include_recent_replies=include_replies)
+        filt = request.args.get("filter", "")
+        if filt == "internal":
+            posts = [p for p in posts if not p.get("is_external")]
+        elif filt == "external":
+            posts = [p for p in posts if p.get("is_external")]
+        return jsonify(posts)
+
+    @app.route("/api/blog/posts", methods=["POST"])
+    def create_blog_post_endpoint():
+        from lib.blog import create_post
+        data = request.get_json(force=True)
+        title = data.get("title", "").strip()
+        if not title:
+            return jsonify({"error": "title required"}), 400
+        body = data.get("body", "").strip()
+        author = data.get("author", "System")
+        is_external = data.get("is_external", False)
+        tags = data.get("tags", [])
+        entry = create_post(title, body, author, is_external=is_external, tags=tags)
+        return jsonify(entry), 201
+
+    @app.route("/api/blog/posts/<post_slug>", methods=["GET"])
+    def get_blog_post_detail(post_slug):
+        from lib.blog import get_post, get_replies
+        post = get_post(post_slug)
+        if not post:
+            return jsonify({"error": "not found"}), 404
+        post["replies"] = get_replies(post_slug)
+        return jsonify(post)
+
+    @app.route("/api/blog/posts/<post_slug>", methods=["PUT"])
+    def update_blog_post_endpoint(post_slug):
+        from lib.blog import update_post
+        data = request.get_json(force=True)
+        kwargs = {}
+        for key in ("title", "body", "status", "is_external", "tags"):
+            if key in data:
+                kwargs[key] = data[key]
+        if not kwargs:
+            return jsonify({"error": "no fields to update"}), 400
+        try:
+            entry = update_post(post_slug, **kwargs)
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 404
+        return jsonify(entry)
+
+    @app.route("/api/blog/posts/<post_slug>/replies", methods=["GET"])
+    def list_blog_replies(post_slug):
+        from lib.blog import get_replies
+        return jsonify(get_replies(post_slug))
+
+    @app.route("/api/blog/posts/<post_slug>/replies", methods=["POST"])
+    def reply_to_blog_post_endpoint(post_slug):
+        from lib.blog import reply_to_post
+        data = request.get_json(force=True)
+        text = data.get("text", "").strip()
+        if not text:
+            return jsonify({"error": "text required"}), 400
+        author = data.get("author", "System")
+        try:
+            entry = reply_to_post(post_slug, text, author)
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 404
+        return jsonify(entry), 201
+
+    @app.route("/api/blog/posts/<post_slug>", methods=["DELETE"])
+    def delete_blog_post_endpoint(post_slug):
+        from lib.blog import delete_post
+        if delete_post(post_slug):
             return jsonify({"ok": True})
         return jsonify({"error": "not found"}), 404
 

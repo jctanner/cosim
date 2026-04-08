@@ -447,7 +447,74 @@ def _reinitialize():
     clear_inbox()
     from lib.memos import clear_memos
     clear_memos()
+    from lib.blog import clear_blog
+    clear_blog()
     _recaps.clear()
+
+
+def _restore_session_extras(instance_name: str):
+    """Re-restore session data that gets cleared by _load_scenario / _reinitialize.
+
+    load_session() restores memos, events, emails, and recaps, but
+    _load_scenario() resets the event pool and _reinitialize() clears
+    memos, emails, and recaps. This function re-applies the saved data.
+    """
+    import json
+    from lib.session import INSTANCES_DIR
+
+    instance_dir = INSTANCES_DIR / instance_name
+
+    # Memos
+    memos_path = instance_dir / "memos.json"
+    if memos_path.exists():
+        try:
+            from lib.memos import restore_memos
+            memo_data = json.loads(memos_path.read_text())
+            restore_memos(memo_data.get("threads", {}), memo_data.get("posts", []))
+        except Exception:
+            pass
+
+    # Events (pool + log)
+    pool_path = instance_dir / "event_pool.json"
+    log_path = instance_dir / "event_log.json"
+    if pool_path.exists():
+        try:
+            from lib.events import restore_events
+            pool = json.loads(pool_path.read_text())
+            log = json.loads(log_path.read_text()) if log_path.exists() else []
+            restore_events(pool, log)
+        except Exception:
+            pass
+
+    # Emails
+    emails_path = instance_dir / "emails.json"
+    if emails_path.exists():
+        try:
+            from lib.email import restore_inbox
+            restore_inbox(json.loads(emails_path.read_text()))
+        except Exception:
+            pass
+
+    # Recaps
+    recaps_path = instance_dir / "recaps.json"
+    if recaps_path.exists():
+        try:
+            data = json.loads(recaps_path.read_text())
+            _recaps.clear()
+            _recaps.extend(data)
+        except Exception:
+            pass
+
+    # Agent thoughts
+    thoughts_path = instance_dir / "thoughts.json"
+    if thoughts_path.exists():
+        try:
+            thoughts = json.loads(thoughts_path.read_text())
+            with _agent_thoughts_lock:
+                _agent_thoughts.clear()
+                _agent_thoughts.update(thoughts)
+        except Exception:
+            pass
 
 
 def _broadcast_tickets_event(action: str, data: dict):
@@ -478,28 +545,111 @@ WEB_UI = """<!DOCTYPE html>
 <script src="https://cdn.jsdelivr.net/npm/js-yaml@4/dist/js-yaml.min.js"></script>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  /* -- Theme System -- */
+  :root {
+    --bg: #1a1a2e;
+    --panel: #16213e;
+    --sidebar: #121a30;
+    --border: #0f3460;
+    --border-mid: #1a1a2e;
+    --border-dark: #333;
+    --input-bg: #111;
+    --accent: #e94560;
+    --accent-dark: #c0392b;
+    --text: #e0e0e0;
+    --text-dim: #888;
+    --text-dimmer: #555;
+    --text-bright: #fff;
+    --highlight: #4fc3f7;
+  }
+  [data-theme="stadium"] {
+    --bg: #000000;
+    --panel: #0d0d0d;
+    --sidebar: #050505;
+    --border: #2a2a2a;
+    --border-mid: #1a1a1a;
+    --border-dark: #1a1a1a;
+    --input-bg: #111111;
+    --accent: #00e5ff;
+    --accent-dark: #00b8cc;
+    --text: #ffffff;
+    --text-dim: #aaaaaa;
+    --text-dimmer: #666666;
+    --text-bright: #ffffff;
+    --highlight: #ffeb3b;
+  }
+  [data-theme="field"] {
+    --bg: #0a1a0a;
+    --panel: #0f200f;
+    --sidebar: #081408;
+    --border: #1e4d1e;
+    --border-mid: #162816;
+    --border-dark: #1e3a1e;
+    --input-bg: #071207;
+    --accent: #f5a623;
+    --accent-dark: #d4891a;
+    --text: #e8f0e8;
+    --text-dim: #7a9e7a;
+    --text-dimmer: #4a6a4a;
+    --text-bright: #ffffff;
+    --highlight: #7dff8a;
+  }
+  [data-theme="solarized-dark"] {
+    --bg: #002b36;
+    --panel: #073642;
+    --sidebar: #002029;
+    --border: #586e75;
+    --border-mid: #073642;
+    --border-dark: #2a4a52;
+    --input-bg: #003847;
+    --accent: #cb4b16;
+    --accent-dark: #a83c11;
+    --text: #839496;
+    --text-dim: #657b83;
+    --text-dimmer: #586e75;
+    --text-bright: #93a1a1;
+    --highlight: #2aa198;
+  }
+  [data-theme="solarized-light"] {
+    --bg: #fdf6e3;
+    --panel: #eee8d5;
+    --sidebar: #f5efdc;
+    --border: #93a1a1;
+    --border-mid: #eee8d5;
+    --border-dark: #d3cbb7;
+    --input-bg: #fff8e7;
+    --accent: #cb4b16;
+    --accent-dark: #a83c11;
+    --text: #657b83;
+    --text-dim: #839496;
+    --text-dimmer: #93a1a1;
+    --text-bright: #073642;
+    --highlight: #268bd2;
+  }
+
   body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-         background: #1a1a2e; color: #e0e0e0; height: 100vh; display: flex; flex-direction: column; }
+         background: var(--bg); color: var(--text); height: 100vh; display: flex; flex-direction: column; }
 
   /* -- Header with tabs -- */
-  #header { background: #16213e; padding: 0 20px; border-bottom: 1px solid #0f3460;
+  #header { background: var(--panel); padding: 0 20px; border-bottom: 1px solid var(--border);
             display: flex; align-items: stretch; gap: 0; }
-  #header h1 { font-size: 18px; color: #e94560; display: flex; align-items: center; padding: 12px 16px 12px 0;
-               border-right: 1px solid #0f3460; margin-right: 0; }
+  #header h1 { font-size: 18px; color: var(--accent); display: flex; align-items: center; padding: 12px 16px 12px 0;
+               border-right: 1px solid var(--border); margin-right: 0; }
   .header-tab { padding: 12px 20px; font-size: 13px; font-weight: 600; cursor: pointer;
-                background: transparent; border: none; color: #888;
+                background: transparent; border: none; color: var(--text-dim);
                 border-bottom: 2px solid transparent; transition: all 0.15s ease; }
-  .header-tab:hover { color: #e0e0e0; }
-  .header-tab.active { color: #e94560; border-bottom-color: #e94560; }
+  .header-tab:hover { color: var(--text); }
+  .header-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
   #session-controls { margin-left: auto; display: flex; align-items: center; gap: 6px; padding: 8px 0; }
-  .session-btn { background: transparent; color: #888; border: 1px solid #333; padding: 6px 12px;
+  .session-btn { background: transparent; color: var(--text-dim); border: 1px solid var(--border-dark); padding: 6px 12px;
                  border-radius: 6px; font-size: 12px; cursor: pointer; font-weight: 600; }
-  .session-btn:hover { border-color: #e94560; color: #e94560; }
-  #session-load-select { background: #1a1a2e; color: #888; border: 1px solid #333; padding: 6px 8px;
+  .session-btn:hover { border-color: var(--accent); color: var(--accent); }
+  #session-load-select { background: var(--bg); color: var(--text-dim); border: 1px solid var(--border-dark); padding: 6px 8px;
                          border-radius: 6px; font-size: 12px; max-width: 200px; }
   #orch-status { display: flex; align-items: center; gap: 5px; margin-right: 8px;
-                 padding: 4px 10px; border: 1px solid #333; border-radius: 6px; }
-  #orch-label { font-size: 11px; color: #888; }
+                 padding: 4px 10px; border: 1px solid var(--border-dark); border-radius: 6px; }
+  #orch-label { font-size: 11px; color: var(--text-dim); }
   .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
   .status-dot.disconnected { background: #666; }
   .status-dot.waiting { background: #f39c12; }
@@ -512,20 +662,20 @@ WEB_UI = """<!DOCTYPE html>
 
   /* -- NPCs tab -- */
   #npcs-pane { padding: 0; flex-direction: row; }
-  #npcs-sidebar { width: 200px; min-width: 200px; background: #121a30; border-right: 1px solid #0f3460;
+  #npcs-sidebar { width: 200px; min-width: 200px; background: var(--sidebar); border-right: 1px solid var(--border);
                   display: flex; flex-direction: column; overflow-y: auto; padding: 8px 0; }
   #npcs-main { flex: 1; overflow-y: auto; padding: 20px; }
   #npcs-content { max-width: 1000px; }
-  #npcs-empty { color: #666; text-align: center; padding: 40px; }
+  #npcs-empty { color: var(--text-dimmer); text-align: center; padding: 40px; }
   .npc-tier-section { margin-bottom: 24px; }
   .npc-tier-header { font-size: 13px; font-weight: 700; text-transform: uppercase;
-                     letter-spacing: 1px; color: #888; margin-bottom: 10px;
-                     padding-bottom: 6px; border-bottom: 1px solid #333; }
+                     letter-spacing: 1px; color: var(--text-dim); margin-bottom: 10px;
+                     padding-bottom: 6px; border-bottom: 1px solid var(--border-dark); }
   .npc-tier-grid { display: flex; flex-wrap: wrap; gap: 12px; }
-  .npc-card { background: #1a1a2e; border: 1px solid #333; border-radius: 10px;
+  .npc-card { background: var(--bg); border: 1px solid var(--border-dark); border-radius: 10px;
               padding: 14px 16px; flex: 1 1 160px; max-width: 220px; min-width: 160px;
               transition: border-color 0.15s; }
-  .npc-card:hover { border-color: #555; }
+  .npc-card:hover { border-color: var(--text-dimmer); }
   .npc-card.offline { opacity: 0.6; }
   .npc-card-header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
   .npc-status-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
@@ -540,58 +690,58 @@ WEB_UI = """<!DOCTYPE html>
   .npc-status-dot.offline { background: #666; }
   .npc-status-dot.disconnected { background: #444; }
   .npc-status-dot.unknown { background: #444; }
-  .npc-card-state { font-size: 10px; color: #666; margin-left: auto; }
-  .npc-card-name { font-size: 14px; font-weight: 700; color: #e0e0e0; }
-  .npc-card-desc { font-size: 11px; color: #888; margin-bottom: 8px; line-height: 1.4; }
+  .npc-card-state { font-size: 10px; color: var(--text-dimmer); margin-left: auto; }
+  .npc-card-name { font-size: 14px; font-weight: 700; color: var(--text); }
+  .npc-card-desc { font-size: 11px; color: var(--text-dim); margin-bottom: 8px; line-height: 1.4; }
   .npc-card-section-label { font-size: 10px; font-weight: 600; text-transform: uppercase;
-                           letter-spacing: 0.5px; color: #555; margin-bottom: 3px; margin-top: 6px; }
+                           letter-spacing: 0.5px; color: var(--text-dimmer); margin-bottom: 3px; margin-top: 6px; }
   .npc-card-tags { margin-bottom: 4px; line-height: 1.8; }
-  .npc-tag { background: #111; color: #888; padding: 1px 6px; border-radius: 4px; font-size: 11px;
+  .npc-tag { background: var(--input-bg); color: var(--text-dim); padding: 1px 6px; border-radius: 4px; font-size: 11px;
              margin-right: 3px; display: inline-block; }
   .npc-tag-folder { border-left: 2px solid #3498db; }
-  .npc-toggle-btn { width: 100%; background: transparent; border: 1px solid #333;
-                    color: #888; padding: 5px; border-radius: 6px; font-size: 11px;
+  .npc-toggle-btn { width: 100%; background: transparent; border: 1px solid var(--border-dark);
+                    color: var(--text-dim); padding: 5px; border-radius: 6px; font-size: 11px;
                     cursor: pointer; transition: all 0.15s; }
-  .npc-toggle-btn:hover { border-color: #e94560; color: #e94560; }
+  .npc-toggle-btn:hover { border-color: var(--accent); color: var(--accent); }
   .npc-toggle-btn.is-online:hover { border-color: #f39c12; color: #f39c12; }
   .npc-detail-tab { transition: all 0.15s; }
-  .npc-detail-tab.active { background: #e94560; border-color: #e94560; color: #fff; }
-  .npc-config-check { display: flex; align-items: center; gap: 4px; background: #1a1a2e;
-                      padding: 4px 10px; border-radius: 6px; border: 1px solid #333;
-                      font-size: 12px; color: #888; cursor: pointer; }
-  .npc-config-check:hover { border-color: #555; }
+  .npc-detail-tab.active { background: var(--accent); border-color: var(--accent); color: var(--text-bright); }
+  .npc-config-check { display: flex; align-items: center; gap: 4px; background: var(--bg);
+                      padding: 4px 10px; border-radius: 6px; border: 1px solid var(--border-dark);
+                      font-size: 12px; color: var(--text-dim); cursor: pointer; }
+  .npc-config-check:hover { border-color: var(--text-dimmer); }
   .npc-config-check input { accent-color: #e94560; }
-  .npc-config-check.checked { color: #e0e0e0; border-color: #555; }
-  .thought-item { padding: 8px 12px; cursor: pointer; border-bottom: 1px solid #1a1a2e;
-                  font-size: 11px; color: #888; transition: background 0.1s; }
-  .thought-item:hover { background: #1a1a3e; }
-  .thought-item.active { background: #1a1a3e; color: #e0e0e0; border-left: 3px solid #e94560; }
-  .thought-item-time { color: #555; font-size: 10px; }
-  .thought-item-preview { color: #888; margin-top: 2px; overflow: hidden;
+  .npc-config-check.checked { color: var(--text); border-color: var(--text-dimmer); }
+  .thought-item { padding: 8px 12px; cursor: pointer; border-bottom: 1px solid var(--bg);
+                  font-size: 11px; color: var(--text-dim); transition: background 0.1s; }
+  .thought-item:hover { background: var(--border-mid); }
+  .thought-item.active { background: var(--border-mid); color: var(--text); border-left: 3px solid var(--accent); }
+  .thought-item-time { color: var(--text-dimmer); font-size: 10px; }
+  .thought-item-preview { color: var(--text-dim); margin-top: 2px; overflow: hidden;
                           text-overflow: ellipsis; white-space: nowrap; }
 
   /* -- Usage tab -- */
   #usage-pane { padding: 0; flex-direction: row; }
-  #usage-sidebar { width: 200px; min-width: 200px; background: #121a30; border-right: 1px solid #0f3460;
+  #usage-sidebar { width: 200px; min-width: 200px; background: var(--sidebar); border-right: 1px solid var(--border);
                    display: flex; flex-direction: column; overflow-y: auto; padding: 8px 0; }
   .usage-sidebar-section { font-size: 11px; font-weight: 700; text-transform: uppercase;
-                           letter-spacing: 1px; color: #555; padding: 10px 14px 4px; }
-  .usage-stat { padding: 4px 14px; font-size: 12px; color: #888; }
-  .usage-stat strong { color: #e0e0e0; }
+                           letter-spacing: 1px; color: var(--text-dimmer); padding: 10px 14px 4px; }
+  .usage-stat { padding: 4px 14px; font-size: 12px; color: var(--text-dim); }
+  .usage-stat strong { color: var(--text); }
   #usage-main { flex: 1; overflow-y: auto; padding: 20px; }
   #usage-content { max-width: 1000px; }
-  #usage-empty { color: #666; text-align: center; padding: 40px; }
+  #usage-empty { color: var(--text-dimmer); text-align: center; padding: 40px; }
   .usage-grid { display: flex; flex-wrap: wrap; gap: 12px; }
-  .usage-card { background: #1a1a2e; border: 1px solid #333; border-radius: 10px;
+  .usage-card { background: var(--bg); border: 1px solid var(--border-dark); border-radius: 10px;
                 padding: 14px 16px; flex: 1 1 200px; max-width: 280px; min-width: 200px;
                 transition: border-color 0.15s; }
-  .usage-card:hover { border-color: #555; }
-  .usage-card-name { font-size: 14px; font-weight: 700; color: #e0e0e0; margin-bottom: 10px;
-                     padding-bottom: 6px; border-bottom: 1px solid #333; }
+  .usage-card:hover { border-color: var(--text-dimmer); }
+  .usage-card-name { font-size: 14px; font-weight: 700; color: var(--text); margin-bottom: 10px;
+                     padding-bottom: 6px; border-bottom: 1px solid var(--border-dark); }
   .usage-card-row { display: flex; justify-content: space-between; padding: 3px 0;
-                    font-size: 12px; color: #888; }
-  .usage-card-row .label { color: #666; }
-  .usage-card-row .value { color: #e0e0e0; font-weight: 600; font-family: monospace; }
+                    font-size: 12px; color: var(--text-dim); }
+  .usage-card-row .label { color: var(--text-dimmer); }
+  .usage-card-row .value { color: var(--text); font-weight: 600; font-family: monospace; }
   .usage-card-row .value.cost { color: #2ecc71; }
 
   /* -- Advanced tab -- */
@@ -599,129 +749,166 @@ WEB_UI = """<!DOCTYPE html>
 
   /* -- Recap tab -- */
   #recap-pane { padding: 0; flex-direction: row; }
-  #recap-sidebar { width: 200px; min-width: 200px; background: #121a30; border-right: 1px solid #0f3460;
+  #recap-sidebar { width: 200px; min-width: 200px; background: var(--sidebar); border-right: 1px solid var(--border);
                    display: flex; flex-direction: column; overflow-y: auto; padding: 8px 0; }
   #recap-main { flex: 1; overflow-y: auto; }
-  .recap-item { padding: 8px 14px; cursor: pointer; border-bottom: 1px solid #1a1a2e;
-                font-size: 12px; color: #888; transition: background 0.1s; }
-  .recap-item:hover { background: #1a1a3e; }
-  .recap-item.active { background: #1a1a3e; color: #e0e0e0; border-left: 3px solid #e94560; }
-  .recap-item-style { font-weight: 600; color: #4fc3f7; }
-  .recap-item-time { font-size: 10px; color: #555; margin-top: 2px; }
+  .recap-item { padding: 8px 14px; cursor: pointer; border-bottom: 1px solid var(--bg);
+                font-size: 12px; color: var(--text-dim); transition: background 0.1s; }
+  .recap-item:hover { background: var(--border-mid); }
+  .recap-item.active { background: var(--border-mid); color: var(--text); border-left: 3px solid var(--accent); }
+  .recap-item-style { font-weight: 600; color: var(--highlight); }
+  .recap-item-time { font-size: 10px; color: var(--text-dimmer); margin-top: 2px; }
 
   /* -- Email tab -- */
   #email-pane { padding: 0; flex-direction: row; }
-  #email-sidebar { width: 300px; min-width: 300px; background: #121a30; border-right: 1px solid #0f3460;
+  #email-sidebar { width: 300px; min-width: 300px; background: var(--sidebar); border-right: 1px solid var(--border);
                    display: flex; flex-direction: column; overflow: hidden; }
   #email-main { flex: 1; overflow-y: auto; padding: 20px; }
-  .email-item { padding: 10px 12px; border-bottom: 1px solid #1a1a2e; cursor: pointer; transition: background 0.1s; }
-  .email-item:hover { background: #1a1a3e; }
-  .email-item.active { background: #1a1a3e; border-left: 3px solid #3498db; }
-  .email-item-from { font-size: 12px; font-weight: 700; color: #4fc3f7; }
-  .email-item-subject { font-size: 13px; color: #e0e0e0; margin-top: 2px; overflow: hidden;
+  .email-item { padding: 10px 12px; border-bottom: 1px solid var(--bg); cursor: pointer; transition: background 0.1s; }
+  .email-item:hover { background: var(--border-mid); }
+  .email-item.active { background: var(--border-mid); border-left: 3px solid #3498db; }
+  .email-item-from { font-size: 12px; font-weight: 700; color: var(--highlight); }
+  .email-item-subject { font-size: 13px; color: var(--text); margin-top: 2px; overflow: hidden;
                         text-overflow: ellipsis; white-space: nowrap; }
-  .email-item-date { font-size: 10px; color: #555; margin-top: 2px; }
+  .email-item-date { font-size: 10px; color: var(--text-dimmer); margin-top: 2px; }
 
   /* -- Memos tab -- */
   #memos-pane { padding: 0; flex-direction: row; }
-  #memos-sidebar { width: 300px; min-width: 300px; background: #121a30; border-right: 1px solid #0f3460;
+  #memos-sidebar { width: 300px; min-width: 300px; background: var(--sidebar); border-right: 1px solid var(--border);
                    display: flex; flex-direction: column; overflow: hidden; }
   #memos-main { flex: 1; overflow-y: auto; padding: 20px; }
-  .memo-thread-item { padding: 10px 12px; border-bottom: 1px solid #1a1a2e; cursor: pointer; transition: background 0.1s; }
-  .memo-thread-item:hover { background: #1a1a3e; }
-  .memo-thread-item.active { background: #1a1a3e; border-left: 3px solid #2ecc71; }
-  .memo-thread-title { font-size: 13px; font-weight: 700; color: #e0e0e0; }
-  .memo-thread-preview { font-size: 11px; color: #666; margin-top: 4px; overflow: hidden;
+  .memo-thread-item { padding: 10px 12px; border-bottom: 1px solid var(--bg); cursor: pointer; transition: background 0.1s; }
+  .memo-thread-item:hover { background: var(--border-mid); }
+  .memo-thread-item.active { background: var(--border-mid); border-left: 3px solid #2ecc71; }
+  .memo-thread-title { font-size: 13px; font-weight: 700; color: var(--text); }
+  .memo-thread-preview { font-size: 11px; color: var(--text-dimmer); margin-top: 4px; overflow: hidden;
                          text-overflow: ellipsis; white-space: nowrap; }
-  .memo-thread-meta { font-size: 10px; color: #555; margin-top: 2px; }
-  .memo-post { background: #1a1a2e; border: 1px solid #333; border-radius: 8px; padding: 14px; margin-bottom: 10px; }
-  .memo-post-author { font-size: 12px; font-weight: 700; color: #4fc3f7; }
-  .memo-post-date { font-size: 10px; color: #555; margin-left: 8px; }
-  .memo-post-text { font-size: 13px; color: #e0e0e0; margin-top: 8px; line-height: 1.5; white-space: pre-wrap; }
+  .memo-thread-meta { font-size: 10px; color: var(--text-dimmer); margin-top: 2px; }
+  .memo-post { background: var(--bg); border: 1px solid var(--border-dark); border-radius: 8px; padding: 14px; margin-bottom: 10px; }
+  .memo-post-author { font-size: 12px; font-weight: 700; color: var(--highlight); }
+  .memo-post-date { font-size: 10px; color: var(--text-dimmer); margin-left: 8px; }
+  .memo-post-text { font-size: 13px; color: var(--text); margin-top: 8px; line-height: 1.5; }
+  .memo-post-text p { margin: 0 0 8px 0; }
+  .memo-post-text p:last-child { margin-bottom: 0; }
+  .memo-post-text ul, .memo-post-text ol { margin: 4px 0 8px 20px; padding: 0; }
+  .memo-post-text pre { background: var(--input-bg); padding: 8px 10px; border-radius: 4px; overflow-x: auto; margin: 8px 0; }
+  .memo-post-text code { background: var(--input-bg); padding: 1px 4px; border-radius: 3px; font-size: 12px; }
+  .memo-post-text pre code { background: none; padding: 0; }
+  .memo-post-text h1, .memo-post-text h2, .memo-post-text h3, .memo-post-text h4 { margin: 12px 0 6px 0; color: var(--text-bright); }
+  .memo-post-text blockquote { border-left: 3px solid var(--border-dark); margin: 8px 0; padding: 4px 12px; color: var(--text-dim); }
+  .memo-post-text table { border-collapse: collapse; margin: 8px 0; }
+  .memo-post-text th, .memo-post-text td { border: 1px solid var(--border-dark); padding: 4px 8px; font-size: 12px; }
+
+  /* -- Blog tab -- */
+  #blog-pane { padding: 0; flex-direction: row; }
+  #blog-sidebar { width: 300px; min-width: 300px; background: var(--sidebar); border-right: 1px solid var(--border);
+                  display: flex; flex-direction: column; overflow: hidden; }
+  #blog-main { flex: 1; overflow-y: auto; padding: 20px; }
+  .blog-filter-bar { display: flex; gap: 4px; padding: 8px 10px; border-bottom: 1px solid var(--border-dark); }
+  .blog-filter-btn { flex: 1; background: transparent; border: 1px solid var(--border-dark); color: var(--text-dim);
+                     padding: 4px 8px; border-radius: 4px; font-size: 11px; cursor: pointer; font-weight: 600; }
+  .blog-filter-btn.active { background: var(--accent); border-color: var(--accent); color: var(--text-bright); }
+  .blog-post-item { padding: 10px 12px; border-bottom: 1px solid var(--border-mid); cursor: pointer; transition: background 0.1s; }
+  .blog-post-item:hover { background: var(--border-mid); }
+  .blog-post-item.active { background: var(--border-mid); border-left: 3px solid var(--accent); }
+  .blog-post-title { font-size: 13px; font-weight: 700; color: var(--text); }
+  .blog-post-preview { font-size: 11px; color: var(--text-dimmer); margin-top: 4px; overflow: hidden;
+                       text-overflow: ellipsis; white-space: nowrap; }
+  .blog-post-meta { font-size: 10px; color: var(--text-dimmer); margin-top: 2px; }
+  .blog-external-badge { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;
+                         background: #2ecc71; color: var(--text-bright); padding: 1px 5px; border-radius: 3px; margin-left: 6px; }
+  .blog-internal-badge { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;
+                         background: var(--border-dark); color: var(--text-dim); padding: 1px 5px; border-radius: 3px; margin-left: 6px; }
+  .blog-tag { font-size: 10px; background: var(--input-bg); color: var(--text-dim); padding: 1px 6px;
+              border-radius: 4px; margin-right: 3px; display: inline-block; }
+  .blog-reply { background: var(--bg); border: 1px solid var(--border-dark); border-radius: 8px; padding: 12px; margin-bottom: 8px; }
+  .blog-reply-author { font-size: 12px; font-weight: 700; color: var(--highlight); }
+  .blog-reply-date { font-size: 10px; color: var(--text-dimmer); margin-left: 8px; }
+  .blog-reply-text { font-size: 13px; color: var(--text); margin-top: 6px; line-height: 1.5; white-space: pre-wrap; }
 
   /* -- Events tab -- */
   #events-pane { padding: 0; flex-direction: row; }
-  .events-sub-tab.active { background: #e94560; border-color: #e94560; color: #fff; }
-  .event-card { background: #1a1a2e; border: 1px solid #333; border-radius: 10px;
+  .events-sub-tab.active { background: var(--accent); border-color: var(--accent); color: var(--text-bright); }
+  .event-card { background: var(--bg); border: 1px solid var(--border-dark); border-radius: 10px;
                 padding: 14px 16px; flex: 1 1 250px; max-width: 350px; min-width: 220px;
                 transition: border-color 0.15s; }
-  .event-card:hover { border-color: #555; }
+  .event-card:hover { border-color: var(--text-dimmer); }
   .event-card-header { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
-  .event-card-name { font-size: 14px; font-weight: 700; color: #e0e0e0; }
+  .event-card-name { font-size: 14px; font-weight: 700; color: var(--text); }
   .event-card-severity { font-size: 10px; font-weight: 600; padding: 2px 6px; border-radius: 4px;
                          text-transform: uppercase; letter-spacing: 0.5px; }
   .event-sev-critical { background: #e94560; color: #fff; }
   .event-sev-high { background: #e67e22; color: #fff; }
   .event-sev-medium { background: #f39c12; color: #111; }
   .event-sev-low { background: #2ecc71; color: #111; }
-  .event-card-actions { font-size: 11px; color: #888; margin-bottom: 8px; }
-  .event-card-preview { font-size: 11px; color: #555; margin-bottom: 10px; overflow: hidden;
+  .event-card-actions { font-size: 11px; color: var(--text-dim); margin-bottom: 8px; }
+  .event-card-preview { font-size: 11px; color: var(--text-dimmer); margin-bottom: 10px; overflow: hidden;
                         text-overflow: ellipsis; white-space: nowrap; }
   .event-card-btns { display: flex; gap: 4px; }
   .event-card-btns button { flex: 1; }
-  .event-trigger-btn { background: #e94560; color: #fff; border: none; padding: 5px; border-radius: 6px;
+  .event-trigger-btn { background: var(--accent); color: var(--text-bright); border: none; padding: 5px; border-radius: 6px;
                        cursor: pointer; font-size: 11px; font-weight: 600; }
-  .event-trigger-btn:hover { background: #c0392b; }
-  .event-log-row { background: #1a1a2e; border: 1px solid #333; border-radius: 8px;
+  .event-trigger-btn:hover { background: var(--accent-dark); }
+  .event-log-row { background: var(--bg); border: 1px solid var(--border-dark); border-radius: 8px;
                    padding: 10px 14px; margin-bottom: 8px; display: flex; align-items: center; gap: 12px; }
-  .event-log-row:hover { border-color: #555; }
-  .event-log-time { font-size: 11px; color: #555; min-width: 80px; }
-  .event-log-name { font-size: 13px; font-weight: 600; color: #e0e0e0; flex: 1; }
-  .event-log-actions { font-size: 10px; color: #666; }
+  .event-log-row:hover { border-color: var(--text-dimmer); }
+  .event-log-time { font-size: 11px; color: var(--text-dimmer); min-width: 80px; }
+  .event-log-name { font-size: 13px; font-weight: 600; color: var(--text); flex: 1; }
+  .event-log-actions { font-size: 10px; color: var(--text-dimmer); }
 
   /* -- Modal overlay -- */
   .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7);
                    z-index: 1000; align-items: center; justify-content: center; }
   .modal-overlay.open { display: flex; }
-  .modal { background: #1a1a2e; border: 1px solid #333; border-radius: 12px;
+  .modal { background: var(--bg); border: 1px solid var(--border-dark); border-radius: 12px;
            padding: 24px; min-width: 380px; max-width: 500px; box-shadow: 0 8px 32px rgba(0,0,0,0.5); }
-  .modal h2 { margin: 0 0 16px; font-size: 16px; color: #e94560; }
+  .modal h2 { margin: 0 0 16px; font-size: 16px; color: var(--accent); }
   .modal-field { margin-bottom: 14px; }
-  .modal-field label { display: block; font-size: 12px; color: #888; margin-bottom: 4px; font-weight: 600;
+  .modal-field label { display: block; font-size: 12px; color: var(--text-dim); margin-bottom: 4px; font-weight: 600;
                        text-transform: uppercase; letter-spacing: 0.5px; }
   .modal-field input, .modal-field select, .modal-field textarea {
-    width: 100%; background: #111; color: #e0e0e0; border: 1px solid #333; padding: 8px 12px;
+    width: 100%; background: var(--input-bg); color: var(--text); border: 1px solid var(--border-dark); padding: 8px 12px;
     border-radius: 8px; font-size: 14px; outline: none; box-sizing: border-box; }
-  .modal-field input:focus, .modal-field select:focus, .modal-field textarea:focus { border-color: #e94560; }
+  .modal-field input:focus, .modal-field select:focus, .modal-field textarea:focus { border-color: var(--accent); }
   .modal-field textarea { resize: vertical; min-height: 60px; font-family: inherit; }
-  .modal-field .field-hint { font-size: 11px; color: #555; margin-top: 4px; }
+  .modal-field .field-hint { font-size: 11px; color: var(--text-dimmer); margin-top: 4px; }
   .modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 18px; }
-  .modal-btn-primary { background: #e94560; color: #fff; border: none; padding: 8px 20px;
+  .modal-btn-primary { background: var(--accent); color: var(--text-bright); border: none; padding: 8px 20px;
                        border-radius: 8px; cursor: pointer; font-size: 13px; font-weight: 600; }
-  .modal-btn-primary:hover { background: #c0392b; }
+  .modal-btn-primary:hover { background: var(--accent-dark); }
   .modal-btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
-  .modal-btn-cancel { background: transparent; color: #888; border: 1px solid #333; padding: 8px 20px;
+  .modal-btn-cancel { background: transparent; color: var(--text-dim); border: 1px solid var(--border-dark); padding: 8px 20px;
                       border-radius: 8px; cursor: pointer; font-size: 13px; }
-  .modal-btn-cancel:hover { border-color: #e94560; color: #e94560; }
-  .modal-status { font-size: 12px; color: #4fc3f7; margin-top: 10px; min-height: 16px; }
+  .modal-btn-cancel:hover { border-color: var(--accent); color: var(--accent); }
+  .modal-status { font-size: 12px; color: var(--highlight); margin-top: 10px; min-height: 16px; }
 
   /* -- Loading overlay -- */
   #loading-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.8);
                      z-index: 2000; align-items: center; justify-content: center; flex-direction: column; gap: 12px; }
   #loading-overlay.open { display: flex; }
-  #loading-overlay .spinner { width: 32px; height: 32px; border: 3px solid #333;
-                              border-top-color: #e94560; border-radius: 50%;
+  #loading-overlay .spinner { width: 32px; height: 32px; border: 3px solid var(--border-dark);
+                              border-top-color: var(--accent); border-radius: 50%;
                               animation: spin 0.8s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
-  #loading-text { color: #e0e0e0; font-size: 14px; }
+  #loading-text { color: var(--text); font-size: 14px; }
 
   #main-layout { flex: 1; display: flex; overflow: hidden; }
 
   /* -- Sidebar -- */
-  #sidebar { width: 200px; min-width: 200px; background: #121a30; border-right: 1px solid #0f3460;
+  #sidebar { width: 200px; min-width: 200px; background: var(--sidebar); border-right: 1px solid var(--border);
              display: flex; flex-direction: column; overflow-y: auto; padding: 8px 0; }
   .sidebar-section { font-size: 11px; font-weight: 700; text-transform: uppercase;
-                     letter-spacing: 1px; color: #555; padding: 10px 14px 4px; }
+                     letter-spacing: 1px; color: var(--text-dimmer); padding: 10px 14px 4px; }
   .channel-btn { display: flex; align-items: center; gap: 6px; width: 100%; text-align: left;
-                 background: transparent; border: none; color: #999; padding: 5px 14px;
+                 background: transparent; border: none; color: var(--text-dim); padding: 5px 14px;
                  font-size: 13px; cursor: pointer; transition: all 0.1s ease; }
-  .channel-btn:hover { background: #1a1a3e; color: #e0e0e0; }
-  .channel-btn.active { background: #1a1a3e; color: #fff; font-weight: 700; }
-  .channel-btn .unread-badge { background: #e94560; color: #fff; font-size: 10px;
+  .channel-btn:hover { background: var(--border-mid); color: var(--text); }
+  .channel-btn.active { background: var(--border-mid); color: var(--text-bright); font-weight: 700; }
+  .channel-btn .unread-badge { background: var(--accent); color: var(--text-bright); font-size: 10px;
                                padding: 1px 6px; border-radius: 8px; margin-left: auto;
                                font-weight: 700; display: none; }
   .channel-btn .unread-badge.visible { display: inline; }
-  .sidebar-divider { border: none; border-top: 1px solid #0f3460; margin: 6px 14px; }
+  .sidebar-divider { border: none; border-top: 1px solid var(--border); margin: 6px 14px; }
 
   /* -- Tab panes -- */
   .tab-pane { display: none; flex: 1; overflow: hidden; }
@@ -731,30 +918,30 @@ WEB_UI = """<!DOCTYPE html>
   #chat-area { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
 
   /* -- Chat tab -- */
-  #channel-header { background: #16213e; padding: 8px 20px; border-bottom: 1px solid #0f3460;
-                    font-size: 15px; font-weight: 700; color: #e0e0e0; }
-  #channel-header .ch-desc { font-size: 12px; color: #888; font-weight: 400; margin-left: 10px; }
-  #channel-members { font-size: 11px; color: #666; margin-top: 2px; }
+  #channel-header { background: var(--panel); padding: 8px 20px; border-bottom: 1px solid var(--border);
+                    font-size: 15px; font-weight: 700; color: var(--text); }
+  #channel-header .ch-desc { font-size: 12px; color: var(--text-dim); font-weight: 400; margin-left: 10px; }
+  #channel-members { font-size: 11px; color: var(--text-dimmer); margin-top: 2px; }
   #messages-panel { flex: 1; overflow-y: auto; padding: 12px 20px; display: flex;
                     flex-direction: column; gap: 6px; }
   .msg { max-width: 85%; padding: 10px 14px; border-radius: 12px; line-height: 1.5; }
   .msg .sender { font-weight: 700; font-size: 13px; margin-bottom: 4px; }
   .msg .content { font-size: 14px; word-break: break-word; }
-  .msg .content h1 { font-size: 16px; margin: 8px 0 4px; color: #e0e0e0; }
-  .msg .content h2 { font-size: 15px; margin: 6px 0 3px; color: #e0e0e0; }
-  .msg .content h3 { font-size: 14px; margin: 5px 0 2px; color: #e0e0e0; }
+  .msg .content h1 { font-size: 16px; margin: 8px 0 4px; color: var(--text); }
+  .msg .content h2 { font-size: 15px; margin: 6px 0 3px; color: var(--text); }
+  .msg .content h3 { font-size: 14px; margin: 5px 0 2px; color: var(--text); }
   .msg .content p { margin: 4px 0; }
   .msg .content ul, .msg .content ol { margin: 4px 0 4px 20px; }
   .msg .content li { margin: 2px 0; }
-  .msg .content strong { color: #fff; }
+  .msg .content strong { color: var(--text-bright); }
   .msg .content code { background: rgba(255,255,255,0.1); padding: 1px 4px; border-radius: 3px; font-size: 13px; }
   .msg .content pre { background: rgba(0,0,0,0.3); padding: 8px; border-radius: 6px; margin: 4px 0;
                       overflow-x: auto; }
   .msg .content pre code { background: none; padding: 0; }
-  .msg .content hr { border: none; border-top: 1px solid #444; margin: 8px 0; }
+  .msg .content hr { border: none; border-top: 1px solid var(--border-dark); margin: 8px 0; }
   .msg .content input[type="checkbox"] { margin-right: 4px; }
-  .msg .ts { font-size: 11px; color: #888; margin-top: 4px; }
-  .msg-customer { align-self: flex-end; background: #0f3460; border-bottom-right-radius: 4px; }
+  .msg .ts { font-size: 11px; color: var(--text-dim); margin-top: 4px; }
+  .msg-customer { align-self: flex-end; background: var(--border); border-bottom-right-radius: 4px; }
   .msg-customer .sender { color: #4fc3f7; }
   .msg-board .sender { color: #ffd700; }
   .msg-hacker .sender { color: #00ff41; }
@@ -764,7 +951,7 @@ WEB_UI = """<!DOCTYPE html>
   .msg-regulator .sender { color: #ff9800; }
   .msg-investor .sender { color: #7c4dff; }
   .msg-press .sender { color: #ffab40; }
-  .msg-agent { align-self: flex-start; background: #1a1a3e; border: 1px solid #333; border-bottom-left-radius: 4px; }
+  .msg-agent { align-self: flex-start; background: var(--border-mid); border: 1px solid var(--border-dark); border-bottom-left-radius: 4px; }
   .msg-pm .sender { color: #e94560; }
   .msg-engmgr .sender { color: #f39c12; }
   .msg-architect .sender { color: #9b59b6; }
@@ -779,163 +966,163 @@ WEB_UI = """<!DOCTYPE html>
   .msg-default .sender { color: #95a5a6; }
 
   /* -- Persona bar -- */
-  #persona-bar { background: #121a30; padding: 6px 20px; border-top: 1px solid #0f3460;
+  #persona-bar { background: var(--sidebar); padding: 6px 20px; border-top: 1px solid var(--border);
                  display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
   /* -- Input area -- */
-  #input-area { background: #16213e; padding: 10px 20px; border-top: 1px solid #0f3460;
+  #input-area { background: var(--panel); padding: 10px 20px; border-top: 1px solid var(--border);
                 display: flex; gap: 8px; align-items: center; }
-  #sender-name { background: #1a1a2e; color: #e0e0e0; border: 1px solid #333;
+  #sender-name { background: var(--bg); color: var(--text); border: 1px solid var(--border-dark);
                  padding: 8px 12px; border-radius: 8px; font-size: 14px; outline: none; }
-  #sender-name:focus { border-color: #e94560; }
-  #sender-role, #sender-role-custom { background: #1a1a2e; color: #e0e0e0; border: 1px solid #333;
+  #sender-name:focus { border-color: var(--accent); }
+  #sender-role, #sender-role-custom { background: var(--bg); color: var(--text); border: 1px solid var(--border-dark);
                    padding: 8px 12px; border-radius: 8px; font-size: 14px; }
-  #msg-input { flex: 1; background: #1a1a2e; color: #e0e0e0; border: 1px solid #333;
+  #msg-input { flex: 1; background: var(--bg); color: var(--text); border: 1px solid var(--border-dark);
                padding: 10px 14px; border-radius: 8px; font-size: 14px; outline: none; }
-  #msg-input:focus { border-color: #e94560; }
-  #send-btn { background: #e94560; color: white; border: none; padding: 10px 20px;
+  #msg-input:focus { border-color: var(--accent); }
+  #send-btn { background: var(--accent); color: var(--text-bright); border: none; padding: 10px 20px;
               border-radius: 8px; font-size: 14px; cursor: pointer; font-weight: 600; }
-  #send-btn:hover { background: #c0392b; }
-  #clear-btn { background: transparent; color: #888; border: 1px solid #333; padding: 10px 14px;
+  #send-btn:hover { background: var(--accent-dark); }
+  #clear-btn { background: transparent; color: var(--text-dim); border: 1px solid var(--border-dark); padding: 10px 14px;
                border-radius: 8px; font-size: 14px; cursor: pointer; }
-  #clear-btn:hover { border-color: #e94560; color: #e94560; }
+  #clear-btn:hover { border-color: var(--accent); color: var(--accent); }
 
   /* -- Docs tab -- */
   #docs-pane { padding: 0; flex-direction: row; }
-  #docs-sidebar { width: 200px; min-width: 200px; background: #121a30; border-right: 1px solid #0f3460;
+  #docs-sidebar { width: 200px; min-width: 200px; background: var(--sidebar); border-right: 1px solid var(--border);
                   display: flex; flex-direction: column; overflow-y: auto; padding: 8px 0; }
   .docs-sidebar-section { font-size: 11px; font-weight: 700; text-transform: uppercase;
-                          letter-spacing: 1px; color: #555; padding: 10px 14px 4px; }
-  .docs-sidebar-divider { border: none; border-top: 1px solid #0f3460; margin: 6px 14px; }
+                          letter-spacing: 1px; color: var(--text-dimmer); padding: 10px 14px 4px; }
+  .docs-sidebar-divider { border: none; border-top: 1px solid var(--border); margin: 6px 14px; }
   .folder-btn { display: flex; align-items: center; gap: 6px; width: 100%; text-align: left;
-                background: transparent; border: none; color: #999; padding: 5px 14px;
+                background: transparent; border: none; color: var(--text-dim); padding: 5px 14px;
                 font-size: 13px; cursor: pointer; transition: all 0.1s ease; }
-  .folder-btn:hover { background: #1a1a3e; color: #e0e0e0; }
-  .folder-btn.active { background: #1a1a3e; color: #fff; font-weight: 700; }
+  .folder-btn:hover { background: var(--border-mid); color: var(--text); }
+  .folder-btn.active { background: var(--border-mid); color: var(--text-bright); font-weight: 700; }
   #docs-main { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
-  #docs-toolbar { padding: 12px 20px; border-bottom: 1px solid #0f3460; background: #16213e;
+  #docs-toolbar { padding: 12px 20px; border-bottom: 1px solid var(--border); background: var(--panel);
                   display: flex; align-items: center; }
-  #docs-search { width: 100%; max-width: 400px; background: #1a1a2e; color: #e0e0e0; border: 1px solid #333;
+  #docs-search { width: 100%; max-width: 400px; background: var(--bg); color: var(--text); border: 1px solid var(--border-dark);
                  padding: 8px 12px; border-radius: 8px; font-size: 14px; outline: none; }
-  #docs-search:focus { border-color: #e94560; }
-  #new-doc-btn { background: #e94560; color: white; border: none; padding: 8px 16px;
+  #docs-search:focus { border-color: var(--accent); }
+  #new-doc-btn { background: var(--accent); color: var(--text-bright); border: none; padding: 8px 16px;
                  border-radius: 8px; font-size: 13px; cursor: pointer; font-weight: 600;
                  margin-left: 8px; white-space: nowrap; }
-  #new-doc-btn:hover { background: #c0392b; }
+  #new-doc-btn:hover { background: var(--accent-dark); }
   #doc-editor { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
   #doc-editor-header { display: flex; align-items: center; justify-content: space-between;
-                       padding: 10px 20px; border-bottom: 1px solid #0f3460; background: #16213e; }
-  #doc-editor-header button { background: transparent; color: #e0e0e0; border: 1px solid #333;
+                       padding: 10px 20px; border-bottom: 1px solid var(--border); background: var(--panel); }
+  #doc-editor-header button { background: transparent; color: var(--text); border: 1px solid var(--border-dark);
                               padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; }
-  #doc-editor-save { background: #e94560 !important; border-color: #e94560 !important; font-weight: 600; }
-  #doc-editor-save:hover { background: #c0392b !important; }
+  #doc-editor-save { background: var(--accent) !important; border-color: var(--accent) !important; font-weight: 600; }
+  #doc-editor-save:hover { background: var(--accent-dark) !important; }
   #doc-editor-form { flex: 1; display: flex; flex-direction: column; gap: 10px; padding: 16px 20px; overflow-y: auto; }
-  #doc-editor-title { background: #1a1a2e; color: #e0e0e0; border: 1px solid #333;
+  #doc-editor-title { background: var(--bg); color: var(--text); border: 1px solid var(--border-dark);
                       padding: 10px 14px; border-radius: 8px; font-size: 16px; font-weight: 700; outline: none; }
-  #doc-editor-title:focus { border-color: #e94560; }
-  #doc-editor-folder { background: #1a1a2e; color: #e0e0e0; border: 1px solid #333;
+  #doc-editor-title:focus { border-color: var(--accent); }
+  #doc-editor-folder { background: var(--bg); color: var(--text); border: 1px solid var(--border-dark);
                        padding: 8px 12px; border-radius: 8px; font-size: 14px; width: 200px; }
-  #doc-editor-content { flex: 1; background: #1a1a2e; color: #e0e0e0; border: 1px solid #333;
+  #doc-editor-content { flex: 1; background: var(--bg); color: var(--text); border: 1px solid var(--border-dark);
                         padding: 14px; border-radius: 8px; font-size: 14px; outline: none;
                         font-family: monospace; resize: none; min-height: 300px; }
-  #doc-editor-content:focus { border-color: #e94560; }
+  #doc-editor-content:focus { border-color: var(--accent); }
   #docs-list { flex: 1; overflow-y: auto; padding: 16px 20px; }
-  .doc-card { background: #1a1a2e; border: 1px solid #333; border-radius: 8px; padding: 12px 16px;
+  .doc-card { background: var(--bg); border: 1px solid var(--border-dark); border-radius: 8px; padding: 12px 16px;
               margin-bottom: 8px; cursor: pointer; transition: border-color 0.15s ease; }
-  .doc-card:hover { border-color: #e94560; }
-  .doc-card-title { font-size: 14px; font-weight: 700; color: #4fc3f7; margin-bottom: 4px; }
+  .doc-card:hover { border-color: var(--accent); }
+  .doc-card-title { font-size: 14px; font-weight: 700; color: var(--highlight); margin-bottom: 4px; }
   .doc-card-meta { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
-  .doc-card-folder { font-size: 11px; background: #0f3460; color: #4fc3f7; padding: 2px 8px;
+  .doc-card-folder { font-size: 11px; background: var(--border); color: var(--highlight); padding: 2px 8px;
                      border-radius: 4px; font-weight: 600; }
-  .doc-card-preview { font-size: 13px; color: #888; overflow: hidden; text-overflow: ellipsis;
+  .doc-card-preview { font-size: 13px; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis;
                       white-space: nowrap; }
-  #docs-empty { color: #555; font-size: 14px; text-align: center; padding: 40px 20px; }
+  #docs-empty { color: var(--text-dimmer); font-size: 14px; text-align: center; padding: 40px 20px; }
   #doc-viewer { display: none; flex-direction: column; flex: 1; overflow: hidden; }
   #doc-viewer.open { display: flex; }
-  #doc-viewer-header { padding: 12px 20px; border-bottom: 1px solid #0f3460; background: #16213e;
+  #doc-viewer-header { padding: 12px 20px; border-bottom: 1px solid var(--border); background: var(--panel);
                        display: flex; align-items: center; gap: 10px; }
-  #doc-back-btn { background: transparent; border: 1px solid #333; color: #888; padding: 6px 12px;
+  #doc-back-btn { background: transparent; border: 1px solid var(--border-dark); color: var(--text-dim); padding: 6px 12px;
                   border-radius: 6px; cursor: pointer; font-size: 13px; }
-  #doc-back-btn:hover { border-color: #e94560; color: #e94560; }
-  #doc-viewer-title { font-size: 16px; font-weight: 700; color: #4fc3f7; }
+  #doc-back-btn:hover { border-color: var(--accent); color: var(--accent); }
+  #doc-viewer-title { font-size: 16px; font-weight: 700; color: var(--highlight); }
   #doc-viewer-content { flex: 1; overflow-y: auto; padding: 20px; font-size: 14px;
-                        color: #e0e0e0; line-height: 1.7; }
+                        color: var(--text); line-height: 1.7; }
   #doc-viewer-content h1 { font-size: 20px; margin: 12px 0 8px; }
   #doc-viewer-content h2 { font-size: 17px; margin: 10px 0 6px; }
   #doc-viewer-content h3 { font-size: 15px; margin: 8px 0 4px; }
   #doc-viewer-content p { margin: 6px 0; }
   #doc-viewer-content ul, #doc-viewer-content ol { margin: 6px 0 6px 24px; }
   #doc-viewer-content li { margin: 3px 0; }
-  #doc-viewer-content strong { color: #fff; }
+  #doc-viewer-content strong { color: var(--text-bright); }
   #doc-viewer-content code { background: rgba(255,255,255,0.1); padding: 2px 5px; border-radius: 3px; }
   #doc-viewer-content pre { background: rgba(0,0,0,0.3); padding: 12px; border-radius: 6px; margin: 6px 0;
                             overflow-x: auto; white-space: pre-wrap; word-break: break-word; }
   #doc-viewer-content pre code { background: none; padding: 0; }
-  #doc-viewer-content hr { border: none; border-top: 1px solid #444; margin: 10px 0; }
+  #doc-viewer-content hr { border: none; border-top: 1px solid var(--border-dark); margin: 10px 0; }
   #doc-viewer-content input[type="checkbox"] { margin-right: 4px; }
 
   /* -- GitLab tab -- */
   #gitlab-pane { padding: 0; flex-direction: row; }
-  #gitlab-sidebar { width: 200px; min-width: 200px; background: #121a30; border-right: 1px solid #0f3460;
+  #gitlab-sidebar { width: 200px; min-width: 200px; background: var(--sidebar); border-right: 1px solid var(--border);
                     display: flex; flex-direction: column; overflow-y: auto; padding: 8px 0; }
   .gitlab-sidebar-section { font-size: 11px; font-weight: 700; text-transform: uppercase;
-                            letter-spacing: 1px; color: #555; padding: 10px 14px 4px; }
+                            letter-spacing: 1px; color: var(--text-dimmer); padding: 10px 14px 4px; }
   .repo-btn { display: flex; align-items: center; gap: 6px; width: 100%; text-align: left;
-              background: transparent; border: none; color: #999; padding: 5px 14px;
+              background: transparent; border: none; color: var(--text-dim); padding: 5px 14px;
               font-size: 13px; cursor: pointer; transition: all 0.1s ease; }
-  .repo-btn:hover { background: #1a1a3e; color: #e0e0e0; }
-  .repo-btn.active { background: #1a1a3e; color: #fff; font-weight: 700; }
+  .repo-btn:hover { background: var(--border-mid); color: var(--text); }
+  .repo-btn.active { background: var(--border-mid); color: var(--text-bright); font-weight: 700; }
   #gitlab-main { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
-  #gitlab-header { padding: 12px 20px; border-bottom: 1px solid #0f3460; background: #16213e;
+  #gitlab-header { padding: 12px 20px; border-bottom: 1px solid var(--border); background: var(--panel);
                    display: flex; align-items: center; gap: 12px; }
-  #gitlab-repo-title { font-size: 16px; font-weight: 700; color: #4fc3f7; }
-  #gitlab-repo-desc { font-size: 13px; color: #888; }
-  .gitlab-toggle-btn { background: transparent; border: 1px solid #333; color: #888; padding: 6px 14px;
+  #gitlab-repo-title { font-size: 16px; font-weight: 700; color: var(--highlight); }
+  #gitlab-repo-desc { font-size: 13px; color: var(--text-dim); }
+  .gitlab-toggle-btn { background: transparent; border: 1px solid var(--border-dark); color: var(--text-dim); padding: 6px 14px;
                        border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 600; }
-  .gitlab-toggle-btn:hover { border-color: #e94560; color: #e94560; }
+  .gitlab-toggle-btn:hover { border-color: var(--accent); color: var(--accent); }
   .gitlab-toggle-btn.active { background: #0f3460; color: #4fc3f7; border-color: #4fc3f7; }
-  #gitlab-toggle-bar { padding: 8px 20px; border-bottom: 1px solid #0f3460; background: #16213e;
+  #gitlab-toggle-bar { padding: 8px 20px; border-bottom: 1px solid var(--border); background: var(--panel);
                        display: flex; gap: 6px; }
   #gitlab-content { flex: 1; overflow-y: auto; padding: 16px 20px; }
-  #gitlab-empty { color: #555; font-size: 14px; text-align: center; padding: 40px 20px; }
-  .gitlab-breadcrumbs { font-size: 13px; color: #888; margin-bottom: 12px; }
-  .gitlab-breadcrumbs a { color: #4fc3f7; cursor: pointer; text-decoration: none; }
+  #gitlab-empty { color: var(--text-dimmer); font-size: 14px; text-align: center; padding: 40px 20px; }
+  .gitlab-breadcrumbs { font-size: 13px; color: var(--text-dim); margin-bottom: 12px; }
+  .gitlab-breadcrumbs a { color: var(--highlight); cursor: pointer; text-decoration: none; }
   .gitlab-breadcrumbs a:hover { text-decoration: underline; }
-  .tree-item { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid #222;
-               cursor: pointer; font-size: 14px; color: #e0e0e0; }
-  .tree-item:hover { background: #1a1a3e; }
+  .tree-item { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--border-dark);
+               cursor: pointer; font-size: 14px; color: var(--text); }
+  .tree-item:hover { background: var(--border-mid); }
   .tree-item-icon { font-size: 14px; width: 20px; text-align: center; }
   .tree-item-name { flex: 1; }
-  .gitlab-file-viewer { background: #111; border: 1px solid #333; border-radius: 6px; padding: 16px;
+  .gitlab-file-viewer { background: var(--input-bg); border: 1px solid var(--border-dark); border-radius: 6px; padding: 16px;
                         font-family: monospace; font-size: 13px; white-space: pre-wrap; word-break: break-word;
-                        color: #e0e0e0; line-height: 1.6; }
-  .commit-item { padding: 10px 12px; border-bottom: 1px solid #222; }
-  .commit-item-id { font-family: monospace; font-size: 12px; color: #4fc3f7; margin-right: 8px; }
-  .commit-item-msg { font-size: 14px; color: #e0e0e0; }
-  .commit-item-meta { font-size: 12px; color: #666; margin-top: 4px; }
+                        color: var(--text); line-height: 1.6; }
+  .commit-item { padding: 10px 12px; border-bottom: 1px solid var(--border-dark); }
+  .commit-item-id { font-family: monospace; font-size: 12px; color: var(--highlight); margin-right: 8px; }
+  .commit-item-msg { font-size: 14px; color: var(--text); }
+  .commit-item-meta { font-size: 12px; color: var(--text-dimmer); margin-top: 4px; }
 
   /* -- Tickets tab -- */
   #tickets-pane { padding: 0; flex-direction: row; }
-  #tickets-sidebar { width: 200px; min-width: 200px; background: #121a30; border-right: 1px solid #0f3460;
+  #tickets-sidebar { width: 200px; min-width: 200px; background: var(--sidebar); border-right: 1px solid var(--border);
                      display: flex; flex-direction: column; overflow-y: auto; padding: 8px 0; }
   .tickets-sidebar-section { font-size: 11px; font-weight: 700; text-transform: uppercase;
-                             letter-spacing: 1px; color: #555; padding: 10px 14px 4px; }
+                             letter-spacing: 1px; color: var(--text-dimmer); padding: 10px 14px 4px; }
   .tickets-filter-btn { display: flex; align-items: center; gap: 6px; width: 100%; text-align: left;
-                        background: transparent; border: none; color: #999; padding: 5px 14px;
+                        background: transparent; border: none; color: var(--text-dim); padding: 5px 14px;
                         font-size: 13px; cursor: pointer; transition: all 0.1s ease; }
-  .tickets-filter-btn:hover { background: #1a1a3e; color: #e0e0e0; }
-  .tickets-filter-btn.active { background: #1a1a3e; color: #fff; font-weight: 700; }
-  .tickets-filter-btn .tk-count { margin-left: auto; font-size: 11px; color: #666; }
+  .tickets-filter-btn:hover { background: var(--border-mid); color: var(--text); }
+  .tickets-filter-btn.active { background: var(--border-mid); color: var(--text-bright); font-weight: 700; }
+  .tickets-filter-btn .tk-count { margin-left: auto; font-size: 11px; color: var(--text-dimmer); }
   #tickets-main { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
-  #tickets-header { padding: 12px 20px; border-bottom: 1px solid #0f3460; background: #16213e;
-                    font-size: 15px; font-weight: 700; color: #e0e0e0; }
+  #tickets-header { padding: 12px 20px; border-bottom: 1px solid var(--border); background: var(--panel);
+                    font-size: 15px; font-weight: 700; color: var(--text); }
   #tickets-list { flex: 1; overflow-y: auto; padding: 16px 20px; }
-  #tickets-empty { color: #555; font-size: 14px; text-align: center; padding: 40px 20px; }
-  .ticket-card { background: #1a1a2e; border: 1px solid #333; border-radius: 8px; padding: 12px 16px;
+  #tickets-empty { color: var(--text-dimmer); font-size: 14px; text-align: center; padding: 40px 20px; }
+  .ticket-card { background: var(--bg); border: 1px solid var(--border-dark); border-radius: 8px; padding: 12px 16px;
                  margin-bottom: 8px; cursor: pointer; transition: border-color 0.15s ease; }
-  .ticket-card:hover { border-color: #e94560; }
+  .ticket-card:hover { border-color: var(--accent); }
   .ticket-card-top { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
-  .ticket-card-id { font-family: monospace; font-size: 11px; color: #888; }
-  .ticket-card-title { font-size: 14px; font-weight: 700; color: #e0e0e0; flex: 1; }
+  .ticket-card-id { font-family: monospace; font-size: 11px; color: var(--text-dim); }
+  .ticket-card-title { font-size: 14px; font-weight: 700; color: var(--text); flex: 1; }
   .ticket-card-bottom { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
   .tk-badge { font-size: 11px; padding: 2px 8px; border-radius: 4px; font-weight: 600; }
   .tk-status-open { background: #1b5e20; color: #a5d6a7; }
@@ -946,78 +1133,78 @@ WEB_UI = """<!DOCTYPE html>
   .tk-priority-medium { background: #33691e; color: #aed581; }
   .tk-priority-high { background: #e65100; color: #ffcc80; }
   .tk-priority-critical { background: #b71c1c; color: #ef9a9a; }
-  .tk-assignee { font-size: 11px; color: #4fc3f7; margin-left: auto; }
+  .tk-assignee { font-size: 11px; color: var(--highlight); margin-left: auto; }
   #ticket-detail { display: none; flex-direction: column; flex: 1; overflow: hidden; }
   #ticket-detail.open { display: flex; }
-  #ticket-detail-header { padding: 12px 20px; border-bottom: 1px solid #0f3460; background: #16213e;
+  #ticket-detail-header { padding: 12px 20px; border-bottom: 1px solid var(--border); background: var(--panel);
                           display: flex; align-items: center; gap: 10px; }
-  #ticket-back-btn { background: transparent; border: 1px solid #333; color: #888; padding: 6px 12px;
+  #ticket-back-btn { background: transparent; border: 1px solid var(--border-dark); color: var(--text-dim); padding: 6px 12px;
                      border-radius: 6px; cursor: pointer; font-size: 13px; }
-  #ticket-back-btn:hover { border-color: #e94560; color: #e94560; }
-  #ticket-detail-title { font-size: 16px; font-weight: 700; color: #e0e0e0; }
-  #ticket-detail-id { font-family: monospace; font-size: 12px; color: #888; margin-left: 8px; }
+  #ticket-back-btn:hover { border-color: var(--accent); color: var(--accent); }
+  #ticket-detail-title { font-size: 16px; font-weight: 700; color: var(--text); }
+  #ticket-detail-id { font-family: monospace; font-size: 12px; color: var(--text-dim); margin-left: 8px; }
   #ticket-detail-content { flex: 1; overflow-y: auto; padding: 20px; font-size: 14px;
-                           color: #e0e0e0; line-height: 1.7; }
+                           color: var(--text); line-height: 1.7; }
   .tk-detail-meta { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
-  .tk-detail-field { font-size: 13px; color: #888; }
-  .tk-detail-field strong { color: #e0e0e0; }
-  .tk-detail-desc { background: #111; border: 1px solid #333; border-radius: 6px; padding: 12px;
+  .tk-detail-field { font-size: 13px; color: var(--text-dim); }
+  .tk-detail-field strong { color: var(--text); }
+  .tk-detail-desc { background: var(--input-bg); border: 1px solid var(--border-dark); border-radius: 6px; padding: 12px;
                     margin-bottom: 16px; white-space: pre-wrap; word-break: break-word; }
   .tk-detail-deps { margin-bottom: 16px; font-size: 13px; }
-  .tk-detail-deps span { color: #4fc3f7; font-family: monospace; cursor: pointer; }
-  .tk-comments-header { font-size: 14px; font-weight: 700; color: #e0e0e0; margin-bottom: 8px;
-                        border-bottom: 1px solid #333; padding-bottom: 4px; }
-  .tk-comment { background: #111; border-left: 3px solid #0f3460; padding: 8px 12px; margin-bottom: 8px;
+  .tk-detail-deps span { color: var(--highlight); font-family: monospace; cursor: pointer; }
+  .tk-comments-header { font-size: 14px; font-weight: 700; color: var(--text); margin-bottom: 8px;
+                        border-bottom: 1px solid var(--border-dark); padding-bottom: 4px; }
+  .tk-comment { background: var(--input-bg); border-left: 3px solid var(--border); padding: 8px 12px; margin-bottom: 8px;
                 border-radius: 0 6px 6px 0; }
-  .tk-comment-author { font-size: 12px; font-weight: 700; color: #4fc3f7; }
-  .tk-comment-time { font-size: 11px; color: #666; margin-left: 8px; }
-  .tk-comment-text { font-size: 13px; color: #e0e0e0; margin-top: 4px; }
-  #tk-create-btn { background: #e94560; color: #fff; border: none; padding: 6px 14px; border-radius: 6px;
+  .tk-comment-author { font-size: 12px; font-weight: 700; color: var(--highlight); }
+  .tk-comment-time { font-size: 11px; color: var(--text-dimmer); margin-left: 8px; }
+  .tk-comment-text { font-size: 13px; color: var(--text); margin-top: 4px; }
+  #tk-create-btn { background: var(--accent); color: var(--text-bright); border: none; padding: 6px 14px; border-radius: 6px;
                    cursor: pointer; font-size: 12px; font-weight: 600; margin-left: auto; }
-  #tk-create-btn:hover { background: #c0392b; }
-  #tk-create-form { display: none; background: #1a1a2e; border: 1px solid #333; border-radius: 8px;
+  #tk-create-btn:hover { background: var(--accent-dark); }
+  #tk-create-form { display: none; background: var(--bg); border: 1px solid var(--border-dark); border-radius: 8px;
                     padding: 16px; margin-bottom: 12px; }
   #tk-create-form.open { display: block; }
   .tk-form-row { display: flex; gap: 10px; margin-bottom: 10px; align-items: center; }
-  .tk-form-row label { font-size: 12px; color: #888; min-width: 70px; }
-  .tk-form-input { flex: 1; background: #111; color: #e0e0e0; border: 1px solid #333; padding: 6px 10px;
+  .tk-form-row label { font-size: 12px; color: var(--text-dim); min-width: 70px; }
+  .tk-form-input { flex: 1; background: var(--input-bg); color: var(--text); border: 1px solid var(--border-dark); padding: 6px 10px;
                    border-radius: 6px; font-size: 13px; outline: none; }
-  .tk-form-input:focus { border-color: #e94560; }
-  .tk-form-select { background: #111; color: #e0e0e0; border: 1px solid #333; padding: 6px 10px;
+  .tk-form-input:focus { border-color: var(--accent); }
+  .tk-form-select { background: var(--input-bg); color: var(--text); border: 1px solid var(--border-dark); padding: 6px 10px;
                     border-radius: 6px; font-size: 13px; outline: none; }
-  .tk-form-textarea { flex: 1; background: #111; color: #e0e0e0; border: 1px solid #333; padding: 6px 10px;
+  .tk-form-textarea { flex: 1; background: var(--input-bg); color: var(--text); border: 1px solid var(--border-dark); padding: 6px 10px;
                       border-radius: 6px; font-size: 13px; outline: none; resize: vertical; min-height: 60px;
                       font-family: inherit; }
-  .tk-form-textarea:focus { border-color: #e94560; }
+  .tk-form-textarea:focus { border-color: var(--accent); }
   .tk-form-actions { display: flex; gap: 8px; justify-content: flex-end; }
-  .tk-form-submit { background: #e94560; color: #fff; border: none; padding: 6px 16px; border-radius: 6px;
+  .tk-form-submit { background: var(--accent); color: var(--text-bright); border: none; padding: 6px 16px; border-radius: 6px;
                     cursor: pointer; font-size: 12px; font-weight: 600; }
-  .tk-form-submit:hover { background: #c0392b; }
-  .tk-form-cancel { background: transparent; color: #888; border: 1px solid #333; padding: 6px 16px;
+  .tk-form-submit:hover { background: var(--accent-dark); }
+  .tk-form-cancel { background: transparent; color: var(--text-dim); border: 1px solid var(--border-dark); padding: 6px 16px;
                     border-radius: 6px; cursor: pointer; font-size: 12px; }
-  .tk-form-cancel:hover { border-color: #e94560; color: #e94560; }
+  .tk-form-cancel:hover { border-color: var(--accent); color: var(--accent); }
   .tk-detail-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px;
-                       padding-bottom: 12px; border-bottom: 1px solid #333; }
-  .tk-action-btn { background: transparent; border: 1px solid #333; color: #e0e0e0; padding: 5px 12px;
+                       padding-bottom: 12px; border-bottom: 1px solid var(--border-dark); }
+  .tk-action-btn { background: transparent; border: 1px solid var(--border-dark); color: var(--text); padding: 5px 12px;
                    border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 600; }
-  .tk-action-btn:hover { border-color: #e94560; color: #e94560; }
+  .tk-action-btn:hover { border-color: var(--accent); color: var(--accent); }
   .tk-action-btn.primary { background: #0d47a1; border-color: #0d47a1; color: #90caf9; }
   .tk-action-btn.primary:hover { background: #1565c0; }
   .tk-action-btn.danger { border-color: #b71c1c; color: #ef9a9a; }
-  .tk-action-btn.danger:hover { background: #b71c1c; color: #fff; }
+  .tk-action-btn.danger:hover { background: #b71c1c; color: var(--text-bright); }
   .tk-action-btn.success { border-color: #1b5e20; color: #a5d6a7; }
-  .tk-action-btn.success:hover { background: #1b5e20; color: #fff; }
+  .tk-action-btn.success:hover { background: #1b5e20; color: var(--text-bright); }
   .tk-assign-row { display: flex; gap: 8px; align-items: center; }
-  .tk-assign-select { background: #111; color: #e0e0e0; border: 1px solid #333; padding: 4px 8px;
+  .tk-assign-select { background: var(--input-bg); color: var(--text); border: 1px solid var(--border-dark); padding: 4px 8px;
                       border-radius: 6px; font-size: 12px; }
   .tk-comment-input-area { display: flex; gap: 8px; margin-top: 12px; align-items: flex-start; }
-  .tk-comment-input { flex: 1; background: #111; color: #e0e0e0; border: 1px solid #333; padding: 8px 10px;
+  .tk-comment-input { flex: 1; background: var(--input-bg); color: var(--text); border: 1px solid var(--border-dark); padding: 8px 10px;
                       border-radius: 6px; font-size: 13px; outline: none; resize: vertical; min-height: 36px;
                       font-family: inherit; }
-  .tk-comment-input:focus { border-color: #e94560; }
-  .tk-comment-submit { background: #e94560; color: #fff; border: none; padding: 8px 14px; border-radius: 6px;
+  .tk-comment-input:focus { border-color: var(--accent); }
+  .tk-comment-submit { background: var(--accent); color: var(--text-bright); border: none; padding: 8px 14px; border-radius: 6px;
                        cursor: pointer; font-size: 12px; font-weight: 600; align-self: flex-end; }
-  .tk-comment-submit:hover { background: #c0392b; }
+  .tk-comment-submit:hover { background: var(--accent-dark); }
 </style>
 </head>
 <body>
@@ -1029,11 +1216,19 @@ WEB_UI = """<!DOCTYPE html>
   <button class="header-tab" data-tab="tickets">Tickets</button>
   <button class="header-tab" data-tab="email">Email</button>
   <button class="header-tab" data-tab="memos">Memos</button>
+  <button class="header-tab" data-tab="blog">Blog</button>
   <button class="header-tab" data-tab="events">Events</button>
   <button class="header-tab" data-tab="npcs">NPCs</button>
   <button class="header-tab" data-tab="usage">Usage</button>
   <button class="header-tab" data-tab="recap">Recap</button>
   <button class="header-tab" data-tab="advanced">Advanced</button>
+  <select id="theme-select" title="Theme" style="background:var(--input-bg);color:var(--text-dim);border:1px solid var(--border-dark);padding:4px 6px;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;outline:none;margin:auto 0;margin-left:8px">
+    <option value="default">Default</option>
+    <option value="stadium">Stadium</option>
+    <option value="field">Field</option>
+    <option value="solarized-dark">Solarized Dark</option>
+    <option value="solarized-light">Solarized Light</option>
+  </select>
   <div id="session-controls">
     <span id="orch-status" title="Orchestrator status">
       <span id="orch-dot" class="status-dot disconnected"></span>
@@ -1111,9 +1306,9 @@ WEB_UI = """<!DOCTYPE html>
           <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
             <select id="doc-editor-folder">
             </select>
-            <span style="font-size:11px;color:#555">Author:</span>
-            <input id="doc-author-name" type="text" placeholder="Your name..." style="width:120px;background:#111;color:#e0e0e0;border:1px solid #333;padding:5px 8px;border-radius:6px;font-size:12px" />
-            <select id="doc-author-role" style="background:#111;color:#e0e0e0;border:1px solid #333;padding:5px 8px;border-radius:6px;font-size:12px"></select>
+            <span style="font-size:11px;color:var(--text-dimmer)">Author:</span>
+            <input id="doc-author-name" type="text" placeholder="Your name..." style="width:120px;background:var(--input-bg);color:var(--text);border:1px solid var(--border-dark);padding:5px 8px;border-radius:6px;font-size:12px" />
+            <select id="doc-author-role" style="background:var(--input-bg);color:var(--text);border:1px solid var(--border-dark);padding:5px 8px;border-radius:6px;font-size:12px"></select>
           </div>
           <textarea id="doc-editor-content" placeholder="Write your document content here (Markdown supported)..." rows="16"></textarea>
         </div>
@@ -1132,22 +1327,22 @@ WEB_UI = """<!DOCTYPE html>
         </div>
         <div id="doc-viewer-body" style="display:flex;flex:1;min-height:0;overflow:hidden">
           <div id="doc-viewer-content" style="flex:1;overflow-y:auto"></div>
-          <div id="doc-history-panel" style="display:none;width:220px;min-width:220px;border-left:1px solid #333;background:#121a30;overflow-y:auto">
-            <div style="padding:8px 12px;font-size:11px;font-weight:700;color:#555;text-transform:uppercase;letter-spacing:0.5px">Version History</div>
+          <div id="doc-history-panel" style="display:none;width:220px;min-width:220px;border-left:1px solid var(--border-dark);background:var(--sidebar);overflow-y:auto">
+            <div style="padding:8px 12px;font-size:11px;font-weight:700;color:var(--text-dimmer);text-transform:uppercase;letter-spacing:0.5px">Version History</div>
             <div id="doc-history-list"></div>
           </div>
         </div>
         <div id="doc-edit-area" style="display:none;flex:1;min-height:0;flex-direction:column;padding:12px 20px;gap:8px">
           <div style="display:flex;gap:8px;align-items:center">
-            <span style="font-size:11px;color:#555">Editing as:</span>
-            <input id="doc-edit-author-name" type="text" placeholder="Your name..." style="width:120px;background:#111;color:#e0e0e0;border:1px solid #333;padding:5px 8px;border-radius:6px;font-size:12px" />
-            <select id="doc-edit-author-role" style="background:#111;color:#e0e0e0;border:1px solid #333;padding:5px 8px;border-radius:6px;font-size:12px"></select>
+            <span style="font-size:11px;color:var(--text-dimmer)">Editing as:</span>
+            <input id="doc-edit-author-name" type="text" placeholder="Your name..." style="width:120px;background:var(--input-bg);color:var(--text);border:1px solid var(--border-dark);padding:5px 8px;border-radius:6px;font-size:12px" />
+            <select id="doc-edit-author-role" style="background:var(--input-bg);color:var(--text);border:1px solid var(--border-dark);padding:5px 8px;border-radius:6px;font-size:12px"></select>
             <div style="margin-left:auto;display:flex;gap:6px">
               <button id="doc-edit-cancel" class="session-btn" style="font-size:11px">Cancel</button>
-              <button id="doc-edit-save" class="session-btn" style="font-size:11px;background:#e94560;border-color:#e94560;color:#fff">Save</button>
+              <button id="doc-edit-save" class="session-btn" style="font-size:11px;background:var(--accent);border-color:var(--accent);color:var(--text-bright)">Save</button>
             </div>
           </div>
-          <textarea id="doc-edit-textarea" style="flex:1;background:#111;color:#e0e0e0;border:1px solid #333;padding:14px;border-radius:8px;font-size:14px;font-family:monospace;resize:none;outline:none"></textarea>
+          <textarea id="doc-edit-textarea" style="flex:1;background:var(--input-bg);color:var(--text);border:1px solid var(--border-dark);padding:14px;border-radius:8px;font-size:14px;font-family:monospace;resize:none;outline:none"></textarea>
         </div>
       </div>
     </div>
@@ -1162,12 +1357,12 @@ WEB_UI = """<!DOCTYPE html>
       </div>
       <div id="gl-new-repo-form" style="display:none;padding:4px 10px 10px">
         <input id="gl-new-repo-name" type="text" placeholder="repo-name" autocomplete="off"
-               style="width:100%;background:#111;color:#e0e0e0;border:1px solid #333;padding:5px 8px;border-radius:6px;font-size:12px;margin-bottom:6px;box-sizing:border-box" />
+               style="width:100%;background:var(--input-bg);color:var(--text);border:1px solid var(--border-dark);padding:5px 8px;border-radius:6px;font-size:12px;margin-bottom:6px;box-sizing:border-box" />
         <input id="gl-new-repo-desc" type="text" placeholder="Description (optional)" autocomplete="off"
-               style="width:100%;background:#111;color:#e0e0e0;border:1px solid #333;padding:5px 8px;border-radius:6px;font-size:12px;margin-bottom:6px;box-sizing:border-box" />
+               style="width:100%;background:var(--input-bg);color:var(--text);border:1px solid var(--border-dark);padding:5px 8px;border-radius:6px;font-size:12px;margin-bottom:6px;box-sizing:border-box" />
         <div style="display:flex;gap:4px">
           <button id="gl-new-repo-cancel" class="session-btn" style="flex:1;font-size:11px">Cancel</button>
-          <button id="gl-new-repo-save" class="session-btn" style="flex:1;font-size:11px;background:#e94560;border-color:#e94560;color:#fff">Create</button>
+          <button id="gl-new-repo-save" class="session-btn" style="flex:1;font-size:11px;background:var(--accent);border-color:var(--accent);color:var(--text-bright)">Create</button>
         </div>
       </div>
     </div>
@@ -1247,11 +1442,11 @@ WEB_UI = """<!DOCTYPE html>
           <span id="ticket-detail-title"></span>
           <span id="ticket-detail-id"></span>
         </div>
-        <div style="padding:8px 20px;background:#121a30;border-bottom:1px solid #333;display:flex;align-items:center;gap:8px">
-          <span style="font-size:12px;font-weight:600;color:#e94560;text-transform:uppercase;letter-spacing:0.5px">Acting as</span>
+        <div style="padding:8px 20px;background:var(--sidebar);border-bottom:1px solid var(--border-dark);display:flex;align-items:center;gap:8px">
+          <span style="font-size:12px;font-weight:600;color:var(--accent);text-transform:uppercase;letter-spacing:0.5px">Acting as</span>
           <select class="tk-form-select" id="tk-acting-as" style="font-size:12px;">
           </select>
-          <span style="font-size:10px;color:#555">All actions (status, assign, comments) use this identity</span>
+          <span style="font-size:10px;color:var(--text-dimmer)">All actions (status, assign, comments) use this identity</span>
         </div>
         <div id="ticket-detail-content"></div>
       </div>
@@ -1261,13 +1456,13 @@ WEB_UI = """<!DOCTYPE html>
   <div id="npcs-pane" class="tab-pane">
     <div id="npcs-sidebar">
       <div class="sidebar-section">Scenario</div>
-      <div id="npcs-scenario-info" style="padding:8px 14px;font-size:12px;color:#888;">No scenario loaded</div>
+      <div id="npcs-scenario-info" style="padding:8px 14px;font-size:12px;color:var(--text-dim);">No scenario loaded</div>
       <hr class="sidebar-divider">
       <div class="sidebar-section">Summary</div>
-      <div id="npcs-summary" style="padding:8px 14px;font-size:12px;color:#888;"></div>
+      <div id="npcs-summary" style="padding:8px 14px;font-size:12px;color:var(--text-dim);"></div>
       <hr class="sidebar-divider">
       <div style="padding:8px 10px">
-        <button id="npc-hire-btn" class="session-btn" style="width:100%;background:#2ecc71;border-color:#2ecc71;color:#fff;font-size:11px">+ Hire Agent</button>
+        <button id="npc-hire-btn" class="session-btn" style="width:100%;background:#2ecc71;border-color:#2ecc71;color:var(--text-bright);font-size:11px">+ Hire Agent</button>
       </div>
     </div>
     <div id="npcs-main">
@@ -1279,20 +1474,20 @@ WEB_UI = """<!DOCTYPE html>
   <!-- Events tab -->
   <div id="events-pane" class="tab-pane">
     <div style="flex:1;display:flex;flex-direction:column;overflow:hidden">
-      <div style="padding:10px 20px;background:#16213e;border-bottom:1px solid #0f3460;display:flex;align-items:center;gap:8px">
+      <div style="padding:10px 20px;background:var(--panel);border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px">
         <button class="session-btn events-sub-tab active" data-events-tab="pool">Event Pool</button>
         <button class="session-btn events-sub-tab" data-events-tab="log">Event Log</button>
         <div style="margin-left:auto">
-          <button id="events-add-btn" class="session-btn" style="background:#2ecc71;border-color:#2ecc71;color:#fff;font-size:11px">+ Add Event</button>
+          <button id="events-add-btn" class="session-btn" style="background:#2ecc71;border-color:#2ecc71;color:var(--text-bright);font-size:11px">+ Add Event</button>
         </div>
       </div>
       <div id="events-pool-view" style="flex:1;overflow-y:auto;padding:20px">
         <div id="events-pool-grid" style="display:flex;flex-wrap:wrap;gap:12px"></div>
-        <div id="events-pool-empty" style="color:#666;text-align:center;padding:40px">No events configured for this scenario.</div>
+        <div id="events-pool-empty" style="color:var(--text-dimmer);text-align:center;padding:40px">No events configured for this scenario.</div>
       </div>
       <div id="events-log-view" style="flex:1;overflow-y:auto;padding:20px;display:none">
         <div id="events-log-list"></div>
-        <div id="events-log-empty" style="color:#666;text-align:center;padding:40px">No events fired yet.</div>
+        <div id="events-log-empty" style="color:var(--text-dimmer);text-align:center;padding:40px">No events fired yet.</div>
       </div>
     </div>
   </div>
@@ -1313,7 +1508,7 @@ WEB_UI = """<!DOCTYPE html>
     <div id="recap-sidebar">
       <div class="sidebar-section">Generate Recap</div>
       <div style="padding:8px 14px">
-        <select id="recap-style" style="width:100%;background:#1a1a2e;color:#e0e0e0;border:1px solid #333;padding:6px 10px;border-radius:6px;font-size:12px;margin-bottom:8px">
+        <select id="recap-style" style="width:100%;background:var(--bg);color:var(--text);border:1px solid var(--border-dark);padding:6px 10px;border-radius:6px;font-size:12px;margin-bottom:8px">
           <option value="normal">Normal</option>
           <option value="ye-olde-english">Ye Olde English</option>
           <option value="tolkien">Tolkien Fantasy</option>
@@ -1333,36 +1528,36 @@ WEB_UI = """<!DOCTYPE html>
           <option value="survivor">Survivor Tribal Council</option>
           <option value="hackernews">HackerNews Blog Post</option>
         </select>
-        <button id="recap-generate-btn" class="session-btn" style="width:100%;background:#e94560;border-color:#e94560;color:#fff;font-size:12px">Generate Recap</button>
+        <button id="recap-generate-btn" class="session-btn" style="width:100%;background:var(--accent);border-color:var(--accent);color:var(--text-bright);font-size:12px">Generate Recap</button>
       </div>
       <hr class="sidebar-divider">
       <div class="sidebar-section">Saved Recaps</div>
       <div id="recap-list" style="flex:1;overflow-y:auto"></div>
     </div>
     <div id="recap-main">
-      <div id="recap-content" style="padding:20px;font-size:14px;color:#ccc;line-height:1.8;white-space:pre-wrap">
-        <div id="recap-empty" style="color:#666;text-align:center;padding:60px">Pick a style and generate a recap of this session.</div>
+      <div id="recap-content" style="padding:20px;font-size:14px;color:var(--text);line-height:1.8;white-space:pre-wrap">
+        <div id="recap-empty" style="color:var(--text-dimmer);text-align:center;padding:60px">Pick a style and generate a recap of this session.</div>
       </div>
     </div>
   </div>
   <!-- Email tab -->
   <div id="email-pane" class="tab-pane">
     <div id="email-sidebar">
-      <div style="padding:10px;border-bottom:1px solid #333">
-        <button id="compose-email-btn" class="session-btn" style="width:100%;background:#3498db;border-color:#3498db;color:#fff;font-size:12px">Compose Email</button>
+      <div style="padding:10px;border-bottom:1px solid var(--border-dark)">
+        <button id="compose-email-btn" class="session-btn" style="width:100%;background:#3498db;border-color:#3498db;color:var(--text-bright);font-size:12px">Compose Email</button>
       </div>
       <div id="email-list" style="flex:1;overflow-y:auto"></div>
-      <div id="email-list-empty" style="color:#666;text-align:center;padding:20px;font-size:12px">No emails sent yet.</div>
+      <div id="email-list-empty" style="color:var(--text-dimmer);text-align:center;padding:20px;font-size:12px">No emails sent yet.</div>
     </div>
     <div id="email-main">
       <div id="email-viewer" style="display:none">
-        <div id="email-viewer-from" style="font-size:13px;color:#4fc3f7;font-weight:700;margin-bottom:4px"></div>
-        <div id="email-viewer-subject" style="font-size:18px;font-weight:700;color:#e0e0e0;margin-bottom:4px"></div>
-        <div id="email-viewer-date" style="font-size:11px;color:#555;margin-bottom:16px"></div>
-        <div id="email-viewer-body" style="font-size:14px;color:#ccc;line-height:1.6;white-space:pre-wrap"></div>
+        <div id="email-viewer-from" style="font-size:13px;color:var(--highlight);font-weight:700;margin-bottom:4px"></div>
+        <div id="email-viewer-subject" style="font-size:18px;font-weight:700;color:var(--text);margin-bottom:4px"></div>
+        <div id="email-viewer-date" style="font-size:11px;color:var(--text-dimmer);margin-bottom:16px"></div>
+        <div id="email-viewer-body" style="font-size:14px;color:var(--text);line-height:1.6;white-space:pre-wrap"></div>
       </div>
       <div id="email-compose" style="display:none;max-width:600px">
-        <h3 style="color:#e0e0e0;margin-bottom:12px">Compose Email</h3>
+        <h3 style="color:var(--text);margin-bottom:12px">Compose Email</h3>
         <div class="modal-field">
           <label>From</label>
           <div style="display:flex;gap:8px">
@@ -1377,63 +1572,149 @@ WEB_UI = """<!DOCTYPE html>
         </div>
         <div class="modal-field">
           <label>Body</label>
-          <textarea id="email-compose-body" style="width:100%;min-height:200px;background:#111;color:#e0e0e0;border:1px solid #333;padding:14px;border-radius:8px;font-size:14px;font-family:inherit;resize:vertical;line-height:1.6" placeholder="Write your email..."></textarea>
+          <textarea id="email-compose-body" style="width:100%;min-height:200px;background:var(--input-bg);color:var(--text);border:1px solid var(--border-dark);padding:14px;border-radius:8px;font-size:14px;font-family:inherit;resize:vertical;line-height:1.6" placeholder="Write your email..."></textarea>
         </div>
         <div style="display:flex;gap:8px;justify-content:flex-end">
           <button class="session-btn" id="email-compose-cancel">Cancel</button>
           <button class="modal-btn-primary" id="email-compose-send" style="background:#3498db">Send</button>
         </div>
       </div>
-      <div id="email-empty-state" style="color:#666;text-align:center;padding:60px;font-size:14px">Select an email to read, or compose a new one.</div>
+      <div id="email-empty-state" style="color:var(--text-dimmer);text-align:center;padding:60px;font-size:14px">Select an email to read, or compose a new one.</div>
     </div>
   </div>
   <!-- Memos tab -->
   <div id="memos-pane" class="tab-pane">
     <div id="memos-sidebar">
-      <div style="padding:10px;border-bottom:1px solid #333">
-        <button id="create-memo-thread-btn" class="session-btn" style="width:100%;background:#2ecc71;border-color:#2ecc71;color:#fff;font-size:12px">New Discussion</button>
+      <div style="padding:10px;border-bottom:1px solid var(--border-dark)">
+        <button id="create-memo-thread-btn" class="session-btn" style="width:100%;background:#2ecc71;border-color:#2ecc71;color:var(--text-bright);font-size:12px">New Discussion</button>
       </div>
       <div id="memo-threads-list" style="flex:1;overflow-y:auto"></div>
-      <div id="memo-threads-empty" style="color:#666;text-align:center;padding:20px;font-size:12px">No discussion threads yet.</div>
+      <div id="memo-threads-empty" style="color:var(--text-dimmer);text-align:center;padding:20px;font-size:12px">No discussion threads yet.</div>
     </div>
     <div id="memos-main">
       <div id="memo-thread-viewer" style="display:none">
         <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:16px">
           <div>
-            <h2 id="memo-thread-title" style="color:#e0e0e0;margin:0 0 4px 0;font-size:18px"></h2>
-            <div id="memo-thread-meta" style="font-size:11px;color:#555"></div>
-            <div id="memo-thread-description" style="font-size:13px;color:#888;margin-top:8px"></div>
+            <h2 id="memo-thread-title" style="color:var(--text);margin:0 0 4px 0;font-size:18px"></h2>
+            <div id="memo-thread-meta" style="font-size:11px;color:var(--text-dimmer)"></div>
+            <div id="memo-thread-description" style="font-size:13px;color:var(--text-dim);margin-top:8px"></div>
           </div>
-          <button id="memo-delete-btn" style="background:transparent;border:1px solid #e94560;color:#e94560;padding:4px 10px;border-radius:4px;font-size:11px;cursor:pointer" title="Delete thread">Delete</button>
+          <button id="memo-delete-btn" style="background:transparent;border:1px solid var(--accent);color:var(--accent);padding:4px 10px;border-radius:4px;font-size:11px;cursor:pointer" title="Delete thread">Delete</button>
         </div>
         <div id="memo-posts-list" style="margin:16px 0"></div>
-        <div style="border-top:1px solid #333;padding-top:12px">
+        <div style="border-top:1px solid var(--border-dark);padding-top:12px">
           <div style="display:flex;gap:8px;margin-bottom:8px">
-            <input id="memo-reply-name" type="text" placeholder="Name" style="flex:1;background:#111;color:#e0e0e0;border:1px solid #333;padding:6px 10px;border-radius:4px;font-size:12px" autocomplete="off" />
-            <select id="memo-reply-role" style="flex:1;background:#111;color:#e0e0e0;border:1px solid #333;padding:6px 10px;border-radius:4px;font-size:12px"></select>
+            <input id="memo-reply-name" type="text" placeholder="Name" style="flex:1;background:var(--input-bg);color:var(--text);border:1px solid var(--border-dark);padding:6px 10px;border-radius:4px;font-size:12px" autocomplete="off" />
+            <select id="memo-reply-role" style="flex:1;background:var(--input-bg);color:var(--text);border:1px solid var(--border-dark);padding:6px 10px;border-radius:4px;font-size:12px"></select>
           </div>
-          <input id="memo-reply-role-custom" type="text" placeholder="Custom role..." style="display:none;width:100%;background:#111;color:#e0e0e0;border:1px solid #333;padding:6px 10px;border-radius:4px;font-size:12px;margin-bottom:8px;box-sizing:border-box" autocomplete="off" />
-          <textarea id="memo-reply-text" placeholder="Post a reply..." style="width:100%;min-height:80px;background:#111;color:#e0e0e0;border:1px solid #333;padding:10px;border-radius:6px;font-family:inherit;resize:vertical;font-size:13px;box-sizing:border-box"></textarea>
+          <input id="memo-reply-role-custom" type="text" placeholder="Custom role..." style="display:none;width:100%;background:var(--input-bg);color:var(--text);border:1px solid var(--border-dark);padding:6px 10px;border-radius:4px;font-size:12px;margin-bottom:8px;box-sizing:border-box" autocomplete="off" />
+          <textarea id="memo-reply-text" placeholder="Post a reply..." style="width:100%;min-height:80px;background:var(--input-bg);color:var(--text);border:1px solid var(--border-dark);padding:10px;border-radius:6px;font-family:inherit;resize:vertical;font-size:13px;box-sizing:border-box"></textarea>
           <div style="display:flex;gap:8px;margin-top:8px;justify-content:flex-end">
             <button id="memo-reply-send" class="modal-btn-primary" style="background:#2ecc71;font-size:12px">Post Reply</button>
           </div>
         </div>
       </div>
-      <div id="memo-empty-state" style="color:#666;text-align:center;padding:60px;font-size:14px">Select a discussion thread or create a new one.</div>
+      <div id="memo-empty-state" style="color:var(--text-dimmer);text-align:center;padding:60px;font-size:14px">Select a discussion thread or create a new one.</div>
+    </div>
+  </div>
+  <!-- Blog tab -->
+  <div id="blog-pane" class="tab-pane">
+    <div id="blog-sidebar">
+      <div style="padding:10px;border-bottom:1px solid var(--border-dark)">
+        <button id="create-blog-post-btn" class="session-btn" style="width:100%;background:var(--accent);border-color:var(--accent);color:var(--text-bright);font-size:12px">New Post</button>
+      </div>
+      <div class="blog-filter-bar">
+        <button class="blog-filter-btn active" data-blog-filter="all">All</button>
+        <button class="blog-filter-btn" data-blog-filter="internal">Internal</button>
+        <button class="blog-filter-btn" data-blog-filter="external">External</button>
+      </div>
+      <div id="blog-posts-list" style="flex:1;overflow-y:auto"></div>
+      <div id="blog-posts-empty" style="color:var(--text-dimmer);text-align:center;padding:20px;font-size:12px">No blog posts yet.</div>
+    </div>
+    <div id="blog-main">
+      <div id="blog-post-viewer" style="display:none">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:16px">
+          <div>
+            <div style="display:flex;align-items:center">
+              <h2 id="blog-post-title" style="color:var(--text);margin:0;font-size:20px"></h2>
+              <span id="blog-post-badge"></span>
+            </div>
+            <div id="blog-post-author" style="font-size:13px;color:var(--highlight);font-weight:700;margin-top:4px"></div>
+            <div id="blog-post-date" style="font-size:11px;color:var(--text-dimmer);margin-top:2px"></div>
+            <div id="blog-post-tags" style="margin-top:6px"></div>
+          </div>
+          <div style="display:flex;gap:4px">
+            <button id="blog-publish-btn" style="background:#2ecc71;border:none;color:var(--text-bright);padding:4px 10px;border-radius:4px;font-size:11px;cursor:pointer;display:none" title="Publish">Publish</button>
+            <button id="blog-unpublish-btn" style="background:transparent;border:1px solid #f39c12;color:#f39c12;padding:4px 10px;border-radius:4px;font-size:11px;cursor:pointer;display:none" title="Unpublish">Unpublish</button>
+            <button id="blog-delete-btn" style="background:transparent;border:1px solid var(--accent);color:var(--accent);padding:4px 10px;border-radius:4px;font-size:11px;cursor:pointer" title="Delete post">Delete</button>
+          </div>
+        </div>
+        <div id="blog-post-body" style="font-size:14px;color:var(--text);line-height:1.7;margin-bottom:20px;white-space:pre-wrap"></div>
+        <div style="border-top:1px solid var(--border-dark);padding-top:12px">
+          <h3 id="blog-replies-header" style="font-size:14px;color:var(--text);margin-bottom:10px"></h3>
+          <div id="blog-replies-list" style="margin-bottom:16px"></div>
+          <div style="display:flex;gap:8px;margin-bottom:8px">
+            <input id="blog-reply-name" type="text" placeholder="Name" style="flex:1;background:var(--input-bg);color:var(--text);border:1px solid var(--border-dark);padding:6px 10px;border-radius:4px;font-size:12px" autocomplete="off" />
+            <select id="blog-reply-role" style="flex:1;background:var(--input-bg);color:var(--text);border:1px solid var(--border-dark);padding:6px 10px;border-radius:4px;font-size:12px"></select>
+          </div>
+          <input id="blog-reply-role-custom" type="text" placeholder="Custom role..." style="display:none;width:100%;background:var(--input-bg);color:var(--text);border:1px solid var(--border-dark);padding:6px 10px;border-radius:4px;font-size:12px;margin-bottom:8px;box-sizing:border-box" autocomplete="off" />
+          <textarea id="blog-reply-text" placeholder="Write a reply..." style="width:100%;min-height:60px;background:var(--input-bg);color:var(--text);border:1px solid var(--border-dark);padding:10px;border-radius:6px;font-family:inherit;resize:vertical;font-size:13px;box-sizing:border-box"></textarea>
+          <div style="display:flex;gap:8px;margin-top:8px;justify-content:flex-end">
+            <button id="blog-reply-send" class="modal-btn-primary" style="font-size:12px">Post Reply</button>
+          </div>
+        </div>
+      </div>
+      <div id="blog-empty-state" style="color:var(--text-dimmer);text-align:center;padding:60px;font-size:14px">No blog posts yet — write the first one.</div>
     </div>
   </div>
   <!-- Advanced tab -->
   <div id="advanced-pane" class="tab-pane">
     <div id="advanced-main" style="flex:1;padding:20px;overflow-y:auto">
       <div style="max-width:600px">
-        <h3 style="color:#e0e0e0;margin-bottom:16px">Advanced Actions</h3>
+        <h3 style="color:var(--text);margin-bottom:16px">Advanced Actions</h3>
         <div style="margin-bottom:24px">
-          <div style="font-size:12px;font-weight:600;color:#e94560;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">Danger Zone</div>
-          <p style="font-size:12px;color:#888;margin-bottom:12px">These actions are destructive and cannot be undone. Save your session first.</p>
-          <button id="clear-chat-btn" class="session-btn" style="border-color:#e94560;color:#e94560;margin-right:8px">Clear Chat History</button>
-          <button id="clear-all-btn" class="session-btn" style="background:#e94560;border-color:#e94560;color:#fff">Clear Everything</button>
+          <div style="font-size:12px;font-weight:600;color:var(--accent);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">Danger Zone</div>
+          <p style="font-size:12px;color:var(--text-dim);margin-bottom:12px">These actions are destructive and cannot be undone. Save your session first.</p>
+          <button id="clear-chat-btn" class="session-btn" style="border-color:var(--accent);color:var(--accent);margin-right:8px">Clear Chat History</button>
+          <button id="clear-all-btn" class="session-btn" style="background:var(--accent);border-color:var(--accent);color:var(--text-bright)">Clear Everything</button>
         </div>
       </div>
+    </div>
+  </div>
+</div>
+
+<!-- Blog Create Post Modal -->
+<div class="modal-overlay" id="blog-create-modal">
+  <div class="modal" style="max-width:600px">
+    <h2>New Blog Post</h2>
+    <div class="modal-field">
+      <label>Author</label>
+      <div style="display:flex;gap:8px">
+        <input id="blog-create-name" type="text" placeholder="Name" style="flex:1" autocomplete="off" />
+        <select id="blog-create-role" style="flex:1"></select>
+      </div>
+      <input id="blog-create-role-custom" type="text" placeholder="Custom role..." style="display:none;width:100%;margin-top:6px" autocomplete="off" />
+    </div>
+    <div class="modal-field">
+      <label>Title</label>
+      <input id="blog-create-title" type="text" placeholder="Blog post title..." autocomplete="off" />
+    </div>
+    <div class="modal-field">
+      <label>Body</label>
+      <textarea id="blog-create-body" style="width:100%;min-height:200px;background:var(--input-bg);color:var(--text);border:1px solid var(--border-dark);padding:14px;border-radius:8px;font-size:14px;font-family:inherit;resize:vertical;line-height:1.6;box-sizing:border-box" placeholder="Write your blog post..."></textarea>
+    </div>
+    <div class="modal-field">
+      <label>Tags (comma-separated)</label>
+      <input id="blog-create-tags" type="text" placeholder="engineering, api, release" autocomplete="off" />
+    </div>
+    <div class="modal-field" style="display:flex;align-items:center;gap:8px">
+      <input id="blog-create-external" type="checkbox" style="accent-color:var(--accent)" />
+      <label style="margin:0;text-transform:none;letter-spacing:0;font-size:13px;color:var(--text)">External (customer-facing)</label>
+    </div>
+    <div class="modal-actions">
+      <button class="session-btn" id="blog-create-cancel">Cancel</button>
+      <button class="session-btn" id="blog-create-draft" style="border-color:#f39c12;color:#f39c12">Save Draft</button>
+      <button class="modal-btn-primary" id="blog-create-submit">Publish</button>
     </div>
   </div>
 </div>
@@ -1456,7 +1737,7 @@ WEB_UI = """<!DOCTYPE html>
     </div>
     <div class="modal-field">
       <label>Description (optional)</label>
-      <textarea id="memo-create-description" style="width:100%;min-height:60px;background:#111;color:#e0e0e0;border:1px solid #333;padding:10px;border-radius:6px;font-family:inherit;resize:vertical;font-size:13px;box-sizing:border-box" placeholder="Brief description of the discussion topic..."></textarea>
+      <textarea id="memo-create-description" style="width:100%;min-height:60px;background:var(--input-bg);color:var(--text);border:1px solid var(--border-dark);padding:10px;border-radius:6px;font-family:inherit;resize:vertical;font-size:13px;box-sizing:border-box" placeholder="Brief description of the discussion topic..."></textarea>
     </div>
     <div class="modal-actions">
       <button class="session-btn" id="memo-create-cancel">Cancel</button>
@@ -1512,7 +1793,7 @@ WEB_UI = """<!DOCTYPE html>
       <label>Saved Sessions</label>
       <select id="load-session-select" size="6" style="height:auto"></select>
     </div>
-    <div id="load-session-detail" style="font-size:12px;color:#888;min-height:30px;margin-bottom:8px"></div>
+    <div id="load-session-detail" style="font-size:12px;color:var(--text-dim);min-height:30px;margin-bottom:8px"></div>
     <div class="modal-status" id="load-session-status"></div>
     <div class="modal-actions">
       <button class="modal-btn-cancel" id="load-session-cancel">Cancel</button>
@@ -1533,33 +1814,33 @@ WEB_UI = """<!DOCTYPE html>
       <button class="session-btn npc-detail-tab" data-npc-tab="prompt">Prompt</button>
       <button class="session-btn npc-detail-tab" data-npc-tab="config">Config</button>
     </div>
-    <div id="npc-detail-thoughts" style="flex:1;min-height:0;display:flex;gap:0;border-radius:8px;overflow:hidden;border:1px solid #333">
-      <div style="width:200px;min-width:200px;background:#121a30;border-right:1px solid #333;display:flex;flex-direction:column">
-        <div style="padding:6px 8px;border-bottom:1px solid #333">
+    <div id="npc-detail-thoughts" style="flex:1;min-height:0;display:flex;gap:0;border-radius:8px;overflow:hidden;border:1px solid var(--border-dark)">
+      <div style="width:200px;min-width:200px;background:var(--sidebar);border-right:1px solid var(--border-dark);display:flex;flex-direction:column">
+        <div style="padding:6px 8px;border-bottom:1px solid var(--border-dark)">
           <input id="npc-thoughts-search" type="text" placeholder="Search thoughts..." autocomplete="off"
-                 style="width:100%;background:#111;color:#e0e0e0;border:1px solid #333;padding:4px 8px;border-radius:6px;font-size:11px;outline:none;box-sizing:border-box" />
+                 style="width:100%;background:var(--input-bg);color:var(--text);border:1px solid var(--border-dark);padding:4px 8px;border-radius:6px;font-size:11px;outline:none;box-sizing:border-box" />
         </div>
         <div id="npc-thoughts-list" style="flex:1;overflow-y:auto">
         </div>
       </div>
-      <div id="npc-thoughts-content" style="flex:1;overflow-y:auto;background:#111;padding:16px;font-size:13px;color:#ccc;white-space:pre-wrap;font-family:monospace;line-height:1.5">
+      <div id="npc-thoughts-content" style="flex:1;overflow-y:auto;background:var(--input-bg);padding:16px;font-size:13px;color:var(--text);white-space:pre-wrap;font-family:monospace;line-height:1.5">
         No thoughts recorded yet.
       </div>
     </div>
-    <div id="npc-detail-prompt" style="flex:1;min-height:0;overflow-y:auto;background:#111;border-radius:8px;padding:16px;font-size:13px;color:#ccc;white-space:pre-wrap;font-family:monospace;line-height:1.5;display:none">
+    <div id="npc-detail-prompt" style="flex:1;min-height:0;overflow-y:auto;background:var(--input-bg);border-radius:8px;padding:16px;font-size:13px;color:var(--text);white-space:pre-wrap;font-family:monospace;line-height:1.5;display:none">
     </div>
-    <div id="npc-detail-config" style="flex:1;min-height:0;overflow-y:auto;background:#111;border-radius:8px;padding:16px;display:none">
+    <div id="npc-detail-config" style="flex:1;min-height:0;overflow-y:auto;background:var(--input-bg);border-radius:8px;padding:16px;display:none">
       <div style="margin-bottom:16px">
-        <div style="font-size:12px;font-weight:600;color:#e94560;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">Response Tier</div>
-        <select id="npc-config-tier" style="background:#1a1a2e;color:#e0e0e0;border:1px solid #333;padding:6px 10px;border-radius:6px;font-size:13px">
+        <div style="font-size:12px;font-weight:600;color:var(--accent);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">Response Tier</div>
+        <select id="npc-config-tier" style="background:var(--bg);color:var(--text);border:1px solid var(--border-dark);padding:6px 10px;border-radius:6px;font-size:13px">
           <option value="1">Tier 1 — ICs</option>
           <option value="2">Tier 2 — Managers</option>
           <option value="3">Tier 3 — Executives</option>
         </select>
       </div>
       <div style="margin-bottom:16px">
-        <div style="font-size:12px;font-weight:600;color:#e94560;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">Verbosity</div>
-        <select id="npc-config-verbosity" style="background:#1a1a2e;color:#e0e0e0;border:1px solid #333;padding:6px 10px;border-radius:6px;font-size:13px">
+        <div style="font-size:12px;font-weight:600;color:var(--accent);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">Verbosity</div>
+        <select id="npc-config-verbosity" style="background:var(--bg);color:var(--text);border:1px solid var(--border-dark);padding:6px 10px;border-radius:6px;font-size:13px">
           <option value="concise">Concise — 1-2 sentences</option>
           <option value="brief">Brief — 2-3 sentences</option>
           <option value="normal" selected>Normal — default</option>
@@ -1569,18 +1850,18 @@ WEB_UI = """<!DOCTYPE html>
         </select>
       </div>
       <div style="margin-bottom:16px">
-        <div style="font-size:12px;font-weight:600;color:#e94560;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">Channel Memberships</div>
+        <div style="font-size:12px;font-weight:600;color:var(--accent);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">Channel Memberships</div>
         <div id="npc-config-channels" style="display:flex;flex-wrap:wrap;gap:6px"></div>
       </div>
       <div style="margin-bottom:16px">
-        <div style="font-size:12px;font-weight:600;color:#e94560;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">Doc Folder Access</div>
+        <div style="font-size:12px;font-weight:600;color:var(--accent);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">Doc Folder Access</div>
         <div id="npc-config-folders" style="display:flex;flex-wrap:wrap;gap:6px"></div>
       </div>
       <div style="margin-bottom:16px">
-        <div style="font-size:12px;font-weight:600;color:#e94560;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">GitLab Repos</div>
+        <div style="font-size:12px;font-weight:600;color:var(--accent);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">GitLab Repos</div>
         <div id="npc-config-repos" style="display:flex;flex-wrap:wrap;gap:6px"></div>
       </div>
-      <div style="display:flex;justify-content:flex-end;padding-top:8px;border-top:1px solid #333">
+      <div style="display:flex;justify-content:flex-end;padding-top:8px;border-top:1px solid var(--border-dark)">
         <button id="npc-config-save" class="modal-btn-primary" style="font-size:13px">Save Configuration</button>
       </div>
     </div>
@@ -1643,7 +1924,7 @@ WEB_UI = """<!DOCTYPE html>
       </div>
       <div class="modal-field">
         <label>Character Prompt</label>
-        <textarea id="hire-prompt" style="width:100%;min-height:200px;background:#111;color:#e0e0e0;border:1px solid #333;padding:14px;border-radius:8px;font-size:13px;font-family:monospace;resize:vertical" placeholder="# Role Name&#10;&#10;You are [Name], the [Role]. You..."></textarea>
+        <textarea id="hire-prompt" style="width:100%;min-height:200px;background:var(--input-bg);color:var(--text);border:1px solid var(--border-dark);padding:14px;border-radius:8px;font-size:13px;font-family:monospace;resize:vertical" placeholder="# Role Name&#10;&#10;You are [Name], the [Role]. You..."></textarea>
         <div class="field-hint">The full role prompt defining this agent's personality, responsibilities, and behavior.</div>
       </div>
     </div>
@@ -1664,17 +1945,17 @@ WEB_UI = """<!DOCTYPE html>
         <button class="modal-btn-cancel" id="event-edit-close">Cancel</button>
       </div>
     </div>
-    <div style="flex:1;min-height:0;display:flex;gap:0;border-radius:8px;overflow:hidden;border:1px solid #333">
+    <div style="flex:1;min-height:0;display:flex;gap:0;border-radius:8px;overflow:hidden;border:1px solid var(--border-dark)">
       <div style="flex:1;display:flex;flex-direction:column">
-        <textarea id="event-edit-yaml" style="flex:1;background:#111;color:#e0e0e0;border:none;padding:16px;font-size:13px;font-family:monospace;line-height:1.5;resize:none;outline:none" placeholder="name: My Event..."></textarea>
+        <textarea id="event-edit-yaml" style="flex:1;background:var(--input-bg);color:var(--text);border:none;padding:16px;font-size:13px;font-family:monospace;line-height:1.5;resize:none;outline:none" placeholder="name: My Event..."></textarea>
       </div>
-      <div id="event-edit-history" style="display:none;width:200px;min-width:200px;border-left:1px solid #333;background:#121a30;overflow-y:auto">
-        <div style="padding:8px 12px;font-size:11px;font-weight:700;color:#555;text-transform:uppercase;letter-spacing:0.5px">Version History</div>
+      <div id="event-edit-history" style="display:none;width:200px;min-width:200px;border-left:1px solid var(--border-dark);background:var(--sidebar);overflow-y:auto">
+        <div style="padding:8px 12px;font-size:11px;font-weight:700;color:var(--text-dimmer);text-transform:uppercase;letter-spacing:0.5px">Version History</div>
         <div id="event-edit-history-list"></div>
       </div>
     </div>
     <div style="display:flex;align-items:center;gap:8px;margin-top:12px">
-      <button class="session-btn" id="event-edit-delete" style="color:#e94560;font-size:11px">Delete Event</button>
+      <button class="session-btn" id="event-edit-delete" style="color:var(--accent);font-size:11px">Delete Event</button>
       <div style="flex:1"></div>
       <button class="modal-btn-cancel" onclick="closeModal('event-edit-modal')">Cancel</button>
       <button class="modal-btn-primary" id="event-edit-save">Save</button>
@@ -1689,6 +1970,20 @@ WEB_UI = """<!DOCTYPE html>
 </div>
 
 <script>
+// -- Theme System --
+function applyTheme(t) {
+  if (t === 'default') {
+    document.documentElement.removeAttribute('data-theme');
+  } else {
+    document.documentElement.setAttribute('data-theme', t);
+  }
+  localStorage.setItem('cosimTheme', t);
+  const sel = document.getElementById('theme-select');
+  if (sel) sel.value = t;
+}
+(function() { applyTheme(localStorage.getItem('cosimTheme') || 'default'); })();
+document.getElementById('theme-select').addEventListener('change', function() { applyTheme(this.value); });
+
 const messagesPanel = document.getElementById('messages-panel');
 const input = document.getElementById('msg-input');
 const sendBtn = document.getElementById('send-btn');
@@ -1761,7 +2056,7 @@ let AGENT_NAMES = new Set();
 
 // Color palette for agent personas (assigned round-robin on load)
 const AGENT_COLORS = [
-  '#e94560', '#f39c12', '#9b59b6', '#2ecc71', '#1abc9c',
+  'var(--accent)', '#f39c12', '#9b59b6', '#2ecc71', '#1abc9c',
   '#e67e22', '#f1c40f', '#3498db', '#e056a0', '#00bcd4', '#ff6b6b',
 ];
 
@@ -1869,6 +2164,7 @@ document.querySelectorAll('.header-tab').forEach(tab => {
     if (target === 'events') loadEventPool();
     if (target === 'email') loadEmails();
     if (target === 'memos') loadMemoThreads();
+    if (target === 'blog') loadBlogPosts();
     if (target === 'recap') renderRecapList();
     if (target === 'usage') loadUsage();
   });
@@ -2013,7 +2309,7 @@ function renderTypingIndicators() {
   if (!el) {
     el = document.createElement('div');
     el.id = 'typing-indicator';
-    el.style.cssText = 'padding:4px 20px;font-size:12px;color:#888;font-style:italic;min-height:18px;';
+    el.style.cssText = 'padding:4px 20px;font-size:12px;color:var(--text-dim);font-style:italic;min-height:18px;';
     messagesPanel.parentNode.insertBefore(el, messagesPanel.nextSibling);
   }
   const typers = _typingState[currentChannel] || {};
@@ -2183,10 +2479,10 @@ function renderDocList(docs) {
     if (updated) dateLine += (dateLine ? ' | ' : '') + 'Edited ' + updated + (editedBy ? ' by ' + escapeHtml(editedBy) : '');
     card.innerHTML = '<div class="doc-card-meta">'
       + '<span class="doc-card-folder">' + escapeHtml(folder) + '</span>'
-      + (author ? '<span style="font-size:11px;color:#888">' + escapeHtml(author) + '</span>' : '')
+      + (author ? '<span style="font-size:11px;color:var(--text-dim)">' + escapeHtml(author) + '</span>' : '')
       + '</div>'
       + '<div class="doc-card-title">' + escapeHtml(doc.title || doc.slug) + '</div>'
-      + (dateLine ? '<div style="font-size:10px;color:#555;margin-bottom:4px">' + dateLine + '</div>' : '')
+      + (dateLine ? '<div style="font-size:10px;color:var(--text-dimmer);margin-bottom:4px">' + dateLine + '</div>' : '')
       + '<div class="doc-card-preview">' + escapeHtml(doc.preview || '') + '</div>';
     card.addEventListener('click', () => viewDoc(folder, doc.slug));
     docsList.appendChild(card);
@@ -2210,7 +2506,7 @@ async function viewDoc(folder, slug) {
   if (updatedBy && updatedBy !== createdBy) meta += ' | Edited by ' + updatedBy + ' on ' + updatedAt;
   else if (updatedAt && updatedAt !== createdAt) meta += ' | Updated ' + updatedAt;
   docViewerTitle.innerHTML = escapeHtml(_currentDoc.title || _currentDoc.slug) +
-    (meta ? '<div style="font-size:11px;color:#888;font-weight:400;margin-top:2px">' + escapeHtml(meta) + '</div>' : '');
+    (meta ? '<div style="font-size:11px;color:var(--text-dim);font-weight:400;margin-top:2px">' + escapeHtml(meta) + '</div>' : '');
   document.getElementById('doc-viewer-content').innerHTML = renderMarkdown(_currentDoc.content || '');
   document.getElementById('doc-viewer-body').style.display = 'flex';
   document.getElementById('doc-edit-area').style.display = 'none';
@@ -2268,13 +2564,13 @@ async function loadDocHistory() {
   if (!_currentDoc) return;
   const panel = document.getElementById('doc-history-panel');
   const list = document.getElementById('doc-history-list');
-  list.innerHTML = '<div style="padding:8px 12px;font-size:11px;color:#888">Loading...</div>';
+  list.innerHTML = '<div style="padding:8px 12px;font-size:11px;color:var(--text-dim)">Loading...</div>';
   panel.style.display = '';
   const resp = await fetch('/api/docs/' + encodeURIComponent(_currentDoc.folder) + '/' + encodeURIComponent(_currentDoc.slug) + '/history');
   const history = await resp.json();
   list.innerHTML = '';
   if (!history.length) {
-    list.innerHTML = '<div style="padding:8px 12px;font-size:11px;color:#888">No version history</div>';
+    list.innerHTML = '<div style="padding:8px 12px;font-size:11px;color:var(--text-dim)">No version history</div>';
     return;
   }
   history.forEach((v, i) => {
@@ -2760,6 +3056,20 @@ function populateAllRoleDropdowns() {
     populateRoleSelect(memoCreateRoleSel, HUMAN_ROLES, {empty: true, emptyLabel: 'No role', default: 'Scenario Director'});
     memoCreateRoleSel.innerHTML += '<option value="custom">Custom...</option>';
   }
+
+  // Blog reply role
+  const blogReplySel = document.getElementById('blog-reply-role');
+  if (blogReplySel) {
+    populateRoleSelect(blogReplySel, HUMAN_ROLES, {empty: true, emptyLabel: 'No role', default: 'Scenario Director'});
+    blogReplySel.innerHTML += '<option value="custom">Custom...</option>';
+  }
+
+  // Blog create role
+  const blogCreateRoleSel = document.getElementById('blog-create-role');
+  if (blogCreateRoleSel) {
+    populateRoleSelect(blogCreateRoleSel, HUMAN_ROLES, {empty: true, emptyLabel: 'No role', default: 'Scenario Director'});
+    blogCreateRoleSel.innerHTML += '<option value="custom">Custom...</option>';
+  }
 }
 
 function toggleCreateForm() {
@@ -2992,9 +3302,9 @@ async function loadNPCs() {
   if (readyCount > 0) summaryHtml += '<div style="color:#2ecc71">Ready: ' + readyCount + '</div>';
   if (respondingCount > 0) summaryHtml += '<div style="color:#3498db">Responding: ' + respondingCount + '</div>';
   if (startingCount > 0) summaryHtml += '<div style="color:#f39c12">Starting: ' + startingCount + '</div>';
-  if (oooCount > 0) summaryHtml += '<div style="color:#888">Out of office: ' + oooCount + '</div>';
-  if (disconnectedCount > 0) summaryHtml += '<div style="color:#555">Disconnected: ' + disconnectedCount + '</div>';
-  if (!summaryHtml) summaryHtml = '<div style="color:#555">No agents active</div>';
+  if (oooCount > 0) summaryHtml += '<div style="color:var(--text-dim)">Out of office: ' + oooCount + '</div>';
+  if (disconnectedCount > 0) summaryHtml += '<div style="color:var(--text-dimmer)">Disconnected: ' + disconnectedCount + '</div>';
+  if (!summaryHtml) summaryHtml = '<div style="color:var(--text-dimmer)">No agents active</div>';
   summaryEl.innerHTML = summaryHtml;
   // Group by tier
   const tiers = {};
@@ -3064,7 +3374,7 @@ function createNPCCard(npc) {
   card.appendChild(btn);
   const fireBtn = document.createElement('button');
   fireBtn.className = 'npc-toggle-btn';
-  fireBtn.style.cssText = 'margin-top:4px;font-size:10px;color:#666';
+  fireBtn.style.cssText = 'margin-top:4px;font-size:10px;color:var(--text-dimmer)';
   fireBtn.textContent = 'Fire';
   fireBtn.addEventListener('click', async (e) => {
     e.stopPropagation();
@@ -3394,7 +3704,7 @@ async function loadNPCConfig() {
   const currentRepos = new Set(npc.repos || []);
   const allRepos = Object.keys(glRepos || {}).length ? glRepos.map(r => r.name).sort() : [];
   if (allRepos.length === 0) {
-    repoContainer.innerHTML = '<span style="font-size:11px;color:#555">No repositories yet</span>';
+    repoContainer.innerHTML = '<span style="font-size:11px;color:var(--text-dimmer)">No repositories yet</span>';
   }
   allRepos.forEach(name => {
     const checked = currentRepos.has(name);
@@ -3541,7 +3851,7 @@ document.getElementById('recap-generate-btn').addEventListener('click', async ()
   const style = document.getElementById('recap-style').value;
   const content = document.getElementById('recap-content');
   const btn = document.getElementById('recap-generate-btn');
-  content.innerHTML = '<div style="color:#888;text-align:center;padding:60px"><div class="spinner" style="margin:0 auto 12px"></div>Generating ' + (STYLE_LABELS[style] || style) + ' recap...</div>';
+  content.innerHTML = '<div style="color:var(--text-dim);text-align:center;padding:60px"><div class="spinner" style="margin:0 auto 12px"></div>Generating ' + (STYLE_LABELS[style] || style) + ' recap...</div>';
   btn.disabled = true;
   btn.textContent = 'Generating...';
   try {
@@ -3713,7 +4023,7 @@ async function viewMemoThread(threadId) {
   document.getElementById('memo-thread-meta').innerHTML =
     'Started by ' + escapeHtml(thread.creator) + ' &middot; ' + _memoTimeAgo(thread.created_at);
   const descEl = document.getElementById('memo-thread-description');
-  descEl.textContent = thread.description || '';
+  descEl.innerHTML = thread.description ? renderMarkdown(thread.description) : '';
   descEl.style.display = thread.description ? '' : 'none';
 
   const postsList = document.getElementById('memo-posts-list');
@@ -3728,7 +4038,7 @@ async function viewMemoThread(threadId) {
         '<span class="memo-post-author">' + escapeHtml(p.author) + '</span>' +
         '<span class="memo-post-date">' + ts + '</span>' +
       '</div>' +
-      '<div class="memo-post-text">' + escapeHtml(p.text) + '</div>';
+      '<div class="memo-post-text">' + renderMarkdown(p.text) + '</div>';
     postsList.appendChild(div);
   });
 
@@ -3819,6 +4129,222 @@ document.getElementById('memo-delete-btn').addEventListener('click', async () =>
 });
 
 // Load memos when tab is selected — handled by tab click handler below
+
+// -- Blog tab --
+
+let _currentBlogPost = null;
+let _blogFilter = 'all';
+
+async function loadBlogPosts() {
+  const list = document.getElementById('blog-posts-list');
+  const empty = document.getElementById('blog-posts-empty');
+  let url = '/api/blog/posts';
+  if (_blogFilter !== 'all') url += '?filter=' + _blogFilter;
+  const resp = await fetch(url);
+  const posts = await resp.json();
+  list.innerHTML = '';
+  empty.style.display = posts.length ? 'none' : 'block';
+  posts.forEach(p => {
+    const item = document.createElement('div');
+    item.className = 'blog-post-item' + (p.slug === _currentBlogPost ? ' active' : '');
+    item.dataset.slug = p.slug;
+    let badge = p.is_external
+      ? '<span class="blog-external-badge">External</span>'
+      : '<span class="blog-internal-badge">Internal</span>';
+    const pStatus = p.status || 'published';
+    if (pStatus === 'draft') badge += ' <span class="blog-internal-badge" style="background:#f39c12;color:var(--text-bright)">Draft</span>';
+    if (pStatus === 'unpublished') badge += ' <span class="blog-internal-badge" style="background:var(--accent);color:var(--text-bright)">Unpub</span>';
+    const preview = (p.body || '').substring(0, 60);
+    const replyInfo = p.reply_count + ' repl' + (p.reply_count !== 1 ? 'ies' : 'y');
+    const age = _memoTimeAgo(p.created_at);
+    item.innerHTML =
+      '<div style="display:flex;align-items:center"><span class="blog-post-title">' + escapeHtml(p.title) + '</span>' + badge + '</div>' +
+      '<div class="blog-post-preview">' + escapeHtml(preview) + '</div>' +
+      '<div class="blog-post-meta">' + escapeHtml(p.author) + ' &middot; ' + replyInfo + ' &middot; ' + age + '</div>';
+    item.addEventListener('click', () => viewBlogPost(p.slug));
+    list.appendChild(item);
+  });
+}
+
+document.querySelectorAll('.blog-filter-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    _blogFilter = btn.dataset.blogFilter;
+    document.querySelectorAll('.blog-filter-btn').forEach(b => b.classList.toggle('active', b === btn));
+    loadBlogPosts();
+  });
+});
+
+async function viewBlogPost(slug) {
+  _currentBlogPost = slug;
+  document.querySelectorAll('.blog-post-item').forEach(el =>
+    el.classList.toggle('active', el.dataset.slug === slug));
+
+  const resp = await fetch('/api/blog/posts/' + slug);
+  if (!resp.ok) { showNotice('Post not found'); return; }
+  const post = await resp.json();
+
+  document.getElementById('blog-post-title').textContent = post.title;
+  let badgeHtml = post.is_external
+    ? '<span class="blog-external-badge">External</span>'
+    : '<span class="blog-internal-badge">Internal</span>';
+  const status = post.status || 'published';
+  if (status === 'draft') badgeHtml += ' <span class="blog-internal-badge" style="background:#f39c12;color:var(--text-bright)">Draft</span>';
+  if (status === 'unpublished') badgeHtml += ' <span class="blog-internal-badge" style="background:var(--accent);color:var(--text-bright)">Unpublished</span>';
+  document.getElementById('blog-post-badge').innerHTML = badgeHtml;
+  document.getElementById('blog-post-author').textContent = post.author;
+  document.getElementById('blog-post-date').textContent = new Date(post.created_at * 1000).toLocaleString();
+
+  // Show/hide publish/unpublish buttons based on status
+  document.getElementById('blog-publish-btn').style.display = (status !== 'published') ? '' : 'none';
+  document.getElementById('blog-unpublish-btn').style.display = (status === 'published') ? '' : 'none';
+
+  const tagsEl = document.getElementById('blog-post-tags');
+  tagsEl.innerHTML = '';
+  (post.tags || []).forEach(tag => {
+    const span = document.createElement('span');
+    span.className = 'blog-tag';
+    span.textContent = tag;
+    tagsEl.appendChild(span);
+  });
+
+  document.getElementById('blog-post-body').textContent = post.body || '';
+
+  const replies = post.replies || [];
+  document.getElementById('blog-replies-header').textContent = replies.length + ' Repl' + (replies.length !== 1 ? 'ies' : 'y');
+  const repliesList = document.getElementById('blog-replies-list');
+  repliesList.innerHTML = '';
+  replies.forEach(r => {
+    const div = document.createElement('div');
+    div.className = 'blog-reply';
+    const ts = new Date(r.timestamp * 1000).toLocaleString();
+    div.innerHTML =
+      '<div style="display:flex;align-items:baseline">' +
+        '<span class="blog-reply-author">' + escapeHtml(r.author) + '</span>' +
+        '<span class="blog-reply-date">' + ts + '</span>' +
+      '</div>' +
+      '<div class="blog-reply-text">' + escapeHtml(r.text) + '</div>';
+    repliesList.appendChild(div);
+  });
+
+  document.getElementById('blog-post-viewer').style.display = '';
+  document.getElementById('blog-empty-state').style.display = 'none';
+  document.getElementById('blog-reply-text').value = '';
+}
+
+function _getBlogSender(nameId, roleId, customId) {
+  const name = document.getElementById(nameId).value.trim() || 'Anonymous';
+  let role = document.getElementById(roleId).value;
+  if (role === 'custom') role = document.getElementById(customId).value.trim();
+  return role ? name + ' (' + role + ')' : name;
+}
+
+document.getElementById('blog-reply-role').addEventListener('change', (e) => {
+  document.getElementById('blog-reply-role-custom').style.display = e.target.value === 'custom' ? '' : 'none';
+});
+
+document.getElementById('blog-create-role').addEventListener('change', (e) => {
+  document.getElementById('blog-create-role-custom').style.display = e.target.value === 'custom' ? '' : 'none';
+});
+
+document.getElementById('create-blog-post-btn').addEventListener('click', () => {
+  document.getElementById('blog-create-title').value = '';
+  document.getElementById('blog-create-body').value = '';
+  document.getElementById('blog-create-tags').value = '';
+  document.getElementById('blog-create-name').value = '';
+  document.getElementById('blog-create-role').value = 'Scenario Director';
+  document.getElementById('blog-create-role-custom').style.display = 'none';
+  document.getElementById('blog-create-role-custom').value = '';
+  document.getElementById('blog-create-external').checked = false;
+  openModal('blog-create-modal');
+  document.getElementById('blog-create-title').focus();
+});
+
+document.getElementById('blog-create-cancel').addEventListener('click', () => {
+  closeModal('blog-create-modal');
+});
+
+async function _submitBlogPost(status) {
+  const title = document.getElementById('blog-create-title').value.trim();
+  if (!title) { document.getElementById('blog-create-title').focus(); return; }
+  const body = document.getElementById('blog-create-body').value.trim();
+  const author = _getBlogSender('blog-create-name', 'blog-create-role', 'blog-create-role-custom');
+  const is_external = document.getElementById('blog-create-external').checked;
+  const tagsRaw = document.getElementById('blog-create-tags').value.trim();
+  const tags = tagsRaw ? tagsRaw.split(',').map(t => t.trim()).filter(t => t) : [];
+  const resp = await fetch('/api/blog/posts', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({title, body, author, is_external, tags, status})
+  });
+  if (resp.ok) {
+    const post = await resp.json();
+    closeModal('blog-create-modal');
+    loadBlogPosts();
+    viewBlogPost(post.slug);
+    showNotice((status === 'draft' ? 'Draft saved: ' : 'Published: ') + title);
+  }
+}
+document.getElementById('blog-create-submit').addEventListener('click', () => _submitBlogPost('published'));
+document.getElementById('blog-create-draft').addEventListener('click', () => _submitBlogPost('draft'));
+
+document.getElementById('blog-reply-send').addEventListener('click', async () => {
+  if (!_currentBlogPost) return;
+  const textarea = document.getElementById('blog-reply-text');
+  const text = textarea.value.trim();
+  if (!text) return;
+  const author = _getBlogSender('blog-reply-name', 'blog-reply-role', 'blog-reply-role-custom');
+  const resp = await fetch('/api/blog/posts/' + _currentBlogPost + '/replies', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({text, author})
+  });
+  if (resp.ok) {
+    textarea.value = '';
+    viewBlogPost(_currentBlogPost);
+    loadBlogPosts();
+  }
+});
+
+document.getElementById('blog-publish-btn').addEventListener('click', async () => {
+  if (!_currentBlogPost) return;
+  const resp = await fetch('/api/blog/posts/' + _currentBlogPost, {
+    method: 'PUT',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({status: 'published'})
+  });
+  if (resp.ok) {
+    viewBlogPost(_currentBlogPost);
+    loadBlogPosts();
+    showNotice('Post published');
+  }
+});
+
+document.getElementById('blog-unpublish-btn').addEventListener('click', async () => {
+  if (!_currentBlogPost) return;
+  const resp = await fetch('/api/blog/posts/' + _currentBlogPost, {
+    method: 'PUT',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({status: 'unpublished'})
+  });
+  if (resp.ok) {
+    viewBlogPost(_currentBlogPost);
+    loadBlogPosts();
+    showNotice('Post unpublished');
+  }
+});
+
+document.getElementById('blog-delete-btn').addEventListener('click', async () => {
+  if (!_currentBlogPost) return;
+  if (!confirm('Delete this blog post and all its replies?')) return;
+  const resp = await fetch('/api/blog/posts/' + _currentBlogPost, {method: 'DELETE'});
+  if (resp.ok) {
+    _currentBlogPost = null;
+    document.getElementById('blog-post-viewer').style.display = 'none';
+    document.getElementById('blog-empty-state').style.display = '';
+    loadBlogPosts();
+    showNotice('Post deleted');
+  }
+});
 
 // -- Events tab --
 
@@ -3914,7 +4440,7 @@ async function loadEventLog() {
     row.appendChild(retrigger);
     // Expandable YAML detail
     const detail = document.createElement('div');
-    detail.style.cssText = 'display:none;width:100%;margin-top:8px;background:#111;border-radius:6px;padding:10px;font-family:monospace;font-size:12px;color:#ccc;white-space:pre-wrap;max-height:300px;overflow-y:auto';
+    detail.style.cssText = 'display:none;width:100%;margin-top:8px;background:var(--input-bg);border-radius:6px;padding:10px;font-family:monospace;font-size:12px;color:var(--text);white-space:pre-wrap;max-height:300px;overflow-y:auto';
     const clean = Object.assign({}, entry);
     delete clean._history;
     detail.textContent = eventToYaml(clean);
@@ -3956,7 +4482,7 @@ function renderEventHistory() {
   const list = document.getElementById('event-edit-history-list');
   list.innerHTML = '';
   if (!_eventEditHistory.length) {
-    list.innerHTML = '<div style="padding:8px 12px;font-size:11px;color:#888">No previous versions</div>';
+    list.innerHTML = '<div style="padding:8px 12px;font-size:11px;color:var(--text-dim)">No previous versions</div>';
     return;
   }
   [..._eventEditHistory].reverse().forEach((v, i) => {
@@ -4102,10 +4628,10 @@ function showNotice(text) {
   if (!bar) {
     bar = document.createElement('div');
     bar.id = 'notice-bar';
-    bar.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:999;background:#e94560;color:#fff;padding:10px 20px;font-size:13px;display:flex;align-items:center;justify-content:space-between;';
+    bar.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:999;background:var(--accent);color:var(--text-bright);padding:10px 20px;font-size:13px;display:flex;align-items:center;justify-content:space-between;';
     const dismiss = document.createElement('button');
     dismiss.textContent = 'Dismiss';
-    dismiss.style.cssText = 'background:rgba(0,0,0,0.3);color:#fff;border:none;padding:4px 12px;border-radius:4px;cursor:pointer;font-size:12px;margin-left:16px;';
+    dismiss.style.cssText = 'background:rgba(0,0,0,0.3);color:var(--text-bright);border:none;padding:4px 12px;border-radius:4px;cursor:pointer;font-size:12px;margin-left:16px;';
     dismiss.addEventListener('click', () => bar.remove());
     bar.appendChild(document.createElement('span'));
     bar.appendChild(dismiss);
@@ -4220,7 +4746,7 @@ document.getElementById('save-session-confirm').addEventListener('click', async 
     } else {
       const err = await resp.json();
       status.textContent = 'Error: ' + (err.error || 'unknown');
-      status.style.color = '#e94560';
+      status.style.color = 'var(--accent)';
     }
   } finally {
     document.getElementById('save-session-confirm').disabled = false;
@@ -4318,7 +4844,7 @@ document.getElementById('load-session-confirm').addEventListener('click', async 
       hideLoading();
       openModal('load-session-modal');
       status.textContent = 'Error: ' + (err.error || 'unknown');
-      status.style.color = '#e94560';
+      status.style.color = 'var(--accent)';
       return;
     }
   } finally {
@@ -5308,6 +5834,26 @@ def create_app() -> Flask:
                     if text:
                         post_memo(thread["id"], text, creator)
                     results.append({"type": "memo", "action": "created", "thread_id": thread["id"], "title": title})
+            elif action_type == "blog":
+                from lib.blog import create_post as create_blog, reply_to_post as reply_blog
+                title = action.get("title", "")
+                body = action.get("body", action.get("content", ""))
+                creator = action.get("sender", action.get("author", "System"))
+                is_external = action.get("is_external", False)
+                tags = action.get("tags", [])
+                post_slug = action.get("post_slug", "")
+                text = action.get("text", "")
+                if post_slug and text:
+                    # Reply to existing post
+                    try:
+                        reply = reply_blog(post_slug, text, creator)
+                        results.append({"type": "blog", "action": "replied", "post_slug": post_slug, "reply_id": reply["id"]})
+                    except ValueError:
+                        results.append({"type": "blog", "action": "reply_failed", "error": "post not found"})
+                elif title:
+                    # Create new blog post
+                    post = create_blog(title, body, creator, is_external=is_external, tags=tags)
+                    results.append({"type": "blog", "action": "created", "slug": post["slug"], "title": title})
         # Log the event with results
         data["results"] = results
         entry = fire_event(data)
@@ -5540,6 +6086,85 @@ Write a compelling recap of this simulation session in the requested style. Keep
     def delete_memo_thread_endpoint(thread_id):
         from lib.memos import delete_thread
         if delete_thread(thread_id):
+            return jsonify({"ok": True})
+        return jsonify({"error": "not found"}), 404
+
+    # -- Blog API --
+
+    @app.route("/api/blog/posts", methods=["GET"])
+    def list_blog_posts():
+        from lib.blog import get_posts
+        include_replies = request.args.get("include_replies", "").lower() in ("1", "true")
+        posts = get_posts(include_recent_replies=include_replies)
+        filt = request.args.get("filter", "")
+        if filt == "internal":
+            posts = [p for p in posts if not p.get("is_external")]
+        elif filt == "external":
+            posts = [p for p in posts if p.get("is_external")]
+        return jsonify(posts)
+
+    @app.route("/api/blog/posts", methods=["POST"])
+    def create_blog_post_endpoint():
+        from lib.blog import create_post
+        data = request.get_json(force=True)
+        title = data.get("title", "").strip()
+        if not title:
+            return jsonify({"error": "title required"}), 400
+        body = data.get("body", "").strip()
+        author = data.get("author", "System")
+        is_external = data.get("is_external", False)
+        tags = data.get("tags", [])
+        entry = create_post(title, body, author, is_external=is_external, tags=tags)
+        return jsonify(entry), 201
+
+    @app.route("/api/blog/posts/<post_slug>", methods=["GET"])
+    def get_blog_post_detail(post_slug):
+        from lib.blog import get_post, get_replies
+        post = get_post(post_slug)
+        if not post:
+            return jsonify({"error": "not found"}), 404
+        post["replies"] = get_replies(post_slug)
+        return jsonify(post)
+
+    @app.route("/api/blog/posts/<post_slug>", methods=["PUT"])
+    def update_blog_post_endpoint(post_slug):
+        from lib.blog import update_post
+        data = request.get_json(force=True)
+        kwargs = {}
+        for key in ("title", "body", "status", "is_external", "tags"):
+            if key in data:
+                kwargs[key] = data[key]
+        if not kwargs:
+            return jsonify({"error": "no fields to update"}), 400
+        try:
+            entry = update_post(post_slug, **kwargs)
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 404
+        return jsonify(entry)
+
+    @app.route("/api/blog/posts/<post_slug>/replies", methods=["GET"])
+    def list_blog_replies(post_slug):
+        from lib.blog import get_replies
+        return jsonify(get_replies(post_slug))
+
+    @app.route("/api/blog/posts/<post_slug>/replies", methods=["POST"])
+    def reply_to_blog_post_endpoint(post_slug):
+        from lib.blog import reply_to_post
+        data = request.get_json(force=True)
+        text = data.get("text", "").strip()
+        if not text:
+            return jsonify({"error": "text required"}), 400
+        author = data.get("author", "System")
+        try:
+            entry = reply_to_post(post_slug, text, author)
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 404
+        return jsonify(entry), 201
+
+    @app.route("/api/blog/posts/<post_slug>", methods=["DELETE"])
+    def delete_blog_post_endpoint(post_slug):
+        from lib.blog import delete_post
+        if delete_post(post_slug):
             return jsonify({"ok": True})
         return jsonify({"error": "not found"}), 404
 
@@ -5886,6 +6511,9 @@ Write a compelling recap of this simulation session in the requested style. Keep
                 _load_scenario(scenario)
                 set_scenario(scenario)
             _reinitialize()
+            # Re-restore memos, events, emails, and recaps that were
+            # cleared by _load_scenario / _reinitialize
+            _restore_session_extras(instance_name)
             # Apply saved memberships on top of defaults
             memberships = get_memberships_from_instance(instance_name)
             if memberships:

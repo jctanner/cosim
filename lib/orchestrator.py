@@ -708,6 +708,86 @@ def _log_memo_results(client: ChatClient, persona: dict, results: list[dict]) ->
             print(f"  {display}: memo {action} failed - {r.get('error', '?')}")
 
 
+def _execute_blog_commands(
+    client: ChatClient,
+    commands: list[dict],
+    author: str,
+) -> list[dict]:
+    """Execute blog commands via ChatClient."""
+    results = []
+    for cmd in commands:
+        action = cmd.get("action", "").upper()
+        try:
+            if action == "CREATE":
+                result = client.create_blog_post(
+                    cmd.get("title", "Untitled"),
+                    cmd.get("body", ""),
+                    author,
+                    is_external=cmd.get("is_external", False),
+                    tags=cmd.get("tags"),
+                )
+                results.append({"action": "created", "ok": True, **result})
+            elif action == "REPLY":
+                result = client.reply_to_blog_post(
+                    cmd.get("post_slug", ""),
+                    cmd.get("text", ""),
+                    author,
+                )
+                results.append({"action": "replied", "ok": True, **result})
+            elif action == "UPDATE":
+                result = client.update_blog_post(
+                    cmd.get("post_slug", ""),
+                    title=cmd.get("title"),
+                    body=cmd.get("body"),
+                    status=cmd.get("status"),
+                    is_external=cmd.get("is_external"),
+                    tags=cmd.get("tags"),
+                )
+                results.append({"action": "updated", "ok": True, **result})
+            elif action == "READ":
+                post = client.get_blog_post(cmd.get("post_slug", ""))
+                results.append({"action": "read", "ok": True, **(post or {})})
+            elif action == "LIST":
+                posts = client.get_blog_posts()
+                results.append({"action": "list", "ok": True, "posts": posts})
+        except Exception as e:
+            results.append({"action": action.lower(), "ok": False, "error": str(e)})
+    return results
+
+
+def _log_blog_results(client: ChatClient, persona: dict, results: list[dict]) -> None:
+    """Log blog command results. READ/LIST are silent (data in turn prompt).
+    CREATE/REPLY broadcast a short notification."""
+    display = persona["display_name"]
+    for r in results:
+        action = r.get("action", "?")
+        if action == "list":
+            print(f"  {display}: blog list -> {len(r.get('posts', []))} posts")
+        elif action == "read":
+            print(f"  {display}: blog read '{r.get('title', '?')}' -> {len(r.get('replies', []))} replies")
+        elif action == "created":
+            title = r.get("title", "?")
+            vis = "external" if r.get("is_external") else "internal"
+            status = r.get("status", "published")
+            if status == "published":
+                _post_system(client, f"[Blog] {display} published: **{title}** ({vis})")
+            else:
+                _post_system(client, f"[Blog] {display} saved draft: **{title}**")
+            print(f"  {display}: blog created '{title}' [{vis}, {status}]")
+        elif action == "updated":
+            title = r.get("title", "?")
+            status = r.get("status", "?")
+            if status == "published":
+                _post_system(client, f"[Blog] {display} published: **{title}**")
+            print(f"  {display}: blog updated '{title}' -> {status}")
+        elif action == "replied":
+            post_slug = r.get("post_slug", "?")
+            _post_system(client, f"[Blog] {display} replied on {post_slug}")
+            print(f"  {display}: blog replied to '{post_slug}'")
+        elif not r.get("ok"):
+            print(f"  {display}: blog {action} failed - {r.get('error', '?')}")
+
+
 async def _process_json_response(
     client: ChatClient,
     parsed: dict,
@@ -722,7 +802,7 @@ async def _process_json_response(
     author = persona["display_name"]
 
     # 1. Normalize and execute commands
-    doc_cmds, gitlab_cmds, tickets_cmds, channels_to_join, dm_cmds, task_cmds, memo_cmds = normalize_commands(parsed)
+    doc_cmds, gitlab_cmds, tickets_cmds, channels_to_join, dm_cmds, task_cmds, memo_cmds, blog_cmds = normalize_commands(parsed)
 
     if doc_cmds:
         if on_activity:
@@ -772,6 +852,12 @@ async def _process_json_response(
             on_activity("posting to memos")
         memo_results = _execute_memo_commands(client, memo_cmds, author)
         _log_memo_results(client, persona, memo_results)
+
+    if blog_cmds:
+        if on_activity:
+            on_activity("writing blog post")
+        blog_results = _execute_blog_commands(client, blog_cmds, author)
+        _log_blog_results(client, persona, blog_results)
 
     # 2. Extract channel-routed messages
     return extract_messages(parsed, default_channel)
@@ -967,6 +1053,7 @@ async def _run_loop(
             repos = client.list_repos()
             tickets = client.list_tickets()
             memo_threads = client.get_memo_threads(include_posts=True)
+            blog_posts_data = client.get_blog_posts(include_replies=True)
 
             # 2. Build prompts and launch all sends in parallel
             async def _run_agent(pk, trigger_ch):
@@ -988,6 +1075,7 @@ async def _run_loop(
                     pending_dms=pending_dms,
                     verbosity=verbosity_map.get(pk, "normal"),
                     memos=memo_threads,
+                    blog_posts=blog_posts_data,
                 )
                 # Show typing indicator and update agent status
                 display_name = persona["display_name"]
