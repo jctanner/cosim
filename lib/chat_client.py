@@ -347,6 +347,61 @@ class ChatClient:
         resp.raise_for_status()
         return resp.json()
 
+    # -- Blog API --
+
+    def get_blog_posts(self, include_replies: bool = False) -> list[dict]:
+        """Return list of blog posts."""
+        try:
+            params = {}
+            if include_replies:
+                params["include_replies"] = "1"
+            resp = requests.get(f"{self.base_url}/api/blog/posts", params=params, timeout=10)
+            resp.raise_for_status()
+            return resp.json()
+        except Exception:
+            return []
+
+    def get_blog_post(self, post_slug: str) -> dict | None:
+        """Get a single blog post with its replies."""
+        resp = requests.get(f"{self.base_url}/api/blog/posts/{post_slug}", timeout=10)
+        resp.raise_for_status()
+        return resp.json()
+
+    def create_blog_post(self, title: str, body: str, author: str,
+                         is_external: bool = False, tags: list[str] | None = None) -> dict:
+        """Create a new blog post."""
+        payload = {"title": title, "body": body, "author": author, "is_external": is_external}
+        if tags:
+            payload["tags"] = tags
+        resp = requests.post(
+            f"{self.base_url}/api/blog/posts",
+            json=payload,
+            timeout=10,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def update_blog_post(self, post_slug: str, **kwargs) -> dict:
+        """Update a blog post's fields (title, body, status, is_external, tags)."""
+        payload = {k: v for k, v in kwargs.items() if v is not None}
+        resp = requests.put(
+            f"{self.base_url}/api/blog/posts/{post_slug}",
+            json=payload,
+            timeout=10,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def reply_to_blog_post(self, post_slug: str, text: str, author: str) -> dict:
+        """Post a reply to a blog post."""
+        resp = requests.post(
+            f"{self.base_url}/api/blog/posts/{post_slug}/replies",
+            json={"text": text, "author": author},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
     # -- Agent thoughts --
 
     def post_thoughts(self, persona_key: str, thinking: str, response: str):

@@ -174,10 +174,10 @@ def _repair_json(text: str) -> str | None:
     return repaired if repaired != text else None
 
 
-def normalize_commands(parsed: dict) -> tuple[list[dict], list[dict], list[dict], list[str], list[dict], list[dict], list[dict]]:
+def normalize_commands(parsed: dict) -> tuple[list[dict], list[dict], list[dict], list[str], list[dict], list[dict], list[dict], list[dict]]:
     """Split the commands array by type into the flat dict format existing _execute_* functions expect.
 
-    Returns (doc_cmds, gitlab_cmds, tickets_cmds, channels_to_join, dm_cmds, task_cmds, memo_cmds).
+    Returns (doc_cmds, gitlab_cmds, tickets_cmds, channels_to_join, dm_cmds, task_cmds, memo_cmds, blog_cmds).
 
     Each command's 'action' + 'params' are merged into a flat dict, e.g.:
         {"type": "doc", "action": "CREATE", "params": {"folder": "shared", "title": "..."}}
@@ -186,7 +186,7 @@ def normalize_commands(parsed: dict) -> tuple[list[dict], list[dict], list[dict]
     """
     commands = parsed.get("commands", [])
     if not commands:
-        return [], [], [], [], [], [], []
+        return [], [], [], [], [], [], [], []
 
     doc_cmds = []
     gitlab_cmds = []
@@ -195,6 +195,7 @@ def normalize_commands(parsed: dict) -> tuple[list[dict], list[dict], list[dict]
     dm_cmds = []
     task_cmds = []
     memo_cmds = []
+    blog_cmds = []
 
     for cmd in commands:
         cmd_type = cmd.get("type", "").lower()
@@ -222,8 +223,10 @@ def normalize_commands(parsed: dict) -> tuple[list[dict], list[dict], list[dict]
             task_cmds.append(flat)
         elif cmd_type == "memo":
             memo_cmds.append(flat)
+        elif cmd_type == "blog":
+            blog_cmds.append(flat)
 
-    return doc_cmds, gitlab_cmds, tickets_cmds, channels_to_join, dm_cmds, task_cmds, memo_cmds
+    return doc_cmds, gitlab_cmds, tickets_cmds, channels_to_join, dm_cmds, task_cmds, memo_cmds, blog_cmds
 
 
 def extract_messages(parsed: dict, default_channel: str) -> dict[str, str]:
