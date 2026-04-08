@@ -151,5 +151,34 @@ events:
         subject: "REQUIRED: Y2K Compliance Training — Due by December 1, 1999"
         body: "Hi team,\n\nPer our client contracts, all team members must complete Y2K compliance training by December 1st.\n\nI know, I know. But the clients are asking and we need to show we've done our due diligence.\n\nThe training is a 30-minute online module covering:\n- Date handling in HTML forms\n- Server-side date validation\n- Two-digit vs four-digit year formats\n- What to tell panicking clients\n\nLink: training.internal/y2k-1999\n\nLet's circle back on this at Monday's sync-up.\n\n— Kevin"
 
+  - name: "Webmaster's Corner: Flash vs CSS"
+    severity: "low"
+    actions:
+      - type: "blog"
+        title: "Webmaster's Corner: Why Flash is the Future (And CSS is a Fad)"
+        sender: "Derek (Webmaster)"
+        is_external: false
+        tags: ["tech", "hot-take", "flash"]
+        body: "Listen, I know some of you are excited about these 'Cascading Style Sheets' but let me be real: Flash is where the web is going.\n\nCSS can change font colors. Wow. Flash can do FULL MOTION ANIMATION. We're talking splash pages with sound, interactive menus that spin, loading screens that are more entertaining than the actual site.\n\nOur clients don't want 'semantic markup.' They want their logo to fly across the screen while a MIDI file plays. They want a hit counter with flames. They want a guestbook that sparkles.\n\nI've been building websites since 1996 and I'm telling you — in five years, every site on the internet will be Flash. CSS will be a footnote.\n\nFight me in the comments.\n\n— Derek"
+      - type: "message"
+        channel: "#general"
+        sender: "Derek (Webmaster)"
+        content: "New blog post: why Flash is the future and CSS is a fad. I stand by every word."
+
+  - name: "Client Spotlight: GeoCities Fan Page Redesign"
+    severity: "low"
+    actions:
+      - type: "blog"
+        title: "Client Spotlight: The Totally Radical GeoCities Fan Page Redesign"
+        sender: "Monica (Biz Dev)"
+        is_external: true
+        tags: ["client-work", "case-study", "geocities"]
+        body: "We're thrilled to announce the launch of our latest project: a complete redesign of the Silicon Valley Star Trek Fan Club's GeoCities page.\n\nHighlights:\n- Custom animated starfield background (only 2MB!)\n- Embedded MIDI of the Next Generation theme\n- Fully functional guestbook with visitor counter\n- Optimized for 800x600 resolution\n- Compatible with both Netscape Navigator AND Internet Explorer 5\n\nThe client wanted 'the most advanced website on the internet' and we delivered. Load time is under 45 seconds on a 56k modem.\n\nCheck it out at geocities.com/siliconvalley/park/8742\n\nContact us for your next web project. We do it all — HTML, Flash, animated GIFs, and we just started learning JavaScript.\n\n— Monica, PixelForge Interactive"
+      - type: "message"
+        channel: "#general"
+        sender: "Monica (Biz Dev)"
+        content: "Published the GeoCities case study on the external blog. Great portfolio piece for us."
+
 settings:
   enable_memos: true
+  enable_blog: true
