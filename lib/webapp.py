@@ -3494,10 +3494,18 @@ function selectThought(idx) {
 
 async function loadNPCPrompt() {
   const body = document.getElementById('npc-detail-prompt');
-  body.textContent = 'Loading...';
+  body.innerHTML = '<span style="color:var(--text-dimmer)">Loading...</span>';
   const resp = await fetch('/api/npcs/' + encodeURIComponent(_npcDetailKey) + '/prompt');
   const data = await resp.json();
-  body.textContent = data.content || data.error || 'No prompt found.';
+  if (data.error) { body.textContent = data.error; return; }
+  let html = '';
+  if (data.context) {
+    html += '<div style="margin-bottom:12px"><div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--highlight);margin-bottom:8px">Character Context</div>';
+    html += '<div style="white-space:pre-wrap">' + escapeHtml(data.context) + '</div></div>';
+    html += '<div style="border-top:2px solid var(--accent);margin:16px 0;position:relative"><span style="position:absolute;top:-10px;left:12px;background:var(--input-bg);padding:0 8px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--accent)">Simulation Directives</span></div>';
+  }
+  html += '<div style="white-space:pre-wrap;margin-top:' + (data.context ? '16px' : '0') + '">' + escapeHtml(data.prompt) + '</div>';
+  body.innerHTML = html;
 }
 
 async function loadNPCCharacter() {
@@ -6537,13 +6545,27 @@ Write a compelling recap of this simulation session in the requested style. Keep
 
     @app.route("/api/npcs/<key>/prompt", methods=["GET"])
     def get_agent_prompt(key):
-        """Return the character file content for this agent."""
-        from lib.personas import PERSONAS, load_persona_instructions
+        """Return the character file content for this agent, split into context and prompt."""
+        from lib.personas import PERSONAS
         if key not in PERSONAS:
             return jsonify({"error": "unknown agent"}), 404
         try:
-            content = load_persona_instructions(key)
-            return jsonify({"key": key, "content": content})
+            char_path = PERSONAS[key].get("character_file", "")
+            if not char_path or not Path(char_path).exists():
+                return jsonify({"error": "character file not found"}), 404
+            text = Path(char_path).read_text()
+            text = re.sub(r"^---\n.*?---\n", "", text, count=1, flags=re.DOTALL).strip()
+            # Split on ## Prompt
+            prompt_match = re.search(
+                r"^## Prompt\s*\n(.*?)(?=\n## (?!#)|\Z)", text, re.DOTALL | re.MULTILINE
+            )
+            if prompt_match:
+                context = text[:prompt_match.start()].strip()
+                prompt = prompt_match.group(1).strip()
+            else:
+                context = ""
+                prompt = text
+            return jsonify({"key": key, "context": context, "prompt": prompt})
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
