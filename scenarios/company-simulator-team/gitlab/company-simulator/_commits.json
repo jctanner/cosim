@@ -144,5 +144,23 @@
       "scenarios/tech-startup/scenario.yaml",
       "scenarios/dotcom-2000/scenario.yaml"
     ]
+  },
+  {
+    "id": "e7a2f140",
+    "message": "Migrate character sheets to NRSP format with structured sections and ## Prompt",
+    "author": "1.z3r0 (Collaborator)",
+    "timestamp": 1775256750.0,
+    "files": [
+      "lib/personas.py",
+      "lib/scenario_loader.py",
+      "lib/webapp.py",
+      "scenarios/tech-startup/characters/*.CS.md",
+      "scenarios/company-simulator-team/characters/*.CS.md",
+      "scenarios/dotcom-2000/characters/*.CS.md",
+      "scenarios/tech-startup/scenario.yaml",
+      "scenarios/company-simulator-team/scenario.yaml",
+      "scenarios/dotcom-2000/scenario.yaml",
+      "docs/subsystem-architecture.md"
+    ]
   }
 ]
