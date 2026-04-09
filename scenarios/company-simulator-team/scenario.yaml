@@ -4,11 +4,11 @@ description: "A 2-person team building the company-simulator itself. Recursive v
 characters:
   maintainer:
     display_name: "T4NN3R (Maintainer)"
-    character_file: "characters/t4nn3r-maintainer.md"
+    character_file: "characters/t4nn3r-maintainer.CS.md"
     team_description: "project creator, architecture decisions, vision, code review"
   collaborator:
     display_name: "1.z3r0 (Collaborator)"
-    character_file: "characters/1z3r0-collaborator.md"
+    character_file: "characters/1z3r0-collaborator.CS.md"
     team_description: "feature implementation, UX ideas, testing, vibe coding"
 
 channels:

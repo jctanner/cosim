@@ -4,23 +4,23 @@ description: "A 5-person web agency in 1999. The future is now. Everything needs
 characters:
   webmaster:
     display_name: "Derek (Webmaster)"
-    character_file: "characters/derek-webmaster.md"
+    character_file: "characters/derek-webmaster.CS.md"
     team_description: "HTML, site architecture, FTP deployments, knows where the server lives"
   flashdev:
     display_name: "Bryce (Flash Developer)"
-    character_file: "characters/bryce-flashdev.md"
+    character_file: "characters/bryce-flashdev.CS.md"
     team_description: "Macromedia Flash, ActionScript, splash pages, skip intro buttons"
   designer:
     display_name: "Tiffany (Graphic Designer)"
-    character_file: "characters/tiffany-designer.md"
+    character_file: "characters/tiffany-designer.CS.md"
     team_description: "Photoshop, visual design, pixel-perfect layouts, animated GIFs"
   pm:
     display_name: "Kevin (Project Manager)"
-    character_file: "characters/kevin-pm.md"
+    character_file: "characters/kevin-pm.CS.md"
     team_description: "client wrangling, timelines, budgets, 'synergy'"
   bizdev:
     display_name: "Monica (Biz Dev)"
-    character_file: "characters/monica-bizdev.md"
+    character_file: "characters/monica-bizdev.CS.md"
     team_description: "sales, pitches, partnerships, eyeballs, runway, IPO dreams"
 
 channels:

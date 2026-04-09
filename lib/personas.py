@@ -24,13 +24,41 @@ MAX_HISTORY_MESSAGES_PER_CHANNEL = 10
 
 
 def load_persona_instructions(persona_key: str) -> str:
-    """Read a character's markdown file, returning the body."""
+    """Read a character's CS.md file and build the system prompt.
+
+    For NRSP-format files (with ## Prompt section):
+      - Character context sections (backstory, motivations, relationships) are prepended
+      - The ## Prompt section contains simulation directives (behavioral guidelines, etc.)
+      - Both are combined into the final system prompt
+
+    For legacy files (no ## Prompt section):
+      - The entire body is used as the prompt (backward compatible)
+    """
     persona = PERSONAS[persona_key]
     char_path = Path(persona["character_file"])
     text = char_path.read_text()
     # Strip YAML frontmatter if present (--- ... ---)
-    text = re.sub(r"^---\n.*?---\n", "", text, count=1, flags=re.DOTALL)
-    return text.strip()
+    text = re.sub(r"^---\n.*?---\n", "", text, count=1, flags=re.DOTALL).strip()
+
+    # Look for ## Prompt section (everything from ## Prompt to the next ## header or end of file)
+    prompt_match = re.search(
+        r"^## Prompt\s*\n(.*?)(?=\n## (?!#)|\Z)", text, re.DOTALL | re.MULTILINE
+    )
+
+    if not prompt_match:
+        # Legacy format — entire body is the prompt
+        return text
+
+    # NRSP format — extract context + prompt
+    prompt_section = prompt_match.group(1).strip()
+    context_sections = text[: prompt_match.start()].strip()
+
+    parts = []
+    if context_sections:
+        parts.append(context_sections)
+    if prompt_section:
+        parts.append(prompt_section)
+    return "\n\n".join(parts)
 
 
 def format_chat_history(messages: list[dict]) -> str:

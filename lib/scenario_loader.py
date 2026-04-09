@@ -6,6 +6,18 @@ from pathlib import Path
 
 SCENARIOS_DIR = Path(__file__).parent.parent / "scenarios"
 
+
+def _parse_frontmatter(text: str) -> dict:
+    """Extract YAML frontmatter from a markdown file. Returns empty dict if none."""
+    import re
+    match = re.match(r"^---\n(.*?)---\n", text, re.DOTALL)
+    if not match:
+        return {}
+    try:
+        return yaml.safe_load(match.group(1)) or {}
+    except Exception:
+        return {}
+
 SCENARIO_SETTINGS: dict = {}
 
 
@@ -34,13 +46,23 @@ def load_scenario(scenario_name: str) -> None:
     # --- Populate personas.PERSONAS ---
     personas_mod.PERSONAS.clear()
     for key, char_info in config["characters"].items():
-        char_file = char_info.get("character_file", f"characters/{key}.md")
+        char_file = char_info.get("character_file")
+        if not char_file:
+            # Default: try .CS.md first, fall back to .md
+            cs_path = scenario_dir / f"characters/{key}.CS.md"
+            char_file = f"characters/{key}.CS.md" if cs_path.exists() else f"characters/{key}.md"
+        char_path = scenario_dir / char_file
+        # Parse NRSP frontmatter if the file exists
+        nrsp_meta = {}
+        if char_path.exists():
+            nrsp_meta = _parse_frontmatter(char_path.read_text())
         personas_mod.PERSONAS[key] = {
             "name": key,
             "display_name": char_info["display_name"],
             "team_description": char_info.get("team_description", key),
-            "character_file": str(scenario_dir / char_file),
+            "character_file": str(char_path),
             "max_words": char_info.get("max_words"),
+            "nrsp_meta": nrsp_meta,
         }
 
     # --- Populate personas.DEFAULT_CHANNELS ---

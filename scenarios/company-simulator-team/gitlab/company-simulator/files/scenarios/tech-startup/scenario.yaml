@@ -4,57 +4,57 @@ description: "An 11-person engineering organization at a tech startup"
 characters:
   pm:
     display_name: "Sarah (PM)"
-    character_file: "characters/sarah-pm.md"
+    character_file: "characters/sarah-pm.CS.md"
     team_description: "product requirements, prioritization, scope"
     max_words: 200
   engmgr:
     display_name: "Marcus (Eng Manager)"
-    character_file: "characters/marcus-engmgr.md"
+    character_file: "characters/marcus-engmgr.CS.md"
     team_description: "capacity, staffing, delivery timelines"
     max_words: 120
   architect:
     display_name: "Priya (Architect)"
-    character_file: "characters/priya-architect.md"
+    character_file: "characters/priya-architect.CS.md"
     team_description: "system design, technical feasibility"
     max_words: 250
   senior:
     display_name: "Alex (Senior Eng)"
-    character_file: "characters/alex-senior.md"
+    character_file: "characters/alex-senior.CS.md"
     team_description: "implementation details, edge cases, testing"
     max_words: 150
   support:
     display_name: "Jordan (Support Eng)"
-    character_file: "characters/jordan-support.md"
+    character_file: "characters/jordan-support.CS.md"
     team_description: "customer experience, documentation, support model"
     max_words: 150
   sales:
     display_name: "Taylor (Sales Eng)"
-    character_file: "characters/taylor-sales.md"
+    character_file: "characters/taylor-sales.CS.md"
     team_description: "customer-facing, competitive positioning, deal qualification"
     max_words: 150
   ceo:
     display_name: "Dana (CEO)"
-    character_file: "characters/dana-ceo.md"
+    character_file: "characters/dana-ceo.CS.md"
     team_description: "business strategy, revenue growth, deal-closing authority"
     max_words: 100
   cfo:
     display_name: "Morgan (CFO)"
-    character_file: "characters/morgan-cfo.md"
+    character_file: "characters/morgan-cfo.CS.md"
     team_description: "financial strategy, deal economics, pricing, P&L"
     max_words: 120
   marketing:
     display_name: "Riley (Marketing)"
-    character_file: "characters/riley-marketing.md"
+    character_file: "characters/riley-marketing.CS.md"
     team_description: "brand positioning, content strategy, demand generation"
     max_words: 150
   devops:
     display_name: "Casey (DevOps)"
-    character_file: "characters/casey-devops.md"
+    character_file: "characters/casey-devops.CS.md"
     team_description: "CI/CD pipelines, infrastructure, deployment automation, reliability"
     max_words: 80
   projmgr:
     display_name: "Nadia (Project Mgr)"
-    character_file: "characters/nadia-projmgr.md"
+    character_file: "characters/nadia-projmgr.CS.md"
     team_description: "ticket hygiene, standup enforcement, blocker resolution, execution tracking"
     max_words: 100
 
