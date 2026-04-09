@@ -1,0 +1,203 @@
+name: "Research Lab"
+description: "A 6-person software research group that investigates topics, produces dossiers, and builds prototypes"
+
+characters:
+  director:
+    display_name: "Dr. Chen (Research Director)"
+    character_file: "characters/dr-chen-director.CS.md"
+    team_description: "research strategy, topic decomposition, focus area assignment"
+    max_words: 250
+  technical:
+    display_name: "Raj (Technical Researcher)"
+    character_file: "characters/raj-technical.CS.md"
+    team_description: "architecture patterns, implementation feasibility, state-of-the-art survey"
+    max_words: 200
+  market:
+    display_name: "Elena (Market Intelligence)"
+    character_file: "characters/elena-market.CS.md"
+    team_description: "competitive landscape, business models, TAM/SAM, funding data"
+    max_words: 200
+  prototype:
+    display_name: "Sam (Prototype Engineer)"
+    character_file: "characters/sam-prototype.CS.md"
+    team_description: "proof-of-concept code, feasibility validation, working prototypes"
+    max_words: 200
+  osint:
+    display_name: "Maya (OSINT Researcher)"
+    character_file: "characters/maya-osint.CS.md"
+    team_description: "academic papers, blog posts, GitHub repos, conference talks, prior art"
+    max_words: 200
+  chief:
+    display_name: "Prof. Hayes (Chief Scientist)"
+    character_file: "characters/prof-hayes-chief.CS.md"
+    team_description: "synthesis, gap analysis, final dossier production, research quality"
+    max_words: 300
+
+channels:
+  "#briefing":
+    description: "Topic intake — human posts research topics here"
+    is_external: false
+  "#research":
+    description: "General research discussion and coordination"
+    is_external: false
+  "#technical":
+    description: "Technical deep dives and architecture analysis"
+    is_external: false
+  "#market-intel":
+    description: "Market research and competitive analysis"
+    is_external: false
+  "#prototyping":
+    description: "Prototype development and code discussion"
+    is_external: false
+  "#synthesis":
+    description: "Final dossier assembly and gap analysis"
+    is_external: false
+  "#watercooler":
+    description: "Off-topic discussion, serendipitous finds"
+    is_external: false
+
+memberships:
+  director: ["#briefing", "#research", "#technical", "#market-intel", "#prototyping", "#synthesis", "#watercooler"]
+  technical: ["#briefing", "#research", "#technical", "#prototyping", "#watercooler"]
+  market: ["#briefing", "#research", "#market-intel", "#watercooler"]
+  prototype: ["#briefing", "#research", "#technical", "#prototyping", "#watercooler"]
+  osint: ["#briefing", "#research", "#technical", "#market-intel", "#watercooler"]
+  chief: ["#briefing", "#research", "#technical", "#market-intel", "#prototyping", "#synthesis", "#watercooler"]
+
+response_tiers:
+  1: ["director"]
+  2: ["technical", "market", "prototype", "osint"]
+  3: ["chief"]
+
+folders:
+  shared:
+    type: "shared"
+    description: "Shared research artifacts"
+  research:
+    type: "shared"
+    description: "Raw findings and working notes"
+  technical:
+    type: "department"
+    description: "Technical analysis documents"
+  market:
+    type: "department"
+    description: "Market intelligence reports"
+  prototypes:
+    type: "department"
+    description: "Prototype documentation and design notes"
+  synthesis:
+    type: "department"
+    description: "Final dossiers and synthesis documents"
+  dr-chen:
+    type: "personal"
+    description: "Dr. Chen's private folder"
+  raj:
+    type: "personal"
+    description: "Raj's private folder"
+  elena:
+    type: "personal"
+    description: "Elena's private folder"
+  sam:
+    type: "personal"
+    description: "Sam's private folder"
+  maya:
+    type: "personal"
+    description: "Maya's private folder"
+  prof-hayes:
+    type: "personal"
+    description: "Prof. Hayes's private folder"
+
+folder_access:
+  shared: ["director", "technical", "market", "prototype", "osint", "chief"]
+  research: ["director", "technical", "market", "prototype", "osint", "chief"]
+  technical: ["director", "technical", "prototype", "chief"]
+  market: ["director", "market", "osint", "chief"]
+  prototypes: ["director", "technical", "prototype", "chief"]
+  synthesis: ["director", "chief"]
+  dr-chen: ["director"]
+  raj: ["technical"]
+  elena: ["market"]
+  sam: ["prototype"]
+  maya: ["osint"]
+  prof-hayes: ["chief"]
+
+events:
+  - name: "New Research Brief"
+    severity: "high"
+    actions:
+      - type: "message"
+        channel: "#briefing"
+        sender: "Research Operations (System)"
+        content: "NEW RESEARCH BRIEF: A new topic has been submitted for investigation. Dr. Chen, please decompose this into research questions and assign focus areas to the team."
+      - type: "ticket"
+        title: "New research topic submitted — awaiting decomposition"
+        description: "A new research topic has been submitted through the briefing channel. The Research Director should decompose it into discrete research questions, assign focus areas to team members, and establish a research plan."
+        priority: "high"
+        author: "Research Operations (System)"
+
+  - name: "Competitive Intelligence Alert"
+    severity: "high"
+    actions:
+      - type: "email"
+        sender: "Industry Watch (System)"
+        subject: "ALERT: Major Industry Development Detected"
+        body: "Team,\n\nOur automated monitoring has flagged a significant industry development that may be relevant to current research topics.\n\nA major player has announced a new initiative in a space adjacent to our current research focus. This may affect competitive landscape analysis, technical feasibility assumptions, and market sizing.\n\nElena and Maya — please investigate and report findings to the team.\n\n— Industry Watch"
+      - type: "message"
+        channel: "#market-intel"
+        sender: "Industry Watch (System)"
+        content: "INTELLIGENCE ALERT: A significant industry development has been detected that may impact current research. Elena and Maya, please investigate using web research and report findings."
+
+  - name: "Deadline Approaching"
+    severity: "medium"
+    actions:
+      - type: "email"
+        sender: "Research Operations (System)"
+        subject: "REMINDER: Research Deliverable Deadline Approaching"
+        body: "Team,\n\nThis is a reminder that the current research deliverable is approaching its deadline.\n\nPlease ensure:\n1. All background research tasks are complete\n2. Working documents are up to date in the research folder\n3. Technical analysis and market intelligence reports are finalized\n4. Prototype code is committed with documentation\n5. Prof. Hayes has all materials needed for the synthesis dossier\n\nDr. Chen — please confirm readiness status with the team.\n\n— Research Operations"
+
+  - name: "Stakeholder Review Request"
+    severity: "medium"
+    actions:
+      - type: "ticket"
+        title: "Stakeholder requests progress update on current research"
+        description: "A stakeholder has requested a progress update on the current research topic. Please provide a summary of findings so far, open questions, and expected completion timeline."
+        priority: "medium"
+        author: "Stakeholder (System)"
+      - type: "message"
+        channel: "#research"
+        sender: "Research Operations (System)"
+        content: "A stakeholder has requested a progress update on the current research topic. Dr. Chen, please coordinate a status summary from the team."
+
+  - name: "New Prior Art Discovered"
+    severity: "low"
+    actions:
+      - type: "message"
+        channel: "#research"
+        sender: "ArXiv Monitor (System)"
+        content: "PRIOR ART ALERT: Automated scanning has identified potentially relevant academic papers and industry reports that may relate to the current research topic. Maya, please review and assess relevance."
+      - type: "email"
+        sender: "ArXiv Monitor (System)"
+        subject: "New Prior Art Detected — Review Recommended"
+        body: "Maya,\n\nOur automated literature scanner has flagged new publications that may be relevant to the current research focus. Please use web search to investigate these sources and update the bibliography.\n\nTopics flagged:\n- Recent conference proceedings\n- New preprints on related subjects\n- Industry whitepapers from major vendors\n\n— ArXiv Monitor"
+
+  - name: "Research Methodology Reminder"
+    severity: "low"
+    actions:
+      - type: "email"
+        sender: "Prof. Hayes (Chief Scientist)"
+        subject: "Reminder: Research Standards and Citation Requirements"
+        body: "Team,\n\nA quick reminder on our research standards:\n\n1. All claims must be backed by sources — cite URLs, papers, or data\n2. Distinguish between facts (verified), assessments (our analysis), and speculation (hypotheses)\n3. When using web research, document the search queries used and sources consulted\n4. Prototypes should include README files explaining what they demonstrate\n5. Market data should include date stamps — markets move fast\n\nQuality over speed. A well-sourced finding is worth ten unsupported claims.\n\n— Prof. Hayes"
+
+settings:
+  enable_background_tasks: true
+  max_concurrent_tasks: 5
+  task_timeout: 900
+  enable_memos: true
+  enable_blog: true
+  task_allowed_tools:
+    - Bash
+    - Read
+    - Write
+    - Edit
+    - WebFetch
+    - WebSearch
