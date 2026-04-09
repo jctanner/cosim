@@ -4,27 +4,27 @@ description: "A 5-person D&D campaign with 4 player characters and a Dungeon Mas
 characters:
   dm:
     display_name: "Valdris (Dungeon Master)"
-    character_file: "characters/valdris-dm.md"
+    character_file: "characters/valdris-dm.CS.md"
     team_description: "world-building, encounters, NPCs, story, rules adjudication"
   fighter:
     display_name: "Kael (Fighter)"
-    character_file: "characters/kael-fighter.md"
+    character_file: "characters/kael-fighter.CS.md"
     team_description: "frontline combat, tactics, protecting the party"
   wizard:
     display_name: "Lyra (Wizard)"
-    character_file: "characters/lyra-wizard.md"
+    character_file: "characters/lyra-wizard.CS.md"
     team_description: "arcane magic, lore, puzzle-solving, area damage"
   rogue:
     display_name: "Nix (Rogue)"
-    character_file: "characters/nix-rogue.md"
+    character_file: "characters/nix-rogue.CS.md"
     team_description: "stealth, traps, lockpicking, scouting, sneak attacks"
   cleric:
     display_name: "Brother Aldric (Cleric)"
-    character_file: "characters/aldric-cleric.md"
+    character_file: "characters/aldric-cleric.CS.md"
     team_description: "healing, divine magic, undead turning, moral compass"
   paladin:
     display_name: "Tyraziel (Open Sourcerer)"
-    character_file: "characters/tyraziel-paladin.md"
+    character_file: "characters/tyraziel-paladin.CS.md"
     team_description: "frontline combat, divine smites, radical transparency, oath of open source"
 
 channels:

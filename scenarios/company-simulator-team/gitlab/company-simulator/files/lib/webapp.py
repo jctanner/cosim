@@ -1811,6 +1811,7 @@ WEB_UI = """<!DOCTYPE html>
     </div>
     <div style="display:flex;gap:8px;margin-bottom:12px">
       <button class="session-btn npc-detail-tab active" data-npc-tab="thoughts">Thoughts</button>
+      <button class="session-btn npc-detail-tab" data-npc-tab="character">Character</button>
       <button class="session-btn npc-detail-tab" data-npc-tab="prompt">Prompt</button>
       <button class="session-btn npc-detail-tab" data-npc-tab="config">Config</button>
     </div>
@@ -1826,6 +1827,10 @@ WEB_UI = """<!DOCTYPE html>
       <div id="npc-thoughts-content" style="flex:1;overflow-y:auto;background:var(--input-bg);padding:16px;font-size:13px;color:var(--text);white-space:pre-wrap;font-family:monospace;line-height:1.5">
         No thoughts recorded yet.
       </div>
+    </div>
+    <div id="npc-detail-character" style="flex:1;min-height:0;overflow-y:auto;background:var(--input-bg);border-radius:8px;padding:20px;display:none">
+      <div id="npc-cs-meta" style="margin-bottom:16px"></div>
+      <div id="npc-cs-sections" style="font-size:14px;color:var(--text);line-height:1.6"></div>
     </div>
     <div id="npc-detail-prompt" style="flex:1;min-height:0;overflow-y:auto;background:var(--input-bg);border-radius:8px;padding:16px;font-size:13px;color:var(--text);white-space:pre-wrap;font-family:monospace;line-height:1.5;display:none">
     </div>
@@ -3414,6 +3419,7 @@ async function openNPCDetail(key, displayName) {
 function switchNPCDetailTab(tab) {
   _npcDetailTab = tab;
   document.getElementById('npc-detail-thoughts').style.display = tab === 'thoughts' ? 'flex' : 'none';
+  document.getElementById('npc-detail-character').style.display = tab === 'character' ? '' : 'none';
   document.getElementById('npc-detail-prompt').style.display = tab === 'prompt' ? '' : 'none';
   document.getElementById('npc-detail-config').style.display = tab === 'config' ? '' : 'none';
 }
@@ -3494,6 +3500,45 @@ async function loadNPCPrompt() {
   body.textContent = data.content || data.error || 'No prompt found.';
 }
 
+async function loadNPCCharacter() {
+  const meta = document.getElementById('npc-cs-meta');
+  const sections = document.getElementById('npc-cs-sections');
+  meta.innerHTML = 'Loading...';
+  sections.innerHTML = '';
+  const resp = await fetch('/api/npcs/' + encodeURIComponent(_npcDetailKey) + '/character-sheet');
+  const data = await resp.json();
+  if (data.error) { meta.textContent = data.error; return; }
+
+  // Render YAML frontmatter metadata
+  const fm = data.frontmatter || {};
+  let metaHtml = '';
+  if (fm.Name) metaHtml += '<div style="font-size:20px;font-weight:700;color:var(--text);margin-bottom:4px">' + escapeHtml(fm.Name) + '</div>';
+  const badges = [];
+  if (fm.Type) badges.push('<span style="background:var(--border-dark);color:var(--text-dim);padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600">' + escapeHtml(fm.Type) + '</span>');
+  if (fm.Status) badges.push('<span style="background:#2ecc71;color:var(--text-bright);padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600">' + escapeHtml(fm.Status) + '</span>');
+  if (fm.System) badges.push('<span style="background:var(--border);color:var(--highlight);padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600">' + escapeHtml(fm.System) + '</span>');
+  if (badges.length) metaHtml += '<div style="display:flex;gap:6px;margin-bottom:8px">' + badges.join('') + '</div>';
+  if (fm.Tags && fm.Tags.length) {
+    metaHtml += '<div style="margin-bottom:8px">';
+    fm.Tags.forEach(function(tag) {
+      metaHtml += '<span style="background:var(--input-bg);color:var(--text-dim);padding:1px 6px;border-radius:4px;font-size:11px;margin-right:4px;border:1px solid var(--border-dark)">' + escapeHtml(tag) + '</span>';
+    });
+    metaHtml += '</div>';
+  }
+  meta.innerHTML = metaHtml || '<div style="color:var(--text-dimmer)">No NRSP metadata (legacy format)</div>';
+
+  // Render sections (exclude ## Prompt — that's on the Prompt tab)
+  let sectionsHtml = '';
+  (data.sections || []).forEach(function(sec) {
+    if (sec.title.toLowerCase() === 'prompt') return;
+    sectionsHtml += '<div style="margin-bottom:16px">';
+    sectionsHtml += '<h3 style="color:var(--highlight);font-size:14px;margin-bottom:6px;border-bottom:1px solid var(--border-dark);padding-bottom:4px">' + escapeHtml(sec.title) + '</h3>';
+    sectionsHtml += '<div style="white-space:pre-wrap;color:var(--text);font-size:13px;line-height:1.5">' + escapeHtml(sec.content) + '</div>';
+    sectionsHtml += '</div>';
+  });
+  sections.innerHTML = sectionsHtml || '<div style="color:var(--text-dimmer)">No structured character sections found.</div>';
+}
+
 document.querySelectorAll('.npc-detail-tab').forEach(tab => {
   tab.addEventListener('click', async () => {
     _npcDetailTab = tab.dataset.npcTab;
@@ -3502,6 +3547,7 @@ document.querySelectorAll('.npc-detail-tab').forEach(tab => {
     });
     switchNPCDetailTab(_npcDetailTab);
     if (_npcDetailTab === 'thoughts') await loadNPCThoughts();
+    else if (_npcDetailTab === 'character') await loadNPCCharacter();
     else if (_npcDetailTab === 'prompt') await loadNPCPrompt();
     else if (_npcDetailTab === 'config') await loadNPCConfig();
   });
@@ -6176,15 +6222,25 @@ Write a compelling recap of this simulation session in the requested style. Keep
         templates_dir = SCENARIOS_DIR / "character-templates"
         result = []
         if templates_dir.exists():
-            for f in sorted(templates_dir.glob("*.md")):
-                name = f.stem.replace("-", " ").title()
-                result.append({"key": f.stem, "name": name})
+            for f in sorted(templates_dir.glob("*.CS.md")):
+                key_name = f.name.replace(".CS.md", "")
+                name = key_name.replace("-", " ").title()
+                result.append({"key": key_name, "name": name})
+            if not result:
+                # Fallback to old .md format
+                for f in sorted(templates_dir.glob("*.md")):
+                    if f.name.endswith(".CS.md"):
+                        continue
+                    name = f.stem.replace("-", " ").title()
+                    result.append({"key": f.stem, "name": name})
         return jsonify(result)
 
     @app.route("/api/templates/<key>", methods=["GET"])
     def get_template(key):
         from lib.scenario_loader import SCENARIOS_DIR
-        path = SCENARIOS_DIR / "character-templates" / f"{key}.md"
+        path = SCENARIOS_DIR / "character-templates" / f"{key}.CS.md"
+        if not path.exists():
+            path = SCENARIOS_DIR / "character-templates" / f"{key}.md"
         if not path.exists():
             return jsonify({"error": "template not found"}), 404
         content = path.read_text()
@@ -6445,6 +6501,39 @@ Write a compelling recap of this simulation session in the requested style. Keep
         with _agent_thoughts_lock:
             _agent_thoughts.setdefault(key, []).append(entry)
         return jsonify({"ok": True})
+
+    @app.route("/api/npcs/<key>/character-sheet", methods=["GET"])
+    def get_agent_character_sheet(key):
+        """Return the parsed NRSP character sheet for this agent."""
+        from lib.personas import PERSONAS
+        from lib.scenario_loader import _parse_frontmatter
+        if key not in PERSONAS:
+            return jsonify({"error": "unknown agent"}), 404
+        try:
+            char_path = PERSONAS[key].get("character_file", "")
+            if not char_path or not Path(char_path).exists():
+                return jsonify({"error": "character file not found"}), 404
+            text = Path(char_path).read_text()
+            frontmatter = _parse_frontmatter(text)
+            # Strip frontmatter from body
+            body = re.sub(r"^---\n.*?---\n", "", text, count=1, flags=re.DOTALL).strip()
+            # Parse sections (## headers)
+            sections = []
+            current_title = None
+            current_lines = []
+            for line in body.split("\n"):
+                if line.startswith("## ") and not line.startswith("### "):
+                    if current_title is not None:
+                        sections.append({"title": current_title, "content": "\n".join(current_lines).strip()})
+                    current_title = line[3:].strip()
+                    current_lines = []
+                else:
+                    current_lines.append(line)
+            if current_title is not None:
+                sections.append({"title": current_title, "content": "\n".join(current_lines).strip()})
+            return jsonify({"key": key, "frontmatter": frontmatter, "sections": sections})
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
 
     @app.route("/api/npcs/<key>/prompt", methods=["GET"])
     def get_agent_prompt(key):
