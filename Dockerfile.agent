@@ -26,10 +26,13 @@ ENV AGENT_PERSONA_KEY="" \
 USER agent
 WORKDIR /home/agent/scratch
 
+# Long-running container: stays alive for podman exec per turn
+CMD ["sleep", "infinity"]
+
 # Usage (podman — Flask+MCP run on host):
 #   cp ~/.config/gcloud/application_default_credentials.json .
 #   podman build -f Dockerfile.agent -t agent-image:latest .
-#   podman run --rm -it \
+#   podman run -d --name agent-pm \
 #     -e AGENT_PERSONA_KEY=pm \
 #     -e MCP_SERVER_URL=host.containers.internal:5001 \
-#     agent-image:latest /bin/bash
+#     agent-image:latest

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import time
 from collections import deque
 from contextlib import asynccontextmanager
@@ -38,6 +39,13 @@ _AUDIT_FILE = Path(__file__).parent.parent / "var" / "logs" / "mcp_audit.log"
 # Telemetry aggregation
 # ---------------------------------------------------------------------------
 _telemetry: dict[str, dict[str, Any]] = {}  # agent_key -> stats
+
+# ---------------------------------------------------------------------------
+# Done event queue (signal_done tracking for tier advancement)
+# ---------------------------------------------------------------------------
+_done_events: list[dict] = []
+_done_event_counter: int = 0
+_done_lock = threading.Lock()
 
 
 def _record_audit(agent_key: str, tool_name: str, params: dict, result_summary: str, duration_ms: float):
@@ -668,8 +676,18 @@ def _register_meta_tools(
         description="Signal that you have finished processing your current turn. Call this with a brief summary when you are done.",
     )
     async def signal_done(summary: str = "") -> str:
+        global _done_event_counter
         logger.info(f"Agent {agent_key} signaled done: {summary}")
         _record_audit(agent_key, "signal_done", {"summary": summary}, "ack", 0)
+        # Append to done event queue for tier advancement tracking
+        with _done_lock:
+            _done_event_counter += 1
+            _done_events.append({
+                "id": _done_event_counter,
+                "agent_key": agent_key,
+                "summary": summary,
+                "timestamp": time.time(),
+            })
         # Forward summary to Flask thoughts API so it appears in UI
         if summary:
             try:
@@ -790,6 +808,21 @@ async def _get_audit(request: Request) -> JSONResponse:
     return JSONResponse(entries)
 
 
+async def _done_events_endpoint(request: Request) -> JSONResponse:
+    """GET: return done events with id > since_id. DELETE: clear all done events."""
+    global _done_event_counter
+    if request.method == "DELETE":
+        with _done_lock:
+            _done_events.clear()
+            _done_event_counter = 0
+        return JSONResponse({"cleared": True})
+    # GET
+    since_id = int(request.query_params.get("since_id", "0"))
+    with _done_lock:
+        events = [e for e in _done_events if e["id"] > since_id]
+    return JSONResponse(events)
+
+
 # ---------------------------------------------------------------------------
 # App builder
 # ---------------------------------------------------------------------------
@@ -830,6 +863,7 @@ def build_app(scenario_name: str, flask_url: str) -> Starlette:
         Route("/api/telemetry/tool-start", _telemetry_tool_start, methods=["POST"]),
         Route("/api/telemetry", _get_telemetry, methods=["GET"]),
         Route("/api/audit", _get_audit, methods=["GET"]),
+        Route("/api/agents/done-events", _done_events_endpoint, methods=["GET", "DELETE"]),
     ])
 
     app = Starlette(routes=routes, lifespan=lifespan)

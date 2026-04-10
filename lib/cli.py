@@ -118,6 +118,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--max-concurrent", type=int, default=4,
         help="Maximum concurrent agent containers per tier (default: 4)",
     )
+    container_parser.add_argument(
+        "--done-timeout", type=int, default=120,
+        help="Seconds to wait for agents to signal done before advancing tier (default: 120)",
+    )
 
     # ── mcp-server subcommand ─────────────────────────────────────────
     mcp_parser = subparsers.add_parser(

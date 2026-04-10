@@ -1,9 +1,17 @@
-"""Container orchestrator — runs agents as ephemeral podman containers with MCP tools."""
+"""Container orchestrator — runs agents as long-running podman containers with MCP tools.
+
+Phase 3: Containers start once at session init and persist across turns. Each agent
+turn runs via `podman exec` inside the warm container. Tier advancement uses
+signal_done events from the MCP server rather than waiting for process exit.
+"""
 
 import asyncio
 import json
+import logging
 import time as _time
 from pathlib import Path
+
+import requests as sync_requests
 
 from lib.chat_client import ChatClient
 from lib.agent_runner import get_model_id, format_duration
@@ -22,6 +30,8 @@ from lib.orchestrator import (
     _get_channel_memberships,
     _requeue_restart,
 )
+
+logger = logging.getLogger("container_orchestrator")
 
 LOG_DIR = Path(__file__).parent.parent / "var" / "logs"
 TMP_DIR = Path(__file__).parent.parent / "var" / "tmp"
@@ -50,11 +60,11 @@ MCP_TOOL_NAMES = [
 
 
 class ContainerPool:
-    """Manages ephemeral podman containers for agent personas.
+    """Manages long-running podman containers for agent personas.
 
-    Unlike AgentPool which maintains persistent Claude SDK sessions, ContainerPool
-    launches a fresh container for each agent turn. Agents interact with the
-    simulation via MCP tools — no response parsing needed.
+    Containers start once at session init and persist across turns. Each agent
+    turn runs `podman exec claude -p ...` inside the warm container. Per-agent
+    asyncio.Locks prevent concurrent execution within a single container.
     """
 
     def __init__(
@@ -67,6 +77,7 @@ class ContainerPool:
         container_image: str = "agent-image:latest",
         container_timeout: int = 300,
         max_turns: int = 50,
+        done_timeout: int = 120,
     ):
         self._personas: dict[str, dict] = {p["name"]: p for p in personas}
         self._model = model
@@ -77,15 +88,16 @@ class ContainerPool:
         self._container_image = container_image
         self._container_timeout = container_timeout
         self._max_turns = max_turns
+        self._done_timeout = done_timeout
         self._active_containers: dict[str, str] = {}  # persona_key -> container_name
+        self._agent_locks: dict[str, asyncio.Lock] = {}  # per-agent mutex
+        self._mcp_base_url: str = ""  # set in start()
         self._allowed_tools_str = ",".join(f"mcp__sim__{t}" for t in MCP_TOOL_NAMES)
         self._config_files: dict[str, Path] = {}  # persona_key -> mcp config path
         self._prompt_files: dict[str, Path] = {}  # persona_key -> system prompt path
 
     async def start(self, build_system_prompt_fn, on_progress=None) -> None:
-        """Validate prerequisites and generate per-agent config files.
-
-        No containers are started — they're ephemeral, launched per-turn.
+        """Validate prerequisites, generate configs, and launch long-running containers.
 
         Args:
             build_system_prompt_fn: callable(persona_key) -> str that returns
@@ -95,6 +107,10 @@ class ContainerPool:
         """
         self._log_dir.mkdir(parents=True, exist_ok=True)
         TMP_DIR.mkdir(parents=True, exist_ok=True)
+        self._mcp_base_url = f"http://127.0.0.1:{self._mcp_port}"
+
+        # Clear done events on MCP server
+        self._clear_done_events()
 
         # Validate podman is available
         proc = await asyncio.create_subprocess_exec(
@@ -122,11 +138,11 @@ class ContainerPool:
         print(f"  image: {self._container_image}")
 
         total = len(self._personas)
-        print(f"Preparing {total} agent containers...")
+        print(f"Launching {total} long-running agent containers...")
 
         for i, (key, persona) in enumerate(self._personas.items(), 1):
             display_name = persona["display_name"]
-            print(f"  Preparing ({i}/{total}): {display_name}...", end="", flush=True)
+            print(f"  Launching ({i}/{total}): {display_name}...", end="", flush=True)
 
             if on_progress:
                 on_progress(i, total, key, display_name, "starting")
@@ -155,35 +171,91 @@ class ContainerPool:
             with open(log_file, "w") as f:
                 f.write(f"Agent: {display_name}\n")
                 f.write(f"Model: {self._model} ({self._model_id})\n")
-                f.write(f"Mode: container (v3)\n")
+                f.write(f"Mode: container (v3 — long-running)\n")
                 f.write(f"Image: {self._container_image}\n")
                 f.write(f"{'=' * 60}\n\n")
+
+            # Launch long-running container
+            await self._launch_container(key)
+
+            # Create per-agent lock
+            self._agent_locks[key] = asyncio.Lock()
 
             print(f" ready ({i}/{total})")
 
             if on_progress:
                 on_progress(i, total, key, display_name, "ready")
 
-        print(f"All {total} agent configs prepared")
+        print(f"All {total} agent containers running")
+
+    async def _launch_container(self, persona_key: str) -> None:
+        """Launch a long-running container for an agent.
+
+        Removes any leftover container from a previous session first.
+        """
+        container_name = f"agent-{persona_key}"
+        config_path = self._config_files[persona_key]
+        prompt_path = self._prompt_files[persona_key]
+
+        # Cleanup leftover container from previous session
+        rm_proc = await asyncio.create_subprocess_exec(
+            "podman", "rm", "-f", container_name,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        await rm_proc.communicate()
+
+        # Launch long-running container (CMD from Dockerfile: sleep infinity)
+        cmd = [
+            "podman", "run", "-d",
+            "--name", container_name,
+            "-e", f"AGENT_PERSONA_KEY={persona_key}",
+            "-e", f"MCP_SERVER_URL={self._mcp_host}:{self._mcp_port}",
+            "-v", f"{config_path.resolve()}:/home/agent/.mcp-config.json:ro,Z",
+            "-v", f"{prompt_path.resolve()}:/home/agent/system-prompt.md:ro,Z",
+            self._container_image,
+        ]
+
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await proc.communicate()
+        if proc.returncode != 0:
+            raise RuntimeError(
+                f"Failed to launch container {container_name}: {stderr.decode().strip()}"
+            )
+
+        self._active_containers[persona_key] = container_name
 
     async def run_agent(self, persona_key: str, turn_prompt: str) -> dict:
-        """Launch one container for a single agent turn.
+        """Run a single agent turn via `podman exec` inside the long-running container.
 
-        The container runs claude with the turn prompt, MCP config, and system prompt.
-        The agent interacts with the simulation via MCP tools during the container run.
-        When the container exits, the turn is complete.
+        The per-agent lock prevents concurrent execution within a single container.
+        Timeout kills the exec'd process, not the container itself.
 
         Returns:
             dict with 'name', 'success', 'response_text', 'duration_seconds', 'exit_code'
         """
+        async with self._agent_locks[persona_key]:
+            return await self._run_agent_inner(persona_key, turn_prompt)
+
+    async def _run_agent_inner(self, persona_key: str, turn_prompt: str) -> dict:
+        """Inner implementation of run_agent (called under lock)."""
         persona = self._personas[persona_key]
         display_name = persona["display_name"]
-        config_path = self._config_files[persona_key]
-        prompt_path = self._prompt_files[persona_key]
+        container_name = self._active_containers.get(persona_key)
 
-        timestamp = int(_time.time())
-        container_name = f"agent-{persona_key}-{timestamp}"
-        self._active_containers[persona_key] = container_name
+        if not container_name:
+            return {
+                "name": display_name,
+                "success": False,
+                "response_text": "",
+                "duration_seconds": 0,
+                "exit_code": -1,
+                "error": f"No active container for {persona_key}",
+            }
 
         log_file = self._log_dir / f"{display_name.replace('/', '_').replace(' ', '_')}.log"
 
@@ -192,13 +264,7 @@ class ContainerPool:
             f.write(f"TURN PROMPT:\n{turn_prompt}\n\n{'-' * 40}\n\n")
 
         cmd = [
-            "podman", "run", "--rm",
-            "--name", container_name,
-            "-e", f"AGENT_PERSONA_KEY={persona_key}",
-            "-e", f"MCP_SERVER_URL={self._mcp_host}:{self._mcp_port}",
-            "-v", f"{config_path.resolve()}:/home/agent/.mcp-config.json:ro,Z",
-            "-v", f"{prompt_path.resolve()}:/home/agent/system-prompt.md:ro,Z",
-            self._container_image,
+            "podman", "exec", container_name,
             "claude",
             "-p", turn_prompt,
             "--system-prompt-file", "/home/agent/system-prompt.md",
@@ -208,7 +274,6 @@ class ContainerPool:
             "--model", self._model_id,
             "--max-turns", str(self._max_turns),
             "--permission-mode", "dontAsk",
-            "--no-session-persistence",
         ]
 
         start_time = _time.monotonic()
@@ -226,20 +291,18 @@ class ContainerPool:
                     timeout=self._container_timeout,
                 )
             except asyncio.TimeoutError:
-                print(f"  {display_name}: container timeout ({self._container_timeout}s), stopping...")
-                # Stop the container gracefully
-                stop_proc = await asyncio.create_subprocess_exec(
-                    "podman", "stop", "-t", "5", container_name,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                )
-                await stop_proc.communicate()
+                print(f"  {display_name}: exec timeout ({self._container_timeout}s), killing process...")
+                # Kill the exec'd process, not the container
+                try:
+                    proc.kill()
+                    await proc.communicate()
+                except Exception:
+                    pass
                 elapsed = _time.monotonic() - start_time
 
                 with open(log_file, "a") as f:
                     f.write(f"\nTIMEOUT after {format_duration(elapsed)}\n{'=' * 60}\n\n")
 
-                self._active_containers.pop(persona_key, None)
                 return {
                     "name": display_name,
                     "success": False,
@@ -276,14 +339,12 @@ class ContainerPool:
                     response_text = stdout_text.strip()
 
             if not success:
-                print(f"  {display_name}: container exited with code {exit_code} "
+                print(f"  {display_name}: exec exited with code {exit_code} "
                       f"({format_duration(elapsed)})")
                 if stderr_text:
-                    # Print first few lines of stderr for debugging
                     for line in stderr_text.strip().split("\n")[:3]:
                         print(f"    stderr: {line}")
 
-            self._active_containers.pop(persona_key, None)
             return {
                 "name": display_name,
                 "success": success,
@@ -294,12 +355,11 @@ class ContainerPool:
 
         except Exception as e:
             elapsed = _time.monotonic() - start_time
-            print(f"  {display_name}: container launch failed — {e}")
+            print(f"  {display_name}: exec failed — {e}")
 
             with open(log_file, "a") as f:
                 f.write(f"\nERROR: {e}\n{'=' * 60}\n\n")
 
-            self._active_containers.pop(persona_key, None)
             return {
                 "name": display_name,
                 "success": False,
@@ -309,8 +369,32 @@ class ContainerPool:
                 "error": str(e),
             }
 
+    def _poll_done_events(self, since_id: int = 0) -> list[dict]:
+        """Poll the MCP server for signal_done events (sync HTTP)."""
+        try:
+            resp = sync_requests.get(
+                f"{self._mcp_base_url}/api/agents/done-events",
+                params={"since_id": since_id},
+                timeout=5,
+            )
+            if resp.status_code == 200:
+                return resp.json()
+        except Exception as e:
+            logger.debug(f"Failed to poll done events: {e}")
+        return []
+
+    def _clear_done_events(self) -> None:
+        """Clear all done events on the MCP server."""
+        try:
+            sync_requests.delete(
+                f"{self._mcp_base_url}/api/agents/done-events",
+                timeout=5,
+            )
+        except Exception as e:
+            logger.debug(f"Failed to clear done events: {e}")
+
     async def close(self) -> None:
-        """Stop any active containers."""
+        """Stop and remove all long-running containers."""
         for persona_key, container_name in list(self._active_containers.items()):
             try:
                 proc = await asyncio.create_subprocess_exec(
@@ -319,10 +403,18 @@ class ContainerPool:
                     stderr=asyncio.subprocess.PIPE,
                 )
                 await proc.communicate()
-                print(f"  Stopped container: {container_name}")
+                # Remove the container (not auto-removed since no --rm)
+                rm_proc = await asyncio.create_subprocess_exec(
+                    "podman", "rm", "-f", container_name,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                await rm_proc.communicate()
+                print(f"  Stopped and removed container: {container_name}")
             except Exception as e:
-                print(f"  Failed to stop {container_name}: {e}")
+                print(f"  Failed to stop/remove {container_name}: {e}")
         self._active_containers.clear()
+        self._agent_locks.clear()
 
 
 # ---------------------------------------------------------------------------
@@ -334,7 +426,13 @@ def _build_agent_status(personas: list[dict], pool: ContainerPool | None = None)
     result = {}
     for p in personas:
         key = p["name"]
-        is_active = pool is not None and key in pool._active_containers
+        # With long-running containers, check if the per-agent lock is held
+        # to determine if the agent is actively processing a turn
+        is_active = (
+            pool is not None
+            and key in pool._agent_locks
+            and pool._agent_locks[key].locked()
+        )
         result[key] = {
             "display_name": p["display_name"],
             "state": "responding" if is_active else "ready",
@@ -391,6 +489,10 @@ async def _process_single_command(client, pool, personas, scenario_name, cmd):
                 prompt_path.write_text(build_v3_system_prompt(agent_key))
                 pool._prompt_files[agent_key] = prompt_path
 
+                # Launch long-running container and create lock
+                await pool._launch_container(agent_key)
+                pool._agent_locks[agent_key] = asyncio.Lock()
+
                 personas = list(pool._personas.values())
                 client.post_message("System", f"{persona['display_name']} has joined the team!", channel="#system")
                 print(f"  Agent added: {persona['display_name']}")
@@ -403,7 +505,7 @@ async def _process_single_command(client, pool, personas, scenario_name, cmd):
             display_name = pool._personas.get(agent_key, {}).get("display_name", agent_key)
             print(f"\n*** Removing agent: {display_name} ***")
 
-            # Stop container if running
+            # Stop and remove long-running container
             if agent_key in pool._active_containers:
                 container_name = pool._active_containers[agent_key]
                 try:
@@ -413,10 +515,17 @@ async def _process_single_command(client, pool, personas, scenario_name, cmd):
                         stderr=asyncio.subprocess.PIPE,
                     )
                     await proc.communicate()
+                    rm_proc = await asyncio.create_subprocess_exec(
+                        "podman", "rm", "-f", container_name,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                    )
+                    await rm_proc.communicate()
                 except Exception:
                     pass
                 pool._active_containers.pop(agent_key, None)
 
+            pool._agent_locks.pop(agent_key, None)
             pool._personas.pop(agent_key, None)
             pool._config_files.pop(agent_key, None)
             pool._prompt_files.pop(agent_key, None)
@@ -429,8 +538,7 @@ async def _process_single_command(client, pool, personas, scenario_name, cmd):
             personas = list(pool._personas.values())
             # Finalize on server
             try:
-                import requests as _req
-                _req.post(f"{client.base_url}/api/npcs/{agent_key}/finalize-fire", timeout=5)
+                sync_requests.post(f"{client.base_url}/api/npcs/{agent_key}/finalize-fire", timeout=5)
             except Exception:
                 pass
             client.post_message("System", f"{display_name} has left the company.", channel="#system")
@@ -589,20 +697,70 @@ async def _run_loop(
 
                     return pk, result
 
-            tasks = [
-                _run_agent(pk, triggered_by)
-                for pk, triggered_by in tier_agents.items()
-            ]
-            results = await asyncio.gather(*tasks, return_exceptions=True)
+            # --- signal_done-aware tier advancement ---
+            # Snapshot done event cursor before launching agents
+            pre_tier_done_events = pool._poll_done_events(since_id=0)
+            done_since_id = max((e["id"] for e in pre_tier_done_events), default=0)
 
-            # Log results (no response parsing needed — agents used MCP tools)
-            for entry in results:
-                if isinstance(entry, Exception):
-                    print(f"  [Tier {tier_num}] agent task failed: {entry}")
+            # Launch all agents as background tasks
+            tier_agent_keys = set(tier_agents.keys())
+            agent_tasks: dict[str, asyncio.Task] = {
+                pk: asyncio.create_task(_run_agent(pk, triggered_by))
+                for pk, triggered_by in tier_agents.items()
+            }
+
+            # Poll for completion: signal_done events OR process exits
+            done_keys: set[str] = set()
+            deadline = _time.monotonic() + pool._done_timeout
+
+            while len(done_keys) < len(tier_agent_keys) and _time.monotonic() < deadline:
+                # Check signal_done events from MCP server
+                events = pool._poll_done_events(since_id=done_since_id)
+                for event in events:
+                    ek = event["agent_key"]
+                    if ek in tier_agent_keys and ek not in done_keys:
+                        done_keys.add(ek)
+                        display = persona_map[ek]["display_name"]
+                        summary = event.get("summary", "")
+                        print(f"  {display}: signal_done — {summary}" if summary
+                              else f"  {display}: signal_done")
+                    done_since_id = max(done_since_id, event["id"])
+
+                # Check process exits (fallback)
+                for pk, task in agent_tasks.items():
+                    if task.done() and pk not in done_keys:
+                        done_keys.add(pk)
+
+                if len(done_keys) < len(tier_agent_keys):
+                    await asyncio.sleep(1)
+
+            if len(done_keys) < len(tier_agent_keys):
+                remaining = tier_agent_keys - done_keys
+                remaining_names = ", ".join(persona_map[pk]["display_name"] for pk in remaining)
+                print(f"  Tier {tier_num} timeout — advancing without: {remaining_names}")
+
+            # Wait briefly for remaining processes to finish (per-agent mutex
+            # prevents next turn from starting until process actually finishes)
+            for pk, task in agent_tasks.items():
+                if not task.done():
+                    try:
+                        await asyncio.wait_for(asyncio.shield(task), timeout=10)
+                    except (asyncio.TimeoutError, Exception):
+                        pass
+
+            # Log results from completed tasks
+            for pk, task in agent_tasks.items():
+                if not task.done():
+                    print(f"  {persona_map[pk]['display_name']}: still running (will finish in background)")
+                    continue
+                try:
+                    entry = task.result()
+                except Exception as exc:
+                    print(f"  [Tier {tier_num}] agent task failed: {exc}")
                     continue
 
-                persona_key, result = entry
-                persona = persona_map[persona_key]
+                _, result = entry
+                persona = persona_map[pk]
                 display_name = persona["display_name"]
 
                 if result["success"]:
@@ -655,6 +813,7 @@ async def run_container_orchestrator(args) -> None:
     container_timeout = getattr(args, "container_timeout", 300)
     max_turns = getattr(args, "max_turns", 50)
     max_concurrent = getattr(args, "max_concurrent", 4)
+    done_timeout = getattr(args, "done_timeout", 120)
     personas = []
 
     print(f"Container orchestrator starting")
@@ -668,6 +827,7 @@ async def run_container_orchestrator(args) -> None:
     print(f"  Container timeout: {container_timeout}s")
     print(f"  Max turns per container: {max_turns}")
     print(f"  Max concurrent agents: {max_concurrent}")
+    print(f"  Done timeout: {done_timeout}s")
 
     # Wait for Flask server to be reachable
     while not client.health_check():
@@ -679,7 +839,6 @@ async def run_container_orchestrator(args) -> None:
     # Wait for MCP server to be reachable
     mcp_base_url = f"http://127.0.0.1:{mcp_port}"
     print(f"Checking MCP server at {mcp_base_url}...")
-    import requests as sync_requests
     while True:
         try:
             resp = sync_requests.get(f"{mcp_base_url}/health", timeout=5)
@@ -741,6 +900,7 @@ async def run_container_orchestrator(args) -> None:
                 container_image=container_image,
                 container_timeout=container_timeout,
                 max_turns=max_turns,
+                done_timeout=done_timeout,
             )
 
             online_names = []
@@ -749,7 +909,7 @@ async def run_container_orchestrator(args) -> None:
                 agents = _build_agent_status(personas, pool)
                 agents[key]["state"] = state
                 if state == "starting":
-                    msg = f"Starting agent {i}/{tot}: {display_name}..."
+                    msg = f"Launching agent {i}/{tot}: {display_name}..."
                 else:
                     online_names.append(display_name)
                     msg = f"Agent ready {i}/{tot}: {display_name}"
@@ -809,6 +969,7 @@ async def run_container_orchestrator(args) -> None:
                     container_image=container_image,
                     container_timeout=container_timeout,
                     max_turns=max_turns,
+                    done_timeout=done_timeout,
                 )
 
                 online_names = []
@@ -817,7 +978,7 @@ async def run_container_orchestrator(args) -> None:
                     agents = _build_agent_status(personas, pool)
                     agents[key]["state"] = state
                     if state == "starting":
-                        msg = f"Starting agent {i}/{tot}: {display_name}..."
+                        msg = f"Launching agent {i}/{tot}: {display_name}..."
                     else:
                         online_names.append(display_name)
                         msg = f"Agent ready {i}/{tot}: {display_name}"
