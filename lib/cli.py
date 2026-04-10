@@ -147,7 +147,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Flask server URL to proxy to (default: http://127.0.0.1:5000)",
     )
     mcp_parser.add_argument(
-        "--scenario", type=str, required=True,
-        help="Scenario name (required)",
+        "--scenario", type=str, default=None,
+        help="Scenario to load at startup (omit to configure later via orchestrator)",
     )
     return parser.parse_args(argv)

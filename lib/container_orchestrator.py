@@ -863,7 +863,7 @@ async def run_container_orchestrator(args) -> None:
     """
     client = ChatClient(base_url=args.server_url)
     model = getattr(args, "model", "sonnet")
-    scenario_name = getattr(args, "scenario", None) or "unknown"
+    scenario_name = getattr(args, "scenario", None)
     max_waves = getattr(args, "max_rounds", 3)
     poll_interval = getattr(args, "poll_interval", 5.0)
     max_auto_rounds = getattr(args, "max_auto_rounds", 3)
@@ -914,11 +914,11 @@ async def run_container_orchestrator(args) -> None:
         mcp_retries += 1
         if mcp_retries == 1:
             print(f"Waiting for MCP server at {mcp_base_url}...")
-            print(f"  Start it with: python main.py mcp-server --scenario {scenario_name} --port {mcp_port}")
+            print(f"  Start it with: python main.py mcp-server --port {mcp_port}")
         elif mcp_retries >= mcp_max_retries:
             raise RuntimeError(
                 f"MCP server at {mcp_base_url} not reachable after {mcp_max_retries} attempts.\n"
-                f"  Start it: python main.py mcp-server --scenario {scenario_name} --port {mcp_port}"
+                f"  Start it: python main.py mcp-server --port {mcp_port}"
             )
         client.send_heartbeat("connecting", scenario_name, {},
                               "Waiting for MCP server...", check_commands=False)
@@ -968,6 +968,21 @@ async def run_container_orchestrator(args) -> None:
             personas = get_active_personas(getattr(args, "personas", None))
             print(f"\nStarting session: {scenario_name}")
             print(f"  Personas: {', '.join(p['display_name'] for p in personas)}")
+
+            # Load scenario on MCP server (in case it started without one)
+            try:
+                resp = sync_requests.post(
+                    f"{mcp_base_url}/api/load-scenario",
+                    json={"scenario": scenario_name},
+                    timeout=10,
+                )
+                if resp.status_code == 200:
+                    mcp_agents = resp.json().get("agents", [])
+                    print(f"  MCP server loaded scenario '{scenario_name}' ({len(mcp_agents)} agents)")
+                else:
+                    print(f"  Warning: MCP load-scenario returned {resp.status_code}: {resp.text}")
+            except Exception as e:
+                print(f"  Warning: Failed to load scenario on MCP server: {e}")
 
             pool = ContainerPool(
                 personas, model, LOG_DIR,
@@ -1039,6 +1054,21 @@ async def run_container_orchestrator(args) -> None:
 
                 # Reload personas and create new pool
                 personas = get_active_personas(getattr(args, "personas", None))
+
+                # Reload scenario on MCP server
+                try:
+                    resp = sync_requests.post(
+                        f"{mcp_base_url}/api/load-scenario",
+                        json={"scenario": scenario_name},
+                        timeout=10,
+                    )
+                    if resp.status_code == 200:
+                        mcp_agents = resp.json().get("agents", [])
+                        print(f"  MCP server reloaded scenario '{scenario_name}' ({len(mcp_agents)} agents)")
+                    else:
+                        print(f"  Warning: MCP load-scenario returned {resp.status_code}: {resp.text}")
+                except Exception as e:
+                    print(f"  Warning: Failed to reload scenario on MCP server: {e}")
 
                 pool = ContainerPool(
                     personas, model, LOG_DIR,

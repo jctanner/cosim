@@ -21,6 +21,7 @@ from typing import Any
 import httpx
 import yaml
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -712,6 +713,9 @@ def create_agent_mcp(
     server = FastMCP(
         name=f"sim-agent-{agent_key}",
         instructions=f"You are {display_name}. Use the available tools to interact with the simulated workplace.",
+        # Disable DNS rebinding protection — containers connect via gateway IP
+        # or host.containers.internal, not 127.0.0.1
+        transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
     )
 
     reg_args = (server, agent_key, display_name, flask_url, config)
@@ -732,7 +736,13 @@ def create_agent_mcp(
 # ---------------------------------------------------------------------------
 
 async def _health(request: Request) -> JSONResponse:
-    return JSONResponse({"status": "ok", "agents": list(_telemetry.keys())})
+    scenario = getattr(request.app.state, "scenario_name", None)
+    agent_keys = getattr(request.app.state, "agent_keys", [])
+    return JSONResponse({
+        "status": "ok",
+        "scenario": scenario,
+        "agents": agent_keys,
+    })
 
 
 async def _telemetry_model_end(request: Request) -> JSONResponse:
@@ -823,42 +833,95 @@ async def _done_events_endpoint(request: Request) -> JSONResponse:
     return JSONResponse(events)
 
 
+async def _load_scenario_endpoint(request: Request) -> JSONResponse:
+    """POST /api/load-scenario — dynamically load (or reload) a scenario.
+
+    Accepts JSON: {"scenario": "tech-startup"}
+    Mounts per-agent MCP sub-apps on the parent Starlette app.
+    """
+    try:
+        data = await request.json()
+    except Exception:
+        return JSONResponse({"error": "invalid json"}, status_code=400)
+
+    scenario_name = data.get("scenario")
+    if not scenario_name:
+        return JSONResponse({"error": "missing 'scenario' field"}, status_code=400)
+
+    flask_url = request.app.state.flask_url
+
+    try:
+        config = _load_scenario_config(scenario_name)
+    except FileNotFoundError as e:
+        return JSONResponse({"error": str(e)}, status_code=404)
+
+    # Remove any previously mounted agent routes
+    request.app.routes[:] = [
+        r for r in request.app.routes
+        if not (isinstance(r, Mount) and r.path.startswith("/agents/"))
+    ]
+
+    # Mount new per-agent MCP sub-apps
+    agent_keys = []
+    for agent_key in config.get("characters", {}):
+        agent_mcp = create_agent_mcp(agent_key, flask_url, config)
+        sse_app = agent_mcp.sse_app()
+        request.app.routes.insert(0, Mount(f"/agents/{agent_key}", app=sse_app))
+        agent_keys.append(agent_key)
+        logger.info(f"Mounted MCP endpoint: /agents/{agent_key}/sse")
+
+    request.app.state.scenario_name = scenario_name
+    request.app.state.agent_keys = agent_keys
+
+    logger.info(f"Loaded scenario '{scenario_name}' with {len(agent_keys)} agents: {agent_keys}")
+    return JSONResponse({
+        "status": "ok",
+        "scenario": scenario_name,
+        "agents": agent_keys,
+    })
+
+
 # ---------------------------------------------------------------------------
 # App builder
 # ---------------------------------------------------------------------------
 
-def build_app(scenario_name: str, flask_url: str) -> Starlette:
+def build_app(scenario_name: str | None, flask_url: str) -> Starlette:
     """Build the parent Starlette app with per-agent MCP mounts.
+
+    If scenario_name is None, the server starts with only management endpoints.
+    Use POST /api/load-scenario to load a scenario later.
 
     Returns a Starlette app ready for uvicorn.
     """
-    config = _load_scenario_config(scenario_name)
-
     @asynccontextmanager
     async def lifespan(app: Starlette):
         global _http_client
         _http_client = httpx.AsyncClient(timeout=30)
         app.state.flask_url = flask_url
-        logger.info(f"MCP server starting — scenario={scenario_name}, flask={flask_url}")
+        app.state.scenario_name = scenario_name
+        app.state.agent_keys = []
+        logger.info(f"MCP server starting — scenario={scenario_name or '(none)'}, flask={flask_url}")
         yield
         await _http_client.aclose()
         _http_client = None
         logger.info("MCP server shutting down")
 
-    # Build per-agent MCP sub-apps
+    # Build per-agent MCP sub-apps (if scenario provided at startup)
     routes: list[Mount | Route] = []
     agent_keys = []
-    for agent_key in config.get("characters", {}):
-        agent_mcp = create_agent_mcp(agent_key, flask_url, config)
-        # Get the SSE Starlette sub-app
-        sse_app = agent_mcp.sse_app()
-        routes.append(Mount(f"/agents/{agent_key}", app=sse_app))
-        agent_keys.append(agent_key)
-        logger.info(f"Mounted MCP endpoint: /agents/{agent_key}/sse")
+    if scenario_name:
+        config = _load_scenario_config(scenario_name)
+        for agent_key in config.get("characters", {}):
+            agent_mcp = create_agent_mcp(agent_key, flask_url, config)
+            sse_app = agent_mcp.sse_app()
+            routes.append(Mount(f"/agents/{agent_key}", app=sse_app))
+            agent_keys.append(agent_key)
+            logger.info(f"Mounted MCP endpoint: /agents/{agent_key}/sse")
 
     # Add management endpoints
     routes.extend([
         Route("/health", _health, methods=["GET"]),
+        Route("/api/load-scenario", _load_scenario_endpoint, methods=["POST"]),
         Route("/api/telemetry/model-end", _telemetry_model_end, methods=["POST"]),
         Route("/api/telemetry/tool-start", _telemetry_tool_start, methods=["POST"]),
         Route("/api/telemetry", _get_telemetry, methods=["GET"]),
@@ -868,5 +931,8 @@ def build_app(scenario_name: str, flask_url: str) -> Starlette:
 
     app = Starlette(routes=routes, lifespan=lifespan)
 
-    logger.info(f"MCP server configured with {len(agent_keys)} agents: {agent_keys}")
+    if scenario_name:
+        logger.info(f"MCP server configured with {len(agent_keys)} agents: {agent_keys}")
+    else:
+        logger.info("MCP server started without scenario — POST /api/load-scenario to configure")
     return app
