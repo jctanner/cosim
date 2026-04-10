@@ -146,6 +146,7 @@ _recaps: list[dict] = []
 _agent_online: dict[str, bool] = {}
 _agent_firing: set[str] = set()  # agents being fired (waiting for session close)
 _agent_verbosity: dict[str, str] = {}  # persona_key -> verbosity level
+_agent_last_activity: dict[str, dict] = {}  # persona_key -> {timestamp, event_type, detail}
 _agent_online_lock = threading.Lock()
 
 # Agent thoughts: persona_key -> list of {thinking, response, timestamp}
@@ -410,6 +411,7 @@ def _init_agent_online():
     """Initialize agent online/offline state from PERSONAS."""
     with _agent_online_lock:
         _agent_online.clear()
+        _agent_last_activity.clear()
         for key in PERSONAS:
             _agent_online[key] = True
 
@@ -5692,7 +5694,16 @@ def create_app() -> Flask:
                 agent_info = agent_states.get(key, {})
                 is_firing = key in _agent_firing
                 if not orch_connected:
-                    live_state = "firing" if is_firing else "disconnected"
+                    if is_firing:
+                        live_state = "firing"
+                    else:
+                        # Check per-agent activity from MCP hooks
+                        activity = _agent_last_activity.get(key, {})
+                        last_active = activity.get("timestamp", 0)
+                        if time.time() - last_active < 60:
+                            live_state = "responding"
+                        else:
+                            live_state = "disconnected"
                 elif is_firing:
                     live_state = "firing"
                 elif not toggled_online:
@@ -5741,6 +5752,18 @@ def create_app() -> Flask:
         _persist_message(sys_msg)
         _broadcast(sys_msg)
         return jsonify({"key": key, "online": new_state, "display_name": display_name})
+
+    @app.route("/api/npcs/<key>/activity", methods=["POST"])
+    def npc_activity(key):
+        """Record agent activity from MCP hook events (implicit heartbeat)."""
+        data = request.get_json(force=True)
+        with _agent_online_lock:
+            _agent_last_activity[key] = {
+                "timestamp": time.time(),
+                "event_type": data.get("event_type", "unknown"),
+                "detail": data.get("detail", ""),
+            }
+        return jsonify({"ok": True})
 
     # -- Events API --
 

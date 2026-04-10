@@ -748,6 +748,19 @@ async def _health(request: Request) -> JSONResponse:
     })
 
 
+async def _forward_activity(flask_url: str, agent_key: str, event_type: str, detail: str = "") -> None:
+    """Forward agent activity to Flask for heartbeat tracking."""
+    try:
+        if _http_client is not None:
+            await _http_client.post(
+                f"{flask_url}/api/npcs/{agent_key}/activity",
+                json={"event_type": event_type, "detail": detail},
+                timeout=3,
+            )
+    except Exception:
+        pass
+
+
 async def _telemetry_model_end(request: Request) -> JSONResponse:
     """Receive model-end hook event from Claude Code container."""
     agent_key = request.headers.get("X-Agent-Key", "unknown")
@@ -787,6 +800,9 @@ async def _telemetry_model_end(request: Request) -> JSONResponse:
         except Exception:
             pass
 
+    # Forward activity ping to Flask for heartbeat tracking
+    await _forward_activity(request.app.state.flask_url, agent_key, "model_end", data.get("model", ""))
+
     return JSONResponse({"ok": True})
 
 
@@ -805,6 +821,9 @@ async def _telemetry_tool_start(request: Request) -> JSONResponse:
     })
     tool_calls = stats.setdefault("tool_calls", {})
     tool_calls[tool_name] = tool_calls.get(tool_name, 0) + 1
+
+    # Forward activity ping to Flask for heartbeat tracking
+    await _forward_activity(request.app.state.flask_url, agent_key, "tool_start", tool_name)
 
     return JSONResponse({"ok": True})
 
