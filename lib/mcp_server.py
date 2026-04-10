@@ -121,6 +121,8 @@ def _register_communication_tools(
 ):
     """Register 6 communication tools on the server."""
     my_channels = set(config.get("memberships", {}).get(agent_key, []))
+    # Auto-add director channel (created dynamically by Flask, not in scenario YAML)
+    my_channels.add(f"#director-{agent_key}")
 
     @server.tool(
         name="post_message",
@@ -570,6 +572,7 @@ def _register_meta_tools(
 ):
     """Register 6 meta/utility tools."""
     my_channels = set(config.get("memberships", {}).get(agent_key, []))
+    my_channels.add(f"#director-{agent_key}")
     characters = config.get("characters", {})
 
     @server.tool(
