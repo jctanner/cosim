@@ -161,7 +161,9 @@ class ContainerPool:
         self._active_containers: dict[str, str] = {}  # persona_key -> container_name
         self._agent_locks: dict[str, asyncio.Lock] = {}  # per-agent mutex
         self._mcp_base_url: str = ""  # set in start()
-        self._allowed_tools_str = ",".join(f"mcp__sim__{t}" for t in MCP_TOOL_NAMES)
+        mcp_tools = [f"mcp__sim__{t}" for t in MCP_TOOL_NAMES]
+        builtin_tools = ["WebSearch", "WebFetch"]
+        self._allowed_tools_str = ",".join(mcp_tools + builtin_tools)
         self._config_files: dict[str, Path] = {}  # persona_key -> mcp config path
         self._prompt_files: dict[str, Path] = {}  # persona_key -> system prompt path
 
