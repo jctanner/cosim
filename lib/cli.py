@@ -122,6 +122,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--done-timeout", type=int, default=120,
         help="Seconds to wait for agents to signal done before advancing tier (default: 120)",
     )
+    container_parser.add_argument(
+        "--mcp-host", type=str, default=None,
+        help="Hostname containers use to reach MCP server on host "
+             "(default: auto-detect based on platform — "
+             "host.containers.internal on macOS, host gateway IP on Linux)",
+    )
 
     # ── mcp-server subcommand ─────────────────────────────────────────
     mcp_parser = subparsers.add_parser(

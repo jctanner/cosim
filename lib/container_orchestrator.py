@@ -8,6 +8,8 @@ signal_done events from the MCP server rather than waiting for process exit.
 import asyncio
 import json
 import logging
+import platform as _platform
+import subprocess
 import time as _time
 from pathlib import Path
 
@@ -57,6 +59,73 @@ MCP_TOOL_NAMES = [
     "whoami", "who_is", "get_my_channels", "get_my_tickets",
     "get_recent_activity", "signal_done",
 ]
+
+
+def _detect_mcp_host() -> str:
+    """Detect the hostname containers use to reach services on the host.
+
+    - macOS/Docker Desktop: host.containers.internal (always works)
+    - Linux rootless podman: try host.containers.internal first,
+      fall back to default gateway IP from podman network inspect
+    """
+    if _platform.system() == "Darwin":
+        return "host.containers.internal"
+
+    # Linux: check if podman supports host.containers.internal
+    # by inspecting the default network gateway
+    try:
+        subprocess.run(
+            ["podman", "info", "--format", "{{.Host.NetworkBackend}}"],
+            capture_output=True, text=True, timeout=5,
+        )
+        # For pasta/slirp4netns backends, host.containers.internal usually works
+        # in Podman 4.x+ on Fedora. Try it.
+    except Exception:
+        pass
+
+    # Fall back: get the host gateway IP from podman's default network
+    try:
+        proc = subprocess.run(
+            ["podman", "network", "inspect", "podman",
+             "--format", "{{range .Subnets}}{{.Gateway}}{{end}}"],
+            capture_output=True, text=True, timeout=5,
+        )
+        gateway = proc.stdout.strip()
+        if gateway:
+            return gateway
+    except Exception:
+        pass
+
+    return "host.containers.internal"
+
+
+async def _preflight_checks(container_image: str) -> None:
+    """Validate podman and container image before session startup."""
+    # Check podman is available
+    proc = await asyncio.create_subprocess_exec(
+        "podman", "--version",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, stderr = await proc.communicate()
+    if proc.returncode != 0:
+        raise RuntimeError(f"podman not found or not working: {stderr.decode()}")
+    print(f"  podman: {stdout.decode().strip()}")
+
+    # Check container image exists
+    proc = await asyncio.create_subprocess_exec(
+        "podman", "image", "exists", container_image,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    await proc.communicate()
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"Container image '{container_image}' not found.\n"
+            f"  Build it first:  ./scripts/build-agent-image.sh\n"
+            f"  Or manually:     podman build -t {container_image} -f Dockerfile.agent ."
+        )
+    print(f"  image: {container_image}")
 
 
 class ContainerPool:
@@ -111,31 +180,6 @@ class ContainerPool:
 
         # Clear done events on MCP server
         self._clear_done_events()
-
-        # Validate podman is available
-        proc = await asyncio.create_subprocess_exec(
-            "podman", "--version",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, stderr = await proc.communicate()
-        if proc.returncode != 0:
-            raise RuntimeError(f"podman not found or not working: {stderr.decode()}")
-        print(f"  podman: {stdout.decode().strip()}")
-
-        # Validate container image exists
-        proc = await asyncio.create_subprocess_exec(
-            "podman", "image", "exists", self._container_image,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        await proc.communicate()
-        if proc.returncode != 0:
-            raise RuntimeError(
-                f"Container image '{self._container_image}' not found. "
-                f"Build it first: podman build -t {self._container_image} -f Dockerfile.agent ."
-            )
-        print(f"  image: {self._container_image}")
 
         total = len(self._personas)
         print(f"Launching {total} long-running agent containers...")
@@ -225,6 +269,21 @@ class ContainerPool:
         if proc.returncode != 0:
             raise RuntimeError(
                 f"Failed to launch container {container_name}: {stderr.decode().strip()}"
+            )
+
+        # Verify container is running
+        check_proc = await asyncio.create_subprocess_exec(
+            "podman", "container", "inspect", container_name,
+            "--format", "{{.State.Status}}",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        check_stdout, _ = await check_proc.communicate()
+        status = check_stdout.decode().strip()
+        if status != "running":
+            raise RuntimeError(
+                f"Container {container_name} is not running (status: {status}). "
+                f"Check: podman logs {container_name}"
             )
 
         self._active_containers[persona_key] = container_name
@@ -816,6 +875,8 @@ async def run_container_orchestrator(args) -> None:
     done_timeout = getattr(args, "done_timeout", 120)
     personas = []
 
+    mcp_host = getattr(args, "mcp_host", None) or _detect_mcp_host()
+
     print(f"Container orchestrator starting")
     print(f"  Server: {args.server_url}")
     print(f"  Model: {model}")
@@ -823,6 +884,7 @@ async def run_container_orchestrator(args) -> None:
     print(f"  Max autonomous rounds: {'unlimited' if max_auto_rounds == 0 else max_auto_rounds}")
     print(f"  Poll interval: {poll_interval}s")
     print(f"  MCP port: {mcp_port}")
+    print(f"  MCP host (container→host): {mcp_host}")
     print(f"  Container image: {container_image}")
     print(f"  Container timeout: {container_timeout}s")
     print(f"  Max turns per container: {max_turns}")
@@ -839,6 +901,8 @@ async def run_container_orchestrator(args) -> None:
     # Wait for MCP server to be reachable
     mcp_base_url = f"http://127.0.0.1:{mcp_port}"
     print(f"Checking MCP server at {mcp_base_url}...")
+    mcp_retries = 0
+    mcp_max_retries = 30  # ~60 seconds
     while True:
         try:
             resp = sync_requests.get(f"{mcp_base_url}/health", timeout=5)
@@ -847,10 +911,21 @@ async def run_container_orchestrator(args) -> None:
                 break
         except Exception:
             pass
+        mcp_retries += 1
+        if mcp_retries == 1:
+            print(f"Waiting for MCP server at {mcp_base_url}...")
+            print(f"  Start it with: python main.py mcp-server --scenario {scenario_name} --port {mcp_port}")
+        elif mcp_retries >= mcp_max_retries:
+            raise RuntimeError(
+                f"MCP server at {mcp_base_url} not reachable after {mcp_max_retries} attempts.\n"
+                f"  Start it: python main.py mcp-server --scenario {scenario_name} --port {mcp_port}"
+            )
         client.send_heartbeat("connecting", scenario_name, {},
                               "Waiting for MCP server...", check_commands=False)
-        print("Waiting for MCP server...")
         await asyncio.sleep(2)
+
+    # Pre-flight: validate podman and container image early
+    await _preflight_checks(container_image)
 
     # Wait for a session to be started (New or Load)
     pool = None
@@ -896,6 +971,7 @@ async def run_container_orchestrator(args) -> None:
 
             pool = ContainerPool(
                 personas, model, LOG_DIR,
+                mcp_host=mcp_host,
                 mcp_port=mcp_port,
                 container_image=container_image,
                 container_timeout=container_timeout,
@@ -949,7 +1025,8 @@ async def run_container_orchestrator(args) -> None:
                 print(f"\n*** Restart command received (scenario: {new_scenario}) ***")
 
                 # Stop any active containers
-                await pool.close()
+                if pool is not None:
+                    await pool.close()
 
                 # Brief pause
                 await asyncio.sleep(2)
@@ -965,6 +1042,7 @@ async def run_container_orchestrator(args) -> None:
 
                 pool = ContainerPool(
                     personas, model, LOG_DIR,
+                    mcp_host=mcp_host,
                     mcp_port=mcp_port,
                     container_image=container_image,
                     container_timeout=container_timeout,
@@ -992,8 +1070,11 @@ async def run_container_orchestrator(args) -> None:
                     await pool.start(build_v3_system_prompt, on_progress=on_progress_restart)
                 except Exception as e:
                     print(f"Agent setup failed during restart: {e}")
+                    # Clean up any containers that were launched before the failure
+                    await pool.close()
+                    pool = None
                     _requeue_restart(client.base_url, scenario_name)
-                    raise
+                    continue
 
                 # Reset message tracking
                 existing = client.get_messages()
@@ -1120,6 +1201,7 @@ async def run_container_orchestrator(args) -> None:
             print(f"\nWaiting for new messages (last_seen_id={last_seen_id})...")
     finally:
         try:
-            await pool.close()
+            if pool is not None:
+                await pool.close()
         except Exception:
             pass
