@@ -222,6 +222,12 @@ All tools are implemented server-side in `lib/mcp_server.py`. No tool code exist
 | `web_search(query)` | Search the web |
 | `web_fetch(url, prompt?)` | Fetch and analyze a URL |
 
+**Background Work:**
+| Tool | Description |
+|------|-------------|
+| `request_background_task(goal, context?, report_to?)` | Request a background container to perform long-running work (web research, code generation, etc.). Fire-and-forget — results published to simulation via docs/commits/messages. |
+| `list_background_tasks()` | Check status of previously requested background tasks |
+
 **Meta / Situational Awareness:**
 | Tool | Description |
 |------|-------------|
@@ -261,8 +267,12 @@ A minimal image with Claude Code and dependencies. No build tools, compilers, or
 ```dockerfile
 FROM python:3.13-slim  # or node-based depending on Claude Code runtime
 RUN pip install claude-code  # or npm install
+
+# Inject hook configuration for telemetry reporting
+COPY hooks.json /home/agent/.claude/hooks.json
+
 # No host mounts, no volume shares
-# MCP config injected at container start
+# MCP config and identity injected at container start
 ENV AGENT_PERSONA_KEY=""
 ENV MCP_SERVER_URL=""
 ```
@@ -309,10 +319,16 @@ This is architecturally identical to SCION's container model (`pkg/agent/run.go`
 3. Each agent:
    a. Calls get_messages(channel, since_id) to see what happened
    b. Decides whether to respond or pass (based on persona prompt)
-   c. Takes action: post_message(), create_doc(), commit_files(), etc.
-   d. May do multi-step workflows (read doc → analyze → create new doc)
-   e. Calls signal_done() when finished
+   c. Takes action autonomously — no artificial limits on what they do:
+      - Search the web multiple times, following threads of inquiry
+      - Read existing docs, analyze them, create new docs
+      - Commit code, read it back, iterate, commit again
+      - Post findings to channels, DM other agents
+      - Request background tasks for long-running work
+   d. Calls signal_done() when finished (self-determined, not externally capped)
 ```
+
+Agents are autonomous within their notification cycle. Claude Code drives the tool-calling loop natively — the agent decides what to do, how many tool calls to make, and when it's done. There is no per-turn action budget. An agent doing 30 web searches, creating 3 documents, and committing a prototype in a single cycle is expected behavior, not an edge case.
 
 **Notification Mechanism — Options (choose one):**
 
@@ -331,6 +347,51 @@ This is architecturally identical to SCION's container model (`pkg/agent/run.go`
 ```
 
 Claude Code processes accept follow-up input on stdin. The agent sees this as a new user message and acts on it.
+
+### Agent Autonomy & Background Work
+
+A core design goal of v3 is that agents are **creative and self-directed**, not constrained by a rigid turn structure. When notified, an agent should be free to go deep — research extensively, write documents, build prototypes, explore tangential threads — without waiting for permission or a next turn in a chat loop.
+
+**Within a notification cycle, agents can:**
+- Make unlimited MCP tool calls (web search, doc creation, code commits, etc.)
+- Do multi-step workflows: search → analyze → draft doc → refine → publish → post summary
+- Follow threads of inquiry that emerge from their research
+- Create multiple artifacts (documents, commits, tickets, memos) in a single cycle
+- Decide on their own when they're done
+
+**Background tasks — agents requesting more work:**
+
+Agents can spawn background work via a `request_background_task(goal, context, report_to)` MCP tool. This doesn't directly create a container — it posts a request to the container manager, which spins up a new ephemeral container with its own Claude Code process and the same MCP tool access. The background container runs independently, publishes results to the simulation (docs, commits, messages), and shuts down when done.
+
+```
+Agent "director" is notified of a new topic in #briefing
+  → Reads the message
+  → Creates a research plan document
+  → Requests background task: "Search the web for an overview of [topic]"
+  → Posts decomposition to #research
+  → Calls signal_done()
+
+Meanwhile, background container spins up:
+  → Runs web searches via MCP tools
+  → Creates a findings document in the research folder
+  → Posts a summary to #research
+  → Container exits
+
+Other agents see the findings doc and summary on their next notification cycle.
+```
+
+**What this is NOT:**
+- Agents do not directly manage other agents' lifecycles (no spawning containers, no killing siblings)
+- Agents do not coordinate background tasks — fire and forget
+- Background containers cannot spawn further background containers (max depth = 1, enforced by container manager)
+
+**Guardrails on background tasks (enforced by container manager, not by the agent):**
+- `max_concurrent_tasks` per scenario (default: 5)
+- `task_timeout` per task (default: 900 seconds)
+- Max depth of 1 — background tasks cannot spawn further background tasks
+- Background containers have the same security hardening as primary agent containers
+
+This preserves the autonomy of the agent (it decides what to research and when to spawn background work) while keeping resource management centralized (the container manager enforces limits).
 
 ### Tier Ordering
 
@@ -367,8 +428,10 @@ Without the orchestrator controlling who speaks when, we need guardrails against
 **Rules:**
 1. Agents are only notified on **human messages and system events**, never on other agents' messages (same as current `_is_agent_message` filter)
 2. Per-agent cooldown: minimum N seconds between notifications to the same agent
-3. Per-notification action budget: agent can make at most M tool calls per notification cycle
-4. `signal_done()` is mandatory — agent must explicitly end its turn
+3. `signal_done()` is mandatory — agent must explicitly end its turn
+4. Background tasks cannot spawn further background tasks (max depth = 1)
+
+Note: there is **no per-notification action budget**. Agents are free to make as many tool calls as they need within a cycle. The guardrails are about preventing cascading *notifications between agents*, not about limiting what an individual agent does during its turn.
 
 **Exception — directed re-engagement:** If an agent wants another agent to respond to something, they use `send_dm()`. The notification bus can deliver DMs as a new notification to the recipient, but with a flag indicating it's agent-originated (so it doesn't cascade further).
 
@@ -381,6 +444,62 @@ Without the orchestrator controlling who speaks when, we need guardrails against
 2. **Periodic restart** — After N notification cycles, gracefully restart the agent process with a fresh system prompt. The agent loses conversational memory but retains world state via API calls
 3. **Lean notifications** — Keep notification text minimal ("new activity in #channel") so the agent fetches only what it needs via tools rather than receiving large context dumps
 4. **Stateless by design** — Since all state lives in the Flask server (messages, docs, tickets, etc.), agent processes are disposable. Restart is cheap
+
+### Observability: Token Usage & Agent Telemetry
+
+In v2, `agent_runner.py` captures token usage directly from the Claude SDK response object. In v3, agents are Claude Code processes inside containers — we never see the LLM API responses. Token data is inside the agent process, invisible to the host.
+
+**Recommended approach: Claude Code hooks**
+
+Claude Code supports [hooks](https://docs.anthropic.com/en/docs/claude-code/hooks) — shell commands that fire on lifecycle events (`model-end`, `tool-start`, `tool-end`, etc.). SCION uses this same mechanism (`sciontool hook model-end`) for model call counting and limit enforcement.
+
+We inject a hook configuration into each container at build time. On every `model-end` event, the hook reports usage data back to the MCP server:
+
+```json
+// .claude/hooks.json (injected into container image)
+{
+  "hooks": {
+    "model-end": {
+      "command": "curl -s http://mcp-server:5001/api/telemetry/model-end -H 'X-Agent-Key: ${AGENT_PERSONA_KEY}' -d @-",
+      "timeout": 5000
+    },
+    "tool-start": {
+      "command": "curl -s http://mcp-server:5001/api/telemetry/tool-start -H 'X-Agent-Key: ${AGENT_PERSONA_KEY}' -d @-",
+      "timeout": 5000
+    }
+  }
+}
+```
+
+Claude Code passes event metadata (model, token counts, tool name, duration) as stdin JSON to the hook command. The hook `curl`s it to the MCP server, which logs it and exposes it via the web UI.
+
+**What this captures:**
+- Per-agent, per-request input/output token counts
+- Model used per request
+- Tool call frequency and duration
+- Thinking/reasoning token usage (extended thinking)
+- Total cost per agent, per notification cycle, per session
+
+**Why hooks, not other approaches:**
+
+| Approach | Problem |
+|----------|---------|
+| MCP tool (`report_usage()`) | LLM doesn't know its own token counts — can't self-report |
+| `--output-format json` + stdout parsing | Requires capturing and parsing container stdout; fragile, couples to Claude Code output format |
+| Vertex AI billing API | Per-project aggregates, hard to correlate back to individual agents without custom labels |
+| LLM traffic proxy | Full request/response interception; high complexity, latency, and security surface |
+| **Claude Code hooks** | **Automatic, no agent cooperation needed, fires on every model call, structured event data, injected at build time** |
+
+**Telemetry endpoint on MCP server:**
+
+The MCP server exposes `/api/telemetry/*` endpoints (not MCP tools — these are raw HTTP from hook scripts). It aggregates usage data and exposes it to:
+- Flask server (for web UI display — "thoughts" panel, usage dashboard)
+- Session save/load (usage stats persisted with session snapshots)
+- Container manager (for limit enforcement if needed)
+
+**Web UI integration:**
+
+The existing web UI already has a "thoughts" panel showing agent reasoning. In v3, this is populated by hook telemetry rather than SDK response objects. The `model-end` hook captures thinking text (if available in the event payload), and the MCP server forwards it to Flask for SSE broadcast to the UI.
 
 ### What Gets Removed
 
@@ -399,7 +518,8 @@ Without the orchestrator controlling who speaks when, we need guardrails against
 | MCP server (`lib/mcp_server.py`) | Async (FastAPI/Starlette) process on port 5001; translates MCP tool calls to Flask REST API; authenticates agents, enforces access control, audit logs all calls |
 | Notification bus (`lib/notifier.py`) | Detects new activity, notifies relevant agents via `docker exec` stdin, tracks `signal_done()` per tier |
 | Agent container manager (`lib/agent_containers.py`) | Build/start/stop/restart agent containers with security hardening, health monitoring, staged shutdown |
-| Container image (`Dockerfile.agent`) | Minimal image with Claude Code + MCP client config only — no tool code, no host filesystem access |
+| Container image (`Dockerfile.agent`) | Minimal image with Claude Code + MCP client config + telemetry hooks — no tool code, no host filesystem access |
+| Telemetry hooks (`.claude/hooks.json`) | Injected into container image; fires on `model-end` / `tool-start` events, reports usage data to MCP server |
 
 ### What's Unchanged
 
@@ -577,7 +697,7 @@ The MCP server is not just an API wrapper — it is the security perimeter.
 
 6. **Token economics** — Long-running processes with tool calls accumulate context faster than the current turn-based model. Need to measure actual token consumption per notification cycle and compare with v2.
 
-7. **Observability** — Current v2 captures agent "thoughts" (extended thinking) and logs full prompts/responses to `var/logs/`. In v3, agent stdout/stderr stays inside the container. Options: (a) stream container logs to host via `docker logs`, (b) agents log via an MCP tool (`log_thought(text)`), (c) capture via Claude Code's `--output-format json`. Need to maintain the web UI's "thoughts" panel.
+7. **Hook event payload** — Claude Code hooks pass event metadata as stdin JSON. Need to verify exactly what fields are available in the `model-end` event payload (token counts, model ID, thinking text, duration). This determines how rich our telemetry can be. If the payload is limited, we may need to supplement with `docker logs` parsing or `--output-format json`.
 
 8. **Graceful degradation** — What happens when a container crashes mid-action (e.g., after posting a message but before creating the follow-up document)? Container restart is cheap (stateless), but the partial action is already committed to the Flask server. Need idempotency or at-least-once delivery semantics.
 
