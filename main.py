@@ -45,10 +45,9 @@ if __name__ == "__main__":
             app = create_app()
             if args.scenario:
                 # Queue a restart command so the orchestrator auto-starts agents
-                from lib.webapp import _command_lock, _orchestrator_command
+                from lib.webapp import _command_lock, _orchestrator_commands
                 with _command_lock:
-                    _orchestrator_command["action"] = "restart"
-                    _orchestrator_command["scenario"] = args.scenario
+                    _orchestrator_commands.append({"action": "restart", "scenario": args.scenario})
             app.run(host=args.host, port=args.port, debug=False)
         elif args.command == "chat":
             # Orchestrator waits for a session command before loading a scenario.
@@ -64,8 +63,25 @@ if __name__ == "__main__":
                     print(f"\nOrchestrator crashed ({type(e).__name__}), restarting in 3 seconds...")
                     import time
                     time.sleep(3)
+        elif args.command == "container-chat":
+            from lib.container_orchestrator import run_container_orchestrator
+            while True:
+                try:
+                    asyncio.run(run_container_orchestrator(args))
+                    break
+                except (asyncio.CancelledError, BaseException) as e:
+                    if isinstance(e, KeyboardInterrupt):
+                        raise
+                    print(f"\nContainer orchestrator crashed ({type(e).__name__}), restarting in 3 seconds...")
+                    import time
+                    time.sleep(3)
+        elif args.command == "mcp-server":
+            import uvicorn
+            from lib.mcp_server import build_app
+            app = build_app(scenario_name=args.scenario, flask_url=args.flask_url)
+            uvicorn.run(app, host=args.host, port=args.port)
         else:
-            print("Use 'server' or 'chat' subcommand. See --help.", file=sys.stderr)
+            print("Use 'server', 'chat', 'container-chat', or 'mcp-server' subcommand. See --help.", file=sys.stderr)
             sys.exit(1)
     except KeyboardInterrupt:
         print("\n\nInterrupted by user")
