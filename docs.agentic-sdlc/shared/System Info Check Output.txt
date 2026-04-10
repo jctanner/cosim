@@ -1,0 +1,8 @@
+System Information Check
+========================
+
+Hostname:
+jtanner-thinkpadp1gen3.rht.csb
+
+System Info:
+Linux jtanner-thinkpadp1gen3.rht.csb 6.19.8-100.fc42.x86_64 #1 SMP PREEMPT_DYNAMIC Sat Mar 14 00:03:26 UTC 2026 x86_64 GNU/Linux

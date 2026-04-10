@@ -1,0 +1,227 @@
+# Agentic SDLC Transformation - Product Prioritization
+
+**Owner:** Sarah (PM)  
+**Last Updated:** 2026-04-02  
+**Status:** APPROVED - Full wave plan locked
+
+## Prioritization Framework
+
+Products are prioritized based on:
+1. **Revenue Impact** — Lost deals, at-risk ARR, expansion opportunity
+2. **Customer Velocity Demands** — Where speed directly impacts customer success
+3. **Competitive Pressure** — Where competitors are winning on speed
+4. **Customer Pain Level** — Feature request volume, escalations, delivery time
+
+---
+
+## Wave 1: ANSIBLE (In Progress)
+
+**Timeline:** 3 months (Kevin Myers team)  
+**Status:** In progress  
+**Rationale:** Executive directive, market leader in automation space  
+**Team Size:** TBD (Kevin Myers organization)
+
+---
+
+## Wave 2: API/INTEGRATION PLATFORM ✅ APPROVED
+
+**Timeline:** Starts Week 4 (after Ansible first milestone validation)  
+**Team:** Platform API team (4 engineers)  
+**Owner:** Marcus (Engineering Manager)
+
+### Revenue Impact
+- **$840K ARR lost** in Q1 2026 due to velocity gaps (6-week vs 3-week integration timeline)
+- **Portion of $1.2M at-risk ARR** (overlap with Wave 3, estimated ~$400K)
+- Direct competitive losses where integration speed was deciding factor
+
+### Customer Impact
+- Custom integration timeline compression: **6 weeks → 2 weeks target**
+- API feature request cycle time: **50% reduction target**
+- Release cadence: **quarterly → monthly**
+
+### Success Metrics
+- Custom integration delivery time: 6 weeks → 2 weeks
+- API feature request → production: 50% cycle time reduction
+- Deal win rate improvement in velocity-sensitive opportunities
+- Customer satisfaction (NPS/CSAT) holds or improves
+
+---
+
+## Wave 3: DATA ANALYTICS PLATFORM ✅ APPROVED
+
+**Timeline:** Starts Week 12 (after Wave 2 exits learning curve, before May QBRs)  
+**Team:** Data Analytics team (5 engineers - recommended)  
+**Owner:** Marcus (Engineering Manager)
+
+### Customer Pain Analysis (from Support)
+- **127 feature requests** (highest volume across all products, last 6 months)
+- **14.2 week average delivery time** (longest cycle across all products)
+- **12 customer escalations** (highest escalation rate)
+- **4 at-risk accounts representing ~$800K ARR** (part of Taylor's $1.2M at-risk total)
+- **May 2026 QBRs** for 2 accounts create time pressure (6-7 weeks from now)
+
+### Revenue Impact
+- **$800K ARR at risk** (part of Taylor's original $1.2M at-risk total, not incremental)
+- 2 accounts have May QBRs where renewal intent will be evaluated
+- High churn risk if velocity doesn't improve
+- Expansion opportunity unlocked by faster feature delivery
+
+### Customer Impact
+- Feature request backlog reduction: 127 open requests → aggressive burn-down
+- Feature delivery time: **14.2 weeks → ~4-5 weeks target** (70% reduction)
+- Customer escalation reduction through faster response to requests
+
+### Success Metrics
+- Feature request → production deployment: 70% cycle time reduction (14.2 weeks → 4-5 weeks)
+- Feature request backlog burn-down: 50% reduction in first quarter post-transformation
+- Customer escalations: 50% reduction
+- At-risk account retention: retain 80%+ of $800K ARR (critical for May QBRs)
+- Release frequency: quarterly → monthly (or faster)
+
+### Timing Rationale
+- Week 12 start allows Wave 2 to exit learning curve and stabilize
+- Still delivers velocity improvements 8+ weeks before May QBRs (sufficient time to demonstrate progress)
+- Avoids capacity overload from running both waves in parallel during learning curve
+- Balances customer time pressure with organizational capacity constraints
+
+---
+
+## Total Revenue Exposure (All Waves)
+
+- **$840K ARR lost** in Q1 2026 (velocity gaps on integrations)
+- **$1.2M ARR at risk** across multiple products:
+  - ~$800K from Data Analytics Platform (Wave 3)
+  - ~$400K from API/Integration Platform and other products (Wave 2 + future)
+- **Total: $2.04M revenue exposure** that transformation must address
+
+---
+
+## Wave 4+: Future Prioritization
+
+Additional products will be prioritized based on:
+1. Results from Waves 1-3 (velocity gains, revenue impact, customer satisfaction)
+2. Emerging competitive pressure
+3. New at-risk ARR or lost deal analysis (remaining ~$400K from $1.2M total)
+4. Market/strategic priorities from Dana
+
+Wave 4+ decisions will be made at Week 6 checkpoint (Morgan's Go/No-Go) based on transformation ROI validation.
+
+---
+
+## Customer-Facing Success Metrics (All Waves)
+
+These complement engineering's internal metrics (code coverage, PR cycle time, feature velocity):
+
+- **Time-to-Value:** Customer feature request → production (target: 50-70% reduction depending on product)
+- **Integration Delivery:** Custom integration timeline (target: 6 weeks → 2 weeks for API/Integration products)
+- **Support Velocity:** Ticket resolution time (target: 30% improvement)
+- **Release Frequency:** Product release cadence (target: quarterly → monthly minimum)
+- **Quality Held:** Defect escape rate, support ticket volume, CSAT scores maintain or improve
+
+---
+
+## Acceptance Criteria: "Successfully Transitioned" (All Products)
+
+A product has successfully transitioned when:
+
+✅ **Velocity Improvement Demonstrated**
+- Measurable reduction in cycle time (feature ideation → production)
+- Increased release frequency without quality degradation
+- Faster response to customer feature requests
+
+✅ **Quality Standards Maintained**
+- Defect escape rate holds or improves vs. baseline
+- Customer support ticket volume does not increase
+- CSAT/NPS scores hold or improve
+
+✅ **Revenue Impact Validated**
+- Deal win rates improve in velocity-sensitive opportunities (Wave 2)
+- At-risk ARR retention improves (Waves 2 & 3)
+- Expansion revenue accelerates (faster feature delivery drives upsell)
+- Churn risk reduced (customer satisfaction with responsiveness)
+
+✅ **Team Operating Model Stabilized**
+- Engineers effectively orchestrating agents (not just prompting)
+- Quality gates automated and enforced
+- Documentation and support keeping pace with dev velocity
+
+---
+
+## Approved By
+
+- **Dana (CEO):** Wave 2 approval - 2026-04-02
+- **Marcus (Eng Manager):** Capacity allocation confirmed - 2026-04-02
+- **Sarah (PM):** Wave 3 recommendation (Week 12 start, 5 engineers) - 2026-04-02
+- **Morgan (CFO):** Revenue framework validated - 2026-04-02
+- **Taylor (Sales Eng):** Revenue data confirmed - 2026-04-02
+- **Jordan (Support Eng):** Customer pain analysis - 2026-04-02
+
+---
+
+## Next Actions
+
+1. ✅ **COMPLETE:** Wave 2 (API/Integration Platform) approved and staffed (4 engineers, Week 4 start)
+2. ✅ **COMPLETE:** Wave 3 (Data Analytics Platform) identified and recommended (5 engineers, Week 12 start)
+3. **PENDING:** Marcus to validate Wave 3 capacity model (5 engineers at Week 12)
+4. **PENDING:** Week 6 Go/No-Go checkpoint to validate ROI before Wave 4+ decisions
+
+
+---
+
+## Wave 3 Team Structure (Data Analytics Platform)
+
+**Team Size:** 5 engineers  
+**Timeline:** Starts Week 12  
+**Tech Lead:** TBD by Marcus (senior engineer with Data Analytics domain knowledge, enforces contract-first architecture)
+
+### Workstream Organization (2-2-1 Model)
+
+**Backend Analytics Workstream (2 engineers)**
+- Data pipelines, query optimization, analytics engine features
+- Draws from 127-feature request backlog (backend-focused requests)
+- Owns contract schemas for data layer integration
+- Clear integration points via Priya's reference architecture
+
+**Frontend/Reporting Workstream (2 engineers)**
+- Dashboards, visualizations, customer-facing analytics UI
+- Draws from 127-feature request backlog (frontend-focused requests)
+- Owns contract schemas for UI/API integration
+- Clear integration points via Priya's reference architecture
+
+**Quality/Testing Workstream (1 engineer)**
+- Integration testing across backend and frontend workstreams
+- Quality gate tuning specific to Data Analytics Platform
+- Observability and traceability instrumentation
+- Ensures contract compliance between workstreams
+
+### Risk Mitigation
+
+**Coordination Overhead Rollback Plan:**
+If coordination overhead materializes in Week 1-2 (symptoms: excessive merge conflicts, divergent agent patterns, quality gate conflicts), execute rollback:
+- Pull Quality/Testing engineer to Wave 4+ or other priority
+- Operate as 4-engineer team (2 backend, 2 frontend)
+- Absorb testing responsibility into backend/frontend pods
+- Cost impact: ~$4-5K wasted capacity vs. $15-20K if we wait until Week 6
+
+**Success Indicators (by Week 2):**
+- Engineers working independently within their workstreams
+- Quality gates passing without cross-team conflicts
+- Contract schemas enabling clean integration
+- Minimal merge conflicts or pattern divergence
+
+If success indicators aren't met by Week 2, trigger rollback immediately.
+
+### Staffing Requirements for Marcus
+
+**Tech Lead Profile:**
+- Senior engineer (5+ years experience)
+- Data Analytics Platform domain expertise
+- Strong architectural discipline (can enforce contract-first patterns)
+- Experience coordinating distributed teams or parallel workstreams
+
+**Team Composition (4 additional engineers):**
+- Mix of backend and frontend skills
+- Experience with agentic workflows (or fast learners from Wave 2)
+- Comfort with automated quality gates and CI/CD velocity
+
+Marcus to finalize specific engineer assignments closer to Week 12 start based on Wave 2 learnings and availability.

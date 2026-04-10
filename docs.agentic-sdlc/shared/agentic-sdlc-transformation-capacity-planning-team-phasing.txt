@@ -1,0 +1,256 @@
+# Agentic SDLC Transformation - Capacity Planning & Team Phasing
+
+## Executive Summary
+
+This document outlines the capacity model, team phasing strategy, and risk mitigation for transitioning to an agentic SDLC across our product portfolio. Based on industry transformation data and our RHOAI baseline analysis, we expect a **30-40% feature output reduction during weeks 1-6** of each wave, with velocity returning to baseline by week 8 and exceeding baseline by week 10-12.
+
+**Total transformation timeline:** 6-9 months for full portfolio coverage across 3-4 waves.
+
+---
+
+## Wave-by-Wave Phasing
+
+### Wave 1: Ansible Team (IN PROGRESS)
+- **Timeline:** Started, 3-month transformation window
+- **Team size:** ~6 engineers (estimated)
+- **Status:** Already committed per Dana's directive
+- **Milestone gate:** Week 4 validation checkpoint — measure actual velocity impact before Wave 2 starts
+
+### Wave 2: Platform API Team (APPROVED)
+- **Start date:** Week 4 (after Ansible milestone validation)
+- **Team size:** 4 engineers
+- **Duration:** 10-12 weeks to full velocity gains
+- **Revenue driver:** Custom integration timeline compression (6 weeks → 2 weeks) addresses $840K lost ARR + $1.2M at-risk ARR
+- **Dependencies:** Foundational infrastructure (quality gates, CI/CD redesign, reference architecture) ready by week 4
+
+### Wave 3: High-Volume Feature Request Product (TBD)
+- **Start date:** Week 10-12 (overlapping with Wave 2 velocity gains)
+- **Team size:** TBD (Sarah identifying product based on support ticket volume)
+- **Revenue driver:** Faster roadmap responsiveness, retention/expansion impact
+- **Criteria:** Product with highest customer feature request backlog and longest current delivery cycles
+
+### Wave 4+: Remaining Product Portfolio
+- **Timeline:** Phased rollout weeks 16-24
+- **Prioritization:** Market pressure, competitive threats, customer contract commitments
+- **Scale factor:** By Wave 4, we have 3 successful transformations as reference implementations — reduces ramp-up time
+
+---
+
+## Capacity Impact Model
+
+### Feature Output Reduction Curve (Per Wave)
+
+**Weeks 1-4:** 35-40% output reduction
+- Learning curve: engineers adapting to agent orchestration model
+- Process overhead: running dual SDLC (current work + transformation work)
+- Infrastructure setup: integrating with new quality gates, CI/CD patterns
+
+**Weeks 5-6:** 25-30% output reduction
+- Agents becoming productive, but still human-heavy oversight
+- Quality gate tuning based on early agent output patterns
+
+**Weeks 7-8:** Return to baseline (0% reduction)
+- Agent orchestration becomes routine
+- Quality gates automated and trusted
+- Teams shift from "learning" to "executing"
+
+**Weeks 9-12:** Velocity gains materialize (20-50% output INCREASE)
+- Agents handling routine implementation, humans focus on architecture/judgment
+- Faster iteration cycles due to automated quality gates
+- Increased commit volume handled by CI/CD at agent velocity
+
+### Capacity Cost (Engineering Days)
+
+Per 4-engineer team transforming:
+- **Feature output reduction:** ~100-120 eng-days of delayed capacity (weeks 1-6)
+- **Infrastructure partnership:** ~10 eng-days supporting Casey/Alex on quality gates and CI/CD integration
+- **Total capacity cost per wave:** ~110-130 eng-days
+
+**Foundational Infrastructure (One-time investment across all waves):**
+- 2 engineers full-time for 3 weeks = 30 eng-days
+- Casey (DevOps lead): ~15 eng-days on CI/CD redesign
+- Alex (Quality gates lead): ~15 eng-days on quality automation
+- Priya (Architecture): ~10 eng-days on reference architecture and patterns
+- **Total infrastructure investment:** ~70 eng-days (amortized across all waves)
+
+---
+
+## Staffing Allocation
+
+### Foundational Infrastructure Team (Weeks 1-3)
+**Role:** Build reusable quality gates, CI/CD patterns, reference architecture that all waves consume
+
+- **Casey (DevOps):** Lead — CI/CD pipeline redesign, build/signing automation, observability stack
+- **Alex (Senior Eng):** Lead — Quality gates, testing infrastructure, security automation
+- **Priya (Architect):** Lead — Reference architecture, design patterns, contract schemas
+- **Senior Engineer #1 (TBD):** Architecture partner — 3 weeks full-time supporting Priya
+- **Mid-level Engineer #1 (TBD):** Implementation partner — 3 weeks full-time supporting Casey/Alex
+
+### Wave 2: Platform API Team (Weeks 4-15)
+**4 engineers transforming:**
+- **API Team Lead (Senior):** Agent orchestration model, architecture oversight, human approval triggers
+- **Engineer #2 (Mid-senior):** Integration implementation, agent-generated code review
+- **Engineer #3 (Mid-level):** Testing and quality assurance, contract testing
+- **Engineer #4 (Mid-level):** Documentation and deployment automation
+
+**Support from infrastructure team:**
+- Casey: 5 days supporting CI/CD integration
+- Alex: 3 days on quality gate tuning for API-specific patterns
+- Priya: 2 days on architecture review for agent-generated API contracts
+
+---
+
+## Skills Assessment & Training Needs
+
+### Critical New Skills for Agentic SDLC
+1. **Agent orchestration:** Defining clear requirements, context, and constraints for agents
+2. **Quality oversight:** Reviewing agent-generated code for subtle bugs, edge cases, security issues
+3. **Automated gate tuning:** Adjusting static analysis thresholds, contract schemas based on agent output patterns
+4. **Prompt engineering (secondary):** While we're not "becoming prompt engineers," teams need baseline competency in framing agent tasks
+
+### Current Team Readiness (Estimated)
+- **Senior engineers (3-4):** High readiness — strong architecture/judgment skills, can oversee agent output effectively
+- **Mid-senior engineers (5-6):** Medium-high readiness — need 1-2 weeks of ramp-up on agent tools and quality oversight patterns
+- **Mid-level engineers (8-10):** Medium readiness — need 2-3 weeks of training on orchestration model and human checkpoint triggers
+- **Junior engineers (2-3):** Lower readiness — may struggle with "oversee agents" model vs. "write code directly" muscle memory. Pair with senior engineers during transformation.
+
+### Training Plan
+- **Week 0 (pre-transformation):** 2-day workshop on agent orchestration fundamentals, quality gate patterns, reference architecture walkthrough
+- **Weeks 1-2:** Embedded coaching — Priya/Alex available for daily questions as teams integrate with new infrastructure
+- **Ongoing:** Weekly knowledge-sharing across waves — Ansible team shares lessons learned with Platform API team, etc.
+
+---
+
+## Risk Mitigation & Contingency Planning
+
+### Risk 1: Velocity Gains Don't Materialize on Schedule
+**Trigger:** Week 8-10 of a wave, still seeing output reduction vs. baseline
+
+**Mitigation:**
+- Investigate root cause: Is it agent tooling issues? Quality gate friction? Skill gaps?
+- Adjust timeline expectations: Extend to 14-16 weeks if needed
+- Reassess wave prioritization: Pause Wave 3 start if Wave 2 isn't showing gains
+- Escalate to Dana if fundamental model issues emerge
+
+### Risk 2: Quality Degradation (Defect Escape Rate Increases)
+**Trigger:** Customer-reported defects increase >20% during transformation
+
+**Mitigation:**
+- Tighten quality gates immediately — increase mutation testing thresholds, add manual review checkpoints
+- Slow agent commit velocity until quality stabilizes
+- Alex/Casey: Root cause analysis on which gate failed to catch the defect
+- Communicate proactively with customers on fixes and preventive measures
+
+### Risk 3: Dual SDLC Overhead Exceeds Capacity Model
+**Trigger:** Feature output reduction exceeds 50% or extends beyond week 6
+
+**Mitigation:**
+- Temporarily pause new feature commitments for transforming team — focus 100% on transformation work
+- Shift customer commitments to non-transforming teams if possible
+- Extend transformation timeline to reduce parallel workload
+- Morgan: Quantify revenue impact and adjust ROI model
+
+### Risk 4: Foundational Infrastructure Not Ready by Wave 2 Start (Week 4)
+**Trigger:** Quality gates, CI/CD redesign, or reference architecture incomplete by week 4
+
+**Mitigation:**
+- Delay Wave 2 start by 1-2 weeks (acceptable delay given 12-week total timeline)
+- Add temporary engineering capacity to infrastructure team if needed
+- Use Ansible team as alpha testers for incomplete infrastructure — iterate based on their feedback
+
+### Risk 5: Key Engineer Attrition During Transformation
+**Trigger:** Senior engineer or team lead leaves during active transformation wave
+
+**Mitigation:**
+- Cross-train at least 2 engineers per team on agent orchestration and quality oversight
+- Document all agent patterns, quality gate configs, and orchestration approaches (not just in heads)
+- Backfill immediately from non-transforming teams if critical role becomes vacant
+- Priya/Alex: Provide temporary coverage for architecture/quality oversight if needed
+
+---
+
+## Success Metrics & Checkpoints
+
+### Wave 1 (Ansible) Milestone Gate — Week 4
+**Go/No-Go decision for Wave 2 start based on:**
+- Ansible team has integrated with quality gates, CI/CD pipeline successfully
+- At least 50% of commits are agent-generated (proving orchestration model works)
+- Defect escape rate holding steady or improving vs. baseline
+- Team feedback: "painful but working" or better (not "fundamentally broken")
+
+**If NO-GO:** Delay Wave 2, fix Ansible issues, re-gate at week 6.
+
+### Per-Wave Success Criteria (Weeks 10-12)
+- **Velocity:** Cycle time reduced by 30%+ vs. baseline, or release frequency increased (quarterly → monthly)
+- **Quality:** Defect escape rate flat or improved, customer satisfaction (CSAT) holding or improving
+- **Capacity:** Engineering team reports they're spending <20% time on agent oversight (vs. 80%+ in weeks 1-4)
+- **Revenue:** For Platform API team specifically, integration delivery time trending toward 2-week target
+
+### Overall Transformation Success (6-9 months)
+- 3+ product teams successfully transitioned and showing sustained velocity gains
+- $1M+ revenue impact validated (deal wins, retention, expansion)
+- Defect escape rate and customer satisfaction metrics stable or improved across portfolio
+- Engineering morale: Teams report agentic model as "better way to work" not "compliance burden"
+
+---
+
+## Resource Constraints & Trade-offs
+
+### What We're NOT Doing During Transformation
+- **Pausing new product launches:** Transformation teams focus on existing products, not new 0→1 builds
+- **Deferring major architectural rewrites:** Transformation is hard enough without simultaneous architecture overhauls
+- **Limiting scope expansion:** Customer feature requests scoped conservatively during transformation to avoid overcommitment
+
+### Investment Priorities (Where We're Spending)
+- Foundational infrastructure (quality gates, CI/CD, reference architecture): 70 eng-days upfront
+- Per-wave transformation capacity tax: 110-130 eng-days per 4-engineer team
+- Training and coaching: ~10 eng-days per wave for Priya/Alex embedded support
+
+### What We Protect
+- **Customer commitments already in flight:** Transforming teams honor existing roadmap promises, even if it slows transformation
+- **On-call and support rotation:** No reduction in on-call coverage during transformation — stability and customer support remain paramount
+- **Security and compliance standards:** No shortcuts on security review or compliance gates, even if it delays agent-driven velocity
+
+---
+
+## Execution Timeline (Next 90 Days)
+
+**Now - Week 4:**
+- Foundational infrastructure build (Casey, Alex, Priya + 2 engineers)
+- Ansible Wave 1 continues (already in flight)
+- Sarah identifies Wave 3 product based on feature request volume data
+
+**Week 4:**
+- Ansible milestone gate: Go/No-Go decision for Wave 2
+- If GO: Platform API team (4 engineers) starts transformation
+- Infrastructure team transitions to support mode (Alex/Casey available for tuning)
+
+**Weeks 5-8:**
+- Platform API team ramps up (expect 30-40% output reduction)
+- Ansible team velocity returning to baseline
+- Monitor quality metrics closely across both teams
+
+**Weeks 9-12:**
+- Platform API team velocity gains should materialize
+- Measure integration delivery time trending toward 2-week target
+- Wave 3 team identified and prepared to start (week 10-12)
+
+**Week 12+:**
+- Wave 3 launches if Wave 2 showing success
+- Begin planning Wave 4+ portfolio rollout
+- Collect ROI data for Morgan's financial tracking model
+
+---
+
+## Open Questions & Decisions Needed
+
+1. **Wave 3 product identification:** Sarah to confirm based on support ticket data and roadmap pressure (target: within 24 hours)
+2. **Infrastructure team staffing:** Marcus to assign 2 specific engineers (1 senior, 1 mid-level) to support Casey/Alex/Priya for weeks 1-3 (target: within 48 hours)
+3. **Training workshop timing:** When do we run the 2-day pre-transformation workshop for Platform API team? (Target: week 2-3, before their week 4 start)
+4. **Ansible milestone definition:** What are the specific numeric targets for the week 4 go/no-go gate? (Defer to Ansible team lead + Sarah/Marcus)
+
+---
+
+**Document Owner:** Marcus (Eng Manager)  
+**Last Updated:** 2026-04-02  
+**Review Cadence:** Weekly during active transformation waves

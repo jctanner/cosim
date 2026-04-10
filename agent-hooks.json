@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "model-end": [
+      {
+        "command": "curl -s -X POST http://${MCP_SERVER_URL}/api/telemetry/model-end -H 'Content-Type: application/json' -H 'X-Agent-Key: ${AGENT_PERSONA_KEY}' -d @-",
+        "timeout": 5000
+      }
+    ],
+    "tool-start": [
+      {
+        "command": "curl -s -X POST http://${MCP_SERVER_URL}/api/telemetry/tool-start -H 'Content-Type: application/json' -H 'X-Agent-Key: ${AGENT_PERSONA_KEY}' -d @-",
+        "timeout": 5000
+      }
+    ]
+  }
+}

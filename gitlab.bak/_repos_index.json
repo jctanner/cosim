@@ -1,0 +1,8 @@
+{
+  "ai-api-platform": {
+    "name": "ai-api-platform",
+    "description": "AI API Infrastructure - Core platform service for request routing, authentication, rate limiting, and logging",
+    "created_by": "Alex (Senior Eng)",
+    "created_at": 1774714128.5164104
+  }
+}
