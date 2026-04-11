@@ -16,6 +16,7 @@ from lib.tickets import TICKETS_DIR, init_tickets_storage, load_tickets_index, s
 from lib.session import (
     save_session, load_session, new_session, list_sessions,
     get_current_session, set_scenario, get_memberships_from_instance,
+    delete_session, rename_session,
 )
 from lib.scenario_loader import list_scenarios
 
@@ -1672,8 +1673,32 @@ WEB_UI = """<!DOCTYPE html>
   <!-- Advanced tab -->
   <div id="advanced-pane" class="tab-pane">
     <div id="advanced-main" style="flex:1;padding:20px;overflow-y:auto">
-      <div style="max-width:600px">
+      <div style="max-width:800px">
         <h3 style="color:var(--text);margin-bottom:16px">Advanced Actions</h3>
+
+        <!-- Session Manager -->
+        <div style="margin-bottom:32px">
+          <div style="font-size:12px;font-weight:600;color:var(--text);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">Session Manager</div>
+          <p style="font-size:12px;color:var(--text-dim);margin-bottom:12px">Manage saved sessions — load, rename, or delete.</p>
+          <div id="session-manager-table-wrap" style="overflow-x:auto">
+            <table id="session-manager-table" style="width:100%;border-collapse:collapse;font-size:13px">
+              <thead>
+                <tr style="border-bottom:1px solid var(--border-dark);text-align:left">
+                  <th data-sm-sort="name" style="padding:8px 10px;color:var(--text-dim);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;cursor:pointer;user-select:none">Name <span class="sm-sort-arrow"></span></th>
+                  <th data-sm-sort="scenario" style="padding:8px 10px;color:var(--text-dim);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;cursor:pointer;user-select:none">Scenario <span class="sm-sort-arrow"></span></th>
+                  <th data-sm-sort="created_at" style="padding:8px 10px;color:var(--text-dim);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;cursor:pointer;user-select:none">Created <span class="sm-sort-arrow"></span></th>
+                  <th data-sm-sort="saved_at" style="padding:8px 10px;color:var(--text-dim);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;cursor:pointer;user-select:none">Last Saved <span class="sm-sort-arrow"></span></th>
+                  <th style="padding:8px 10px;color:var(--text-dim);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;text-align:right">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="session-manager-body">
+                <tr><td colspan="5" style="padding:16px 10px;color:var(--text-dim);text-align:center">Loading...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Danger Zone -->
         <div style="margin-bottom:24px">
           <div style="font-size:12px;font-weight:600;color:var(--accent);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">Danger Zone</div>
           <p style="font-size:12px;color:var(--text-dim);margin-bottom:12px">These actions are destructive and cannot be undone. Save your session first.</p>
@@ -1772,12 +1797,18 @@ WEB_UI = """<!DOCTYPE html>
 
 <!-- Save Session Modal -->
 <div class="modal-overlay" id="save-session-modal">
-  <div class="modal">
+  <div class="modal" style="max-width:480px">
     <h2>Save Session</h2>
+    <div class="modal-field" id="save-session-existing-wrap">
+      <label>Existing saves</label>
+      <div id="save-session-list" style="max-height:180px;overflow-y:auto;border:1px solid var(--border-dark);border-radius:6px;background:var(--bg-darker,var(--bg))">
+        <div style="padding:12px;color:var(--text-dim);text-align:center;font-size:12px">Loading...</div>
+      </div>
+    </div>
     <div class="modal-field">
-      <label>Session Name (optional)</label>
+      <label>Save as</label>
       <input id="save-session-name" type="text" placeholder="e.g. before-demo" autocomplete="off" />
-      <div class="field-hint">Leave blank to auto-generate from scenario + date</div>
+      <div class="field-hint">Leave blank to auto-generate. Click an existing save to branch from it.</div>
     </div>
     <div class="modal-status" id="save-session-status"></div>
     <div class="modal-actions">
@@ -1789,13 +1820,26 @@ WEB_UI = """<!DOCTYPE html>
 
 <!-- Load Session Modal -->
 <div class="modal-overlay" id="load-session-modal">
-  <div class="modal">
+  <div class="modal" style="max-width:600px">
     <h2>Load Session</h2>
     <div class="modal-field">
       <label>Saved Sessions</label>
-      <select id="load-session-select" size="6" style="height:auto"></select>
+      <div style="max-height:280px;overflow-y:auto;border:1px solid var(--border-dark);border-radius:6px">
+        <table id="load-session-table" style="width:100%;border-collapse:collapse;font-size:13px">
+          <thead>
+            <tr style="border-bottom:1px solid var(--border-dark);text-align:left;position:sticky;top:0;background:var(--bg-surface,var(--bg))">
+              <th data-lm-sort="name" style="padding:6px 10px;color:var(--text-dim);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;cursor:pointer;user-select:none">Name <span class="lm-sort-arrow"></span></th>
+              <th data-lm-sort="scenario" style="padding:6px 10px;color:var(--text-dim);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;cursor:pointer;user-select:none">Scenario <span class="lm-sort-arrow"></span></th>
+              <th data-lm-sort="created_at" style="padding:6px 10px;color:var(--text-dim);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;cursor:pointer;user-select:none">Created <span class="lm-sort-arrow"></span></th>
+              <th data-lm-sort="saved_at" style="padding:6px 10px;color:var(--text-dim);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;cursor:pointer;user-select:none">Last Saved <span class="lm-sort-arrow"></span></th>
+            </tr>
+          </thead>
+          <tbody id="load-session-body">
+            <tr><td colspan="4" style="padding:16px 10px;color:var(--text-dim);text-align:center">Loading...</td></tr>
+          </tbody>
+        </table>
+      </div>
     </div>
-    <div id="load-session-detail" style="font-size:12px;color:var(--text-dim);min-height:30px;margin-bottom:8px"></div>
     <div class="modal-status" id="load-session-status"></div>
     <div class="modal-actions">
       <button class="modal-btn-cancel" id="load-session-cancel">Cancel</button>
@@ -2174,6 +2218,7 @@ document.querySelectorAll('.header-tab').forEach(tab => {
     if (target === 'blog') loadBlogPosts();
     if (target === 'recap') renderRecapList();
     if (target === 'usage') loadUsage();
+    if (target === 'advanced') loadSessionManagerTable();
   });
 });
 
@@ -3891,6 +3936,210 @@ document.getElementById('clear-all-btn').addEventListener('click', async () => {
   }
 });
 
+// -- Session Manager (Advanced tab) --
+
+function _fmtSessionDate(ts) {
+  if (!ts) return '—';
+  const d = new Date(ts * 1000);
+  const mon = d.toLocaleString('en-US', {month: 'short'});
+  const day = d.getDate();
+  const h = d.getHours();
+  const m = String(d.getMinutes()).padStart(2, '0');
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  const h12 = h % 12 || 12;
+  return `${mon} ${day}, ${h12}:${m} ${ampm}`;
+}
+
+let _smSessions = [];
+let _smSortCol = 'saved_at';
+let _smSortAsc = false;
+
+function _smUpdateSortArrows() {
+  document.querySelectorAll('#session-manager-table th[data-sm-sort]').forEach(th => {
+    const arrow = th.querySelector('.sm-sort-arrow');
+    if (th.dataset.smSort === _smSortCol) {
+      arrow.textContent = _smSortAsc ? ' \\u25B2' : ' \\u25BC';
+      th.style.color = 'var(--text)';
+    } else {
+      arrow.textContent = '';
+      th.style.color = 'var(--text-dim)';
+    }
+  });
+}
+
+function _smRenderRows() {
+  const tbody = document.getElementById('session-manager-body');
+  if (_smSessions.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="5" style="padding:16px 10px;color:var(--text-dim);text-align:center">No saved sessions</td></tr>';
+    return;
+  }
+  const sorted = [..._smSessions];
+  sorted.sort((a, b) => {
+    let va, vb;
+    if (_smSortCol === 'name') {
+      va = (a.name || a.instance_dir).toLowerCase();
+      vb = (b.name || b.instance_dir).toLowerCase();
+    } else if (_smSortCol === 'scenario') {
+      va = (a.scenario || '').toLowerCase();
+      vb = (b.scenario || '').toLowerCase();
+    } else {
+      va = a[_smSortCol] || 0;
+      vb = b[_smSortCol] || 0;
+    }
+    if (va < vb) return _smSortAsc ? -1 : 1;
+    if (va > vb) return _smSortAsc ? 1 : -1;
+    return 0;
+  });
+  tbody.innerHTML = '';
+  sorted.forEach(s => {
+    const tr = document.createElement('tr');
+    tr.style.borderBottom = '1px solid var(--border-dark)';
+    tr.dataset.instance = s.instance_dir;
+    const nameTd = document.createElement('td');
+    nameTd.style.cssText = 'padding:8px 10px;color:var(--text)';
+    nameTd.innerHTML = '<span class="sm-name-display">' + escapeHtml(s.name || s.instance_dir) + '</span>'
+      + '<input class="sm-name-input" type="text" style="display:none;width:100%;background:var(--input-bg);color:var(--text);border:1px solid var(--accent);padding:4px 6px;border-radius:4px;font-size:13px" />';
+    const scenarioTd = document.createElement('td');
+    scenarioTd.style.cssText = 'padding:8px 10px;color:var(--text-dim)';
+    scenarioTd.textContent = s.scenario || '—';
+    const createdTd = document.createElement('td');
+    createdTd.style.cssText = 'padding:8px 10px;color:var(--text-dim);white-space:nowrap';
+    createdTd.textContent = _fmtSessionDate(s.created_at);
+    const savedTd = document.createElement('td');
+    savedTd.style.cssText = 'padding:8px 10px;color:var(--text-dim);white-space:nowrap';
+    savedTd.textContent = _fmtSessionDate(s.saved_at);
+    const actionsTd = document.createElement('td');
+    actionsTd.style.cssText = 'padding:8px 10px;text-align:right;white-space:nowrap';
+    const loadBtn = document.createElement('button');
+    loadBtn.className = 'session-btn';
+    loadBtn.textContent = 'Load';
+    loadBtn.style.cssText = 'font-size:11px;padding:3px 10px;margin-left:4px';
+    loadBtn.addEventListener('click', () => _smLoad(s.instance_dir));
+    const renameBtn = document.createElement('button');
+    renameBtn.className = 'session-btn';
+    renameBtn.textContent = 'Rename';
+    renameBtn.style.cssText = 'font-size:11px;padding:3px 10px;margin-left:4px';
+    renameBtn.addEventListener('click', () => _smStartRename(tr, s));
+    const deleteBtn = document.createElement('button');
+    deleteBtn.className = 'session-btn';
+    deleteBtn.textContent = 'Delete';
+    deleteBtn.style.cssText = 'font-size:11px;padding:3px 10px;margin-left:4px;border-color:var(--accent);color:var(--accent)';
+    deleteBtn.addEventListener('click', () => _smDelete(s.instance_dir, s.name || s.instance_dir));
+    actionsTd.appendChild(loadBtn);
+    actionsTd.appendChild(renameBtn);
+    actionsTd.appendChild(deleteBtn);
+    tr.appendChild(nameTd);
+    tr.appendChild(scenarioTd);
+    tr.appendChild(createdTd);
+    tr.appendChild(savedTd);
+    tr.appendChild(actionsTd);
+    tbody.appendChild(tr);
+  });
+  _smUpdateSortArrows();
+}
+
+document.querySelectorAll('#session-manager-table th[data-sm-sort]').forEach(th => {
+  th.addEventListener('click', () => {
+    const col = th.dataset.smSort;
+    if (_smSortCol === col) {
+      _smSortAsc = !_smSortAsc;
+    } else {
+      _smSortCol = col;
+      _smSortAsc = (col === 'name' || col === 'scenario');
+    }
+    _smRenderRows();
+  });
+});
+
+async function loadSessionManagerTable() {
+  const tbody = document.getElementById('session-manager-body');
+  tbody.innerHTML = '<tr><td colspan="5" style="padding:16px 10px;color:var(--text-dim);text-align:center">Loading...</td></tr>';
+  try {
+    const resp = await fetch('/api/session/list');
+    _smSessions = await resp.json();
+    _smRenderRows();
+  } catch (e) {
+    tbody.innerHTML = '<tr><td colspan="5" style="padding:16px 10px;color:var(--accent);text-align:center">Failed to load sessions</td></tr>';
+  }
+}
+
+async function _smLoad(instance) {
+  showLoading('Loading session...');
+  try {
+    const resp = await fetch('/api/session/load', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({instance}),
+    });
+    if (resp.ok) {
+      await reloadAllState();
+      showNotice('Session loaded.');
+    } else {
+      const err = await resp.json();
+      hideLoading();
+      showNotice('Error: ' + (err.error || 'unknown'));
+    }
+  } finally {
+    hideLoading();
+  }
+}
+
+function _smStartRename(tr, session) {
+  const display = tr.querySelector('.sm-name-display');
+  const input = tr.querySelector('.sm-name-input');
+  display.style.display = 'none';
+  input.style.display = '';
+  input.value = session.name || session.instance_dir;
+  input.focus();
+  input.select();
+  const finish = async () => {
+    input.removeEventListener('blur', finish);
+    input.removeEventListener('keydown', onKey);
+    const newName = input.value.trim();
+    if (!newName || newName === (session.name || session.instance_dir)) {
+      display.style.display = '';
+      input.style.display = 'none';
+      return;
+    }
+    try {
+      const resp = await fetch('/api/session/' + encodeURIComponent(session.instance_dir), {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({name: newName}),
+      });
+      if (resp.ok) {
+        session.name = newName;
+        display.textContent = newName;
+      }
+    } catch(e) {}
+    display.style.display = '';
+    input.style.display = 'none';
+  };
+  const onKey = (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); finish(); }
+    if (e.key === 'Escape') { input.value = session.name || session.instance_dir; finish(); }
+  };
+  input.addEventListener('blur', finish);
+  input.addEventListener('keydown', onKey);
+}
+
+async function _smDelete(instance, displayName) {
+  if (!confirm('Delete session "' + displayName + '"? This cannot be undone.')) return;
+  try {
+    const resp = await fetch('/api/session/' + encodeURIComponent(instance), {method: 'DELETE'});
+    if (resp.ok) {
+      _smSessions = _smSessions.filter(s => s.instance_dir !== instance);
+      _smRenderRows();
+      showNotice('Session deleted.');
+    } else {
+      const err = await resp.json();
+      showNotice('Error: ' + (err.error || 'unknown'));
+    }
+  } catch(e) {
+    showNotice('Delete failed.');
+  }
+}
+
 // -- Recap tab --
 
 const STYLE_LABELS = {
@@ -4771,10 +5020,58 @@ document.getElementById('new-session-confirm').addEventListener('click', async (
 
 // -- Save Session Modal --
 
-document.getElementById('session-save-btn').addEventListener('click', () => {
+async function _populateSaveSessionList() {
+  const listEl = document.getElementById('save-session-list');
+  listEl.innerHTML = '<div style="padding:12px;color:var(--text-dim);text-align:center;font-size:12px">Loading...</div>';
+  try {
+    const resp = await fetch('/api/session/list');
+    const sessions = await resp.json();
+    if (sessions.length === 0) {
+      listEl.innerHTML = '<div style="padding:12px;color:var(--text-dim);text-align:center;font-size:12px">No existing saves</div>';
+      return;
+    }
+    sessions.sort((a, b) => (b.saved_at || 0) - (a.saved_at || 0));
+    listEl.innerHTML = '';
+    sessions.forEach(s => {
+      const row = document.createElement('div');
+      row.style.cssText = 'display:flex;align-items:center;padding:8px 12px;cursor:pointer;border-bottom:1px solid var(--border-dark)';
+      row.addEventListener('mouseenter', () => row.style.background = 'var(--bg-hover, rgba(255,255,255,0.04))');
+      row.addEventListener('mouseleave', () => row.style.background = '');
+      const nameSpan = document.createElement('span');
+      nameSpan.style.cssText = 'flex:1;color:var(--text);font-size:13px';
+      nameSpan.textContent = s.name || s.instance_dir;
+      const dateSpan = document.createElement('span');
+      dateSpan.style.cssText = 'color:var(--text-dim);font-size:11px;margin-left:12px;white-space:nowrap';
+      dateSpan.textContent = _fmtSessionDate(s.saved_at);
+      row.appendChild(nameSpan);
+      row.appendChild(dateSpan);
+      row.addEventListener('click', () => {
+        // Pre-fill with name + fresh timestamp for easy branching
+        const now = new Date();
+        const ts = now.getFullYear()
+          + String(now.getMonth() + 1).padStart(2, '0')
+          + String(now.getDate()).padStart(2, '0')
+          + '-' + String(now.getHours()).padStart(2, '0')
+          + String(now.getMinutes()).padStart(2, '0');
+        const baseName = (s.name || s.instance_dir).replace(/--?[0-9]{4}-?[0-9]{2}-?[0-9]{2}-?[0-9]{4}$/, '').replace(/-[0-9]{8}-[0-9]{4}$/, '');
+        document.getElementById('save-session-name').value = baseName + '-' + ts;
+        document.getElementById('save-session-name').focus();
+        // Highlight selected row
+        listEl.querySelectorAll('div').forEach(r => r.style.borderLeft = '');
+        row.style.borderLeft = '3px solid var(--accent)';
+      });
+      listEl.appendChild(row);
+    });
+  } catch (e) {
+    listEl.innerHTML = '<div style="padding:12px;color:var(--accent);text-align:center;font-size:12px">Failed to load sessions</div>';
+  }
+}
+
+document.getElementById('session-save-btn').addEventListener('click', async () => {
   document.getElementById('save-session-name').value = '';
   document.getElementById('save-session-status').textContent = '';
   openModal('save-session-modal');
+  await _populateSaveSessionList();
   document.getElementById('save-session-name').focus();
 });
 
@@ -4811,50 +5108,112 @@ document.getElementById('save-session-confirm').addEventListener('click', async 
 
 // -- Load Session Modal --
 
-let _sessionsCache = [];
+let _lmSessions = [];
+let _lmSortCol = 'saved_at';
+let _lmSortAsc = false;
+let _lmSelected = null;
 
-async function refreshSessionsList() {
-  const sel = document.getElementById('load-session-select');
-  sel.innerHTML = '';
-  const resp = await fetch('/api/session/list');
-  _sessionsCache = await resp.json();
-  if (_sessionsCache.length === 0) {
-    const opt = document.createElement('option');
-    opt.disabled = true;
-    opt.textContent = 'No saved sessions';
-    sel.appendChild(opt);
-    document.getElementById('load-session-confirm').disabled = true;
-    return;
-  }
-  _sessionsCache.forEach(s => {
-    const opt = document.createElement('option');
-    opt.value = s.instance_dir;
-    const date = new Date((s.saved_at || s.created_at) * 1000).toLocaleString();
-    opt.textContent = (s.name || s.instance_dir);
-    opt.dataset.date = date;
-    opt.dataset.scenario = s.scenario || '';
-    sel.appendChild(opt);
+function _lmUpdateSortArrows() {
+  document.querySelectorAll('#load-session-table th[data-lm-sort]').forEach(th => {
+    const arrow = th.querySelector('.lm-sort-arrow');
+    if (th.dataset.lmSort === _lmSortCol) {
+      arrow.textContent = _lmSortAsc ? ' \\u25B2' : ' \\u25BC';
+      th.style.color = 'var(--text)';
+    } else {
+      arrow.textContent = '';
+      th.style.color = 'var(--text-dim)';
+    }
   });
 }
 
-// Modal's session list selection
-document.getElementById('load-session-select').addEventListener('change', (e) => {
-  const val = e.target.value;
-  const s = _sessionsCache.find(x => x.instance_dir === val);
-  const detail = document.getElementById('load-session-detail');
-  if (s) {
-    const date = new Date((s.saved_at || s.created_at) * 1000).toLocaleString();
-    detail.textContent = 'Scenario: ' + (s.scenario || '?') + '  |  Saved: ' + date;
-    document.getElementById('load-session-confirm').disabled = false;
-  } else {
-    detail.textContent = '';
+function _lmRenderRows() {
+  const tbody = document.getElementById('load-session-body');
+  if (_lmSessions.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="4" style="padding:16px 10px;color:var(--text-dim);text-align:center">No saved sessions</td></tr>';
     document.getElementById('load-session-confirm').disabled = true;
+    return;
   }
+  const sorted = [..._lmSessions];
+  sorted.sort((a, b) => {
+    let va, vb;
+    if (_lmSortCol === 'name') {
+      va = (a.name || a.instance_dir).toLowerCase();
+      vb = (b.name || b.instance_dir).toLowerCase();
+    } else if (_lmSortCol === 'scenario') {
+      va = (a.scenario || '').toLowerCase();
+      vb = (b.scenario || '').toLowerCase();
+    } else {
+      va = a[_lmSortCol] || 0;
+      vb = b[_lmSortCol] || 0;
+    }
+    if (va < vb) return _lmSortAsc ? -1 : 1;
+    if (va > vb) return _lmSortAsc ? 1 : -1;
+    return 0;
+  });
+  tbody.innerHTML = '';
+  sorted.forEach(s => {
+    const tr = document.createElement('tr');
+    tr.style.cssText = 'border-bottom:1px solid var(--border-dark);cursor:pointer';
+    if (_lmSelected === s.instance_dir) {
+      tr.style.background = 'rgba(231,76,60,0.12)';
+    }
+    tr.addEventListener('mouseenter', () => { if (_lmSelected !== s.instance_dir) tr.style.background = 'var(--bg-hover, rgba(255,255,255,0.04))'; });
+    tr.addEventListener('mouseleave', () => { if (_lmSelected !== s.instance_dir) tr.style.background = ''; });
+    tr.addEventListener('click', () => {
+      _lmSelected = s.instance_dir;
+      document.getElementById('load-session-confirm').disabled = false;
+      _lmRenderRows();
+    });
+    tr.addEventListener('dblclick', () => {
+      _lmSelected = s.instance_dir;
+      document.getElementById('load-session-confirm').click();
+    });
+    const nameTd = document.createElement('td');
+    nameTd.style.cssText = 'padding:7px 10px;color:var(--text)';
+    nameTd.textContent = s.name || s.instance_dir;
+    const scenarioTd = document.createElement('td');
+    scenarioTd.style.cssText = 'padding:7px 10px;color:var(--text-dim)';
+    scenarioTd.textContent = s.scenario || '—';
+    const createdTd = document.createElement('td');
+    createdTd.style.cssText = 'padding:7px 10px;color:var(--text-dim);white-space:nowrap';
+    createdTd.textContent = _fmtSessionDate(s.created_at);
+    const savedTd = document.createElement('td');
+    savedTd.style.cssText = 'padding:7px 10px;color:var(--text-dim);white-space:nowrap';
+    savedTd.textContent = _fmtSessionDate(s.saved_at);
+    tr.appendChild(nameTd);
+    tr.appendChild(scenarioTd);
+    tr.appendChild(createdTd);
+    tr.appendChild(savedTd);
+    tbody.appendChild(tr);
+  });
+  _lmUpdateSortArrows();
+}
+
+document.querySelectorAll('#load-session-table th[data-lm-sort]').forEach(th => {
+  th.addEventListener('click', () => {
+    const col = th.dataset.lmSort;
+    if (_lmSortCol === col) {
+      _lmSortAsc = !_lmSortAsc;
+    } else {
+      _lmSortCol = col;
+      _lmSortAsc = (col === 'name' || col === 'scenario');
+    }
+    _lmRenderRows();
+  });
 });
 
-document.getElementById('load-session-select').addEventListener('dblclick', () => {
-  document.getElementById('load-session-confirm').click();
-});
+async function refreshSessionsList() {
+  const tbody = document.getElementById('load-session-body');
+  tbody.innerHTML = '<tr><td colspan="4" style="padding:16px 10px;color:var(--text-dim);text-align:center">Loading...</td></tr>';
+  try {
+    const resp = await fetch('/api/session/list');
+    _lmSessions = await resp.json();
+    _lmSelected = null;
+    _lmRenderRows();
+  } catch (e) {
+    tbody.innerHTML = '<tr><td colspan="4" style="padding:16px 10px;color:var(--accent);text-align:center">Failed to load sessions</td></tr>';
+  }
+}
 
 // Replace header load dropdown with a button
 {
@@ -4869,7 +5228,6 @@ document.getElementById('load-session-select').addEventListener('dblclick', () =
 
   loadBtn.addEventListener('click', async () => {
     document.getElementById('load-session-status').textContent = '';
-    document.getElementById('load-session-detail').textContent = '';
     document.getElementById('load-session-confirm').disabled = true;
     await refreshSessionsList();
     openModal('load-session-modal');
@@ -4879,9 +5237,7 @@ document.getElementById('load-session-select').addEventListener('dblclick', () =
 document.getElementById('load-session-cancel').addEventListener('click', () => closeModal('load-session-modal'));
 
 document.getElementById('load-session-confirm').addEventListener('click', async () => {
-  const sel = document.getElementById('load-session-select');
-  const instance = sel.value;
-  if (!instance) return;
+  if (!_lmSelected) return;
   const status = document.getElementById('load-session-status');
   status.textContent = 'Loading session...';
   document.getElementById('load-session-confirm').disabled = true;
@@ -4891,7 +5247,7 @@ document.getElementById('load-session-confirm').addEventListener('click', async 
     const resp = await fetch('/api/session/load', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({instance}),
+      body: JSON.stringify({instance: _lmSelected}),
     });
     if (resp.ok) {
       await reloadAllState();
@@ -6676,6 +7032,32 @@ Write a compelling recap of this simulation session in the requested style. Keep
                 _orchestrator_commands.append({"action": "restart", "scenario": scenario or get_current_session().get("scenario")})
             meta["restarting_agents"] = True
             return jsonify(meta)
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/session/<instance>", methods=["DELETE"])
+    def session_delete(instance):
+        try:
+            delete_session(instance)
+            return jsonify({"ok": True})
+        except FileNotFoundError as e:
+            return jsonify({"error": str(e)}), 404
+        except RuntimeError as e:
+            return jsonify({"error": str(e)}), 400
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/session/<instance>", methods=["PUT"])
+    def session_rename(instance):
+        data = request.get_json(force=True)
+        new_name = data.get("name")
+        if not new_name:
+            return jsonify({"error": "name required"}), 400
+        try:
+            meta = rename_session(instance, new_name)
+            return jsonify(meta)
+        except FileNotFoundError as e:
+            return jsonify({"error": str(e)}), 404
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
