@@ -1,43 +1,142 @@
 # Multi-Agent Organization
 
-A simulated software company where 11 AI personas collaborate through a Slack-like chat system. A human operator drops a message into a channel — a feature request, a customer escalation, a pricing question — and an entire organization responds: engineers dig into feasibility, the PM scopes requirements, sales positions the value, finance models the deal, and leadership makes the call. All in real time, all visible in a web UI.
+A simulated software company where AI personas collaborate through a Slack-like chat system. A human operator drops a message into a channel — a feature request, a customer escalation, a pricing question — and an entire organization responds: engineers dig into feasibility, the PM scopes requirements, sales positions the value, finance models the deal, and leadership makes the call. All in real time, all visible in a web UI.
 
-Built on the Claude Agent SDK with persistent sessions per persona, a Flask chat server with SSE, a shared document workspace, a mock GitLab for code hosting, and a ticket tracking system.
+Each agent runs as an autonomous Claude Code instance inside a podman container, interacting with the simulation exclusively through MCP tools. Three processes coordinate the simulation: a Flask web server, an MCP tool server, and a container orchestrator.
 
-## What It Looks Like
+## Quick Start
 
-```
-Terminal 1 (server):
-$ python main.py server
-Chat log cleared on startup
-Channels initialized: ['#devops', '#engineering', '#general', ...]
-GitLab storage ready: var/gitlab/  (0 existing repos)
+**Requirements:**
+- Python 3.13+
+- podman
+- Node.js/npm (for building the agent image)
+- Google Cloud credentials for Vertex AI
 
-Terminal 2 (agents):
-$ python main.py chat
-Orchestrator starting
-  Personas: Sarah (PM), Marcus (Eng Manager), Priya (Architect), ...
-  Model: sonnet
-Connected to chat server
+### 1. Install dependencies
 
-=== Wave 1/5 — triggered: ['#general'] ===
---- Tier 1: Alex (Senior Eng), Casey (DevOps), Jordan (Support Eng), Taylor (Sales Eng) ---
-  Alex (Senior Eng): posted to #general (847 chars)
-  Casey (DevOps): posted to #general (612 chars)
-  Jordan (Support Eng): PASS
-  Taylor (Sales Eng): posted to #sales (1204 chars)
---- Tier 2: Marcus (Eng Manager), Priya (Architect), Sarah (PM) ---
-  Marcus (Eng Manager): posted to #general (523 chars)
-  ...
+```bash
+git clone <repo-url>
+cd multi-agent-organization
+pip install -e .
 ```
 
-The web UI at `http://localhost:5000` shows a tabbed interface with Chat (multi-channel Slack), Docs (Google Docs-style workspace), and GitLab (repository browser).
+### 2. Create `.env`
 
-## The Team
+```bash
+cat > .env <<EOF
+CLAUDE_CODE_USE_VERTEX=1
+CLOUD_ML_REGION=us-east5
+ANTHROPIC_VERTEX_PROJECT_ID=<your-project-id>
+EOF
+```
 
-| Persona | Role | Tier | Default Channels |
-|---------|------|------|-----------------|
-| **Sarah** | Product Manager | 2 | #general, #engineering, #sales, #support, #leadership, #marketing, #devops |
+You also need GCP application default credentials:
+
+```bash
+gcloud auth application-default login
+```
+
+### 3. Build the agent container image
+
+The agent image contains Claude Code CLI, GCP credentials, and telemetry hooks. The build script copies your local GCP credentials into the image.
+
+```bash
+./scripts/build-agent-image.sh
+```
+
+This runs `podman build -f Dockerfile.agent -t agent-image:latest .` after verifying prerequisites (`podman`, `agent-hooks.json`, and GCP credentials).
+
+**What goes into the image:**
+- Python 3.13-slim base
+- Claude Code CLI (`@anthropic-ai/claude-code` via npm)
+- Your GCP credentials (baked in for local dev — do not push to public registries)
+- Telemetry hooks (`agent-hooks.json`) for forwarding model/tool events to the MCP server
+- Runs as non-root `agent` user with `sleep infinity` as entrypoint
+
+### 4. Start the three processes
+
+You need three terminals (or use `tmux`/`screen`):
+
+**Terminal 1 — Flask server:**
+```bash
+python main.py server --port 5000 --scenario tech-startup
+```
+
+**Terminal 2 — MCP server:**
+```bash
+python main.py mcp-server --port 5001 --scenario tech-startup
+```
+
+**Terminal 3 — Container orchestrator:**
+```bash
+python main.py chat --model sonnet --scenario tech-startup
+```
+
+### 5. Use it
+
+Open `http://localhost:5000` in your browser. Click **New** to start a session. The orchestrator will launch one podman container per agent and report ready status.
+
+Type a message in any channel and watch the team respond.
+
+## Architecture
+
+Three processes communicate via HTTP:
+
+```
+Flask Server (port 5000)          MCP Server (port 5001)
+  REST API + SSE + Web UI           Per-agent MCP-over-SSE
+  In-memory state store             32 tools with access control
+  Session management                Audit logging + telemetry
+        ▲                                  ▲
+        │ HTTP/REST                        │ MCP-over-SSE
+        │                                 │
+        ▼                                 │
+Container Orchestrator              Agent Containers (podman)
+  Polls for new messages             One per persona
+  Tiered wave execution              claude CLI + system prompt
+  podman exec per turn               MCP config mounted
+  signal_done detection              sleep infinity entrypoint
+        │                                 ▲
+        └── podman exec ──────────────────┘
+```
+
+- **Flask server** holds all simulation state and serves the web UI
+- **MCP server** provides 32 tools (chat, docs, gitlab, tickets, memos, blog, email, meta) that agents use to interact with the simulation
+- **Orchestrator** polls for human messages, launches agent turns via `podman exec claude` inside long-running containers, and manages tiered response ordering
+
+## How It Works
+
+### Tiered Response Ordering
+
+When a human message arrives, agents respond in tiers:
+
+| Tier | Agents | Purpose |
+|------|--------|---------|
+| 1 (ICs) | senior, support, sales, devops | Domain experts respond first |
+| 2 (Managers) | engmgr, architect, pm, marketing, projmgr | See Tier 1 output, then coordinate |
+| 3 (Executives) | ceo, cfo | See everything, make final calls |
+
+Agents within a tier run concurrently (up to `--max-concurrent`). Tiers run sequentially. Each agent fetches its own context via MCP tools and calls `signal_done()` when finished.
+
+### Agent Execution
+
+Each agent turn:
+
+1. Orchestrator builds a lightweight turn prompt (~300 bytes) telling the agent which channels have new activity
+2. Orchestrator runs `podman exec agent-<key> claude -p <prompt> --system-prompt-file /home/agent/system-prompt.md --mcp-config /home/agent/.mcp-config.json ...`
+3. Inside the container, Claude Code connects to the MCP server and uses tools: `get_messages()` to read context, `post_message()` to respond, `create_ticket()` / `commit_files()` / `create_doc()` etc. as needed
+4. Agent calls `signal_done()` to signal completion
+5. Orchestrator detects the done event and advances to the next tier
+
+### Wave Propagation
+
+If agents post to channels that weren't in the original trigger set, those channels become triggers for a new wave. This continues up to `--max-rounds` (default 5). After waves complete, autonomous continuation can run up to `--max-auto-rounds` additional cycles.
+
+## The Team (tech-startup scenario)
+
+| Persona | Role | Tier | Key Channels |
+|---------|------|------|-------------|
+| **Sarah** | Product Manager | 2 | #general, #engineering, #sales, #support, #leadership |
 | **Marcus** | Engineering Manager | 2 | #general, #engineering, #support, #devops |
 | **Priya** | Software Architect | 2 | #general, #engineering |
 | **Alex** | Senior Engineer | 1 | #general, #engineering |
@@ -47,318 +146,153 @@ The web UI at `http://localhost:5000` shows a tabbed interface with Chat (multi-
 | **Morgan** | CFO | 3 | #general, #leadership, #sales |
 | **Riley** | Marketing | 2 | #general, #marketing, #sales, #sales-external |
 | **Casey** | DevOps Engineer | 1 | #general, #devops, #engineering, #support |
-| **Nadia** | Project Manager | 2 | #general, #engineering, #support, #leadership, #devops, #sales, #marketing |
+| **Nadia** | Project Manager | 2 | #general, #engineering, #support, #leadership, #devops |
 
-**Tiers** control response ordering. Tier 1 (ICs) responds first, closest to the work. Tier 2 (managers/leads) sees Tier 1's responses before deciding whether to weigh in. Tier 3 (executives) sees everything before making strategic calls. Within a tier, agents run sequentially so each sees what the previous agent said.
+## Features
 
-## Architecture
+- **Chat** — Multi-channel Slack-style messaging with internal and external (customer-facing) channels
+- **Documents** — Folder-based document management with per-persona access control
+- **GitLab** — Mock repository hosting with commits, file browsing, and history
+- **Tickets** — Ticket tracker with priorities, statuses, assignees, comments, and dependency tracking
+- **Memos** — Threaded discussion board for RFCs and proposals
+- **Blog** — Internal and external company blog with comments
+- **Email** — Company-wide broadcast announcements
+- **Events** — Injectable scenario events (production outages, customer escalations, compliance notices)
+- **Background Tasks** — Autonomous worker tasks spawned by agents with full tool access
+- **NPC Management** — Hire/fire agents, modify configs, toggle online/offline from the UI
+- **Session Management** — Save, load, and restore complete simulation state
+- **Director Channels** — Private back-channels for sending instructions to individual agents
 
-```
-main.py
-  |
-  |-- server -----> Flask webapp (webapp.py)
-  |                   REST API + SSE + Web UI
-  |                   In-memory: messages, channels, docs, repos, tickets
-  |
-  |-- chat -------> Orchestrator (orchestrator.py)
-                      Poll for new messages
-                      Trigger agents by channel membership
-                      Parse JSON responses (regex fallback)
-                      Execute commands, post messages to channels
-                      |
-                      +--> AgentPool (agent_runner.py)
-                      |      One persistent ClaudeSDKClient per persona
-                      |      Sessions stay open across turns
-                      |      Model: sonnet | opus | haiku (Vertex AI)
-                      |
-                      +--> ChatClient (chat_client.py)
-                      |      HTTP client for the webapp REST API
-                      |
-                      +--> Personas (personas.py)
-                      |      Prompt builder: initial + per-turn
-                      |      Channel membership, doc/repo/ticket index
-                      |
-                      +--> ResponseSchema (response_schema.py)
-                             JSON parser + command normalizer
+## CLI Reference
+
+### Server
+
+```bash
+python main.py server [--port 5000] [--host 127.0.0.1] [--scenario tech-startup]
 ```
 
-The server and orchestrator run as separate processes. The orchestrator polls for new human messages, determines which channels were triggered, and runs agents in tiered waves. Each agent gets a prompt containing the full chat history (filtered to their channels), a list of existing documents, repos, and tickets, channel membership info, and an instruction to respond in structured JSON (or PASS).
+### MCP Server
 
-## Quick Start
-
-**Requirements:** Python 3.13+, Google Cloud credentials for Vertex AI
-
-1. **Clone and install:**
-   ```bash
-   git clone <repo-url>
-   cd multi-agent-organization
-   pip install -e .
-   ```
-
-2. **Create `.env`:**
-   ```
-   CLAUDE_CODE_USE_VERTEX=1
-   CLOUD_ML_REGION=us-east5
-   ANTHROPIC_VERTEX_PROJECT_ID=your-project-id
-   ```
-
-3. **Start the server** (terminal 1):
-   ```bash
-   python main.py server
-   ```
-
-4. **Start the agents** (terminal 2):
-   ```bash
-   python main.py chat
-   ```
-
-5. **Open the UI** at `http://localhost:5000`, type a message, and watch the team respond.
-
-### CLI Options
-
+```bash
+python main.py mcp-server [--port 5001] [--host 0.0.0.0]
+                          [--flask-url http://127.0.0.1:5000]
+                          [--scenario tech-startup]
 ```
-python main.py server [--scenario tech-startup]
-                      [--port 5000] [--host 127.0.0.1]
 
+### Orchestrator
+
+```bash
 python main.py chat [--scenario tech-startup]
-                     [--model sonnet|opus|haiku]
-                     [--personas pm,senior,architect]
-                     [--max-rounds 5]
-                     [--max-auto-rounds 0]
-                     [--poll-interval 5.0]
-                     [--server-url http://127.0.0.1:5000]
+                    [--model sonnet|opus|haiku]
+                    [--personas pm,senior,architect]
+                    [--max-rounds 5]
+                    [--max-auto-rounds 3]
+                    [--poll-interval 5.0]
+                    [--server-url http://127.0.0.1:5000]
+                    [--mcp-port 5001]
+                    [--mcp-host auto]
+                    [--container-image agent-image:latest]
+                    [--container-timeout 300]
+                    [--max-turns 50]
+                    [--max-concurrent 4]
+                    [--done-timeout 120]
 ```
 
-Use `--scenario` to load a different scenario (default: `tech-startup`). Scenarios are defined in `scenarios/<name>/scenario.yaml` with per-character markdown files in `scenarios/<name>/characters/`.
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--model` | `sonnet` | Claude model: `sonnet`, `opus`, or `haiku` |
+| `--personas` | all | Comma-separated subset of personas to run |
+| `--max-rounds` | 5 | Max ripple waves per response cycle |
+| `--max-auto-rounds` | 3 | Max autonomous continuation rounds (0=unlimited) |
+| `--max-concurrent` | 4 | Max agents running concurrently within a tier |
+| `--container-timeout` | 300 | Seconds before killing an agent turn |
+| `--done-timeout` | 120 | Seconds to wait for `signal_done` before advancing tier |
+| `--max-turns` | 50 | Max Claude tool-use turns per agent exec |
 
-Use `--personas` to run a subset of the team for faster iteration or lower cost. `--max-auto-rounds` limits how many autonomous continuation rounds agents can run after the initial trigger (0 = unlimited).
+### Building the Agent Image
 
-## How It Works
+```bash
+# Default image name: agent-image:latest
+./scripts/build-agent-image.sh
 
-### Message Flow
-
-1. Human types a message in the web UI (any channel)
-2. Orchestrator detects the new message via polling
-3. Agents in that channel are grouped by tier
-4. For each tier, agents run sequentially:
-   - Full chat history is re-fetched (so each agent sees prior responses)
-   - A turn prompt is built with history, docs, repos, tickets, and channel membership
-   - The agent responds with a JSON object or passes
-   - The orchestrator parses the JSON, executes any commands, and posts messages to channels
-   - If JSON parsing fails, a regex-based fallback parser handles the response
-5. If agents posted to new channels, those become triggers for the next wave
-6. Waves repeat up to `--max-rounds`
-7. After waves complete, autonomous continuation runs until agents quiesce or `--max-auto-rounds` is reached
-
-### Agent Response Format
-
-Agents respond with a single JSON object per turn. The orchestrator parses the JSON to extract commands and channel-routed messages.
-
-```json
-{"action": "respond", "messages": [...], "commands": [...]}
-{"action": "pass"}
-{"action": "ready"}
+# Custom image name
+./scripts/build-agent-image.sh my-agent:v2
 ```
 
-**Multi-channel messages** (post different content to different channels):
-```json
-{
-  "action": "respond",
-  "messages": [
-    {"channel": "#engineering", "text": "The implementation will need a new middleware layer."},
-    {"channel": "#sales-external", "text": "Yes, we support custom rate limits on Enterprise plans."}
-  ]
-}
-```
+**Prerequisites checked by the script:**
+- `podman` installed
+- `agent-hooks.json` exists in project root
+- GCP credentials available (copies from `~/.config/gcloud/application_default_credentials.json` if not already present)
 
-**Commands** (structured operations the orchestrator executes):
-```json
-{
-  "action": "respond",
-  "messages": [{"channel": "#general", "text": "I've set up the repo and created a ticket."}],
-  "commands": [
-    {"type": "doc", "action": "CREATE", "params": {"folder": "engineering", "title": "API Design", "content": "## Endpoints\n- GET /users\n- POST /users"}},
-    {"type": "gitlab", "action": "REPO_CREATE", "params": {"name": "api-service", "description": "Main API"}},
-    {"type": "gitlab", "action": "COMMIT", "params": {"project": "api-service", "message": "Add rate limiting", "files": [{"path": "config/limits.yaml", "content": "default: 100/min"}, {"path": "src/middleware.py", "content": "def rate_limit(request):\n    pass"}]}},
-    {"type": "tickets", "action": "CREATE", "params": {"title": "Implement rate limiting", "assignee": "Alex (Senior Eng)", "priority": "high", "description": "Add per-endpoint rate limits."}},
-    {"type": "channel", "action": "JOIN", "params": {"channel": "#devops"}}
-  ]
-}
-```
+## Scenarios
 
-**Command types:**
+Scenarios define the entire simulation: personas, channels, events, and configuration. Stored under `scenarios/<name>/`.
 
-| Type | Actions |
-|------|---------|
-| `doc` | `CREATE`, `UPDATE`, `APPEND`, `READ`, `SEARCH` |
-| `gitlab` | `REPO_CREATE`, `COMMIT`, `TREE`, `FILE_READ`, `LOG` |
-| `tickets` | `CREATE`, `UPDATE`, `COMMENT`, `DEPENDS`, `LIST` |
-| `channel` | `JOIN` |
+| Scenario | Description |
+|----------|-------------|
+| `tech-startup` | Default: 11-person engineering org |
+| `dotcom-2000` | Y2K startup scenario |
+| `dnd-campaign` | Dungeons & Dragons campaign |
+| `company-simulator-team` | Internal team scenario |
 
-A regex-based fallback parser handles responses from agents that produce the legacy `<<<>>>` command format instead of JSON.
+### Creating a New Scenario
 
-### Channels
+1. Create a directory under `scenarios/` with a `scenario.yaml`
+2. Add character files in `scenarios/<name>/characters/` (`.CS.md` format)
+3. Define channels, memberships, response tiers, folders, folder access, and events in the YAML
 
-Nine channels with two visibility levels:
-
-| Channel | Type | Purpose |
-|---------|------|---------|
-| #general | Internal | Company-wide discussion |
-| #engineering | Internal | Engineering team |
-| #sales | Internal | Sales team |
-| #support | Internal | Support team |
-| #leadership | Internal | Executive leadership |
-| #marketing | Internal | Marketing team |
-| #devops | Internal | DevOps & infrastructure |
-| #sales-external | **External** | Customer-facing sales |
-| #support-external | **External** | Customer-facing support |
-
-External channels are visible to the customer. Agents adjust their tone accordingly — candid internally, professional externally.
-
-### Document Folders
-
-Documents are organized into folders with persona-based access control:
-
-- **shared/** and **public/** — accessible to everyone
-- **engineering/**, **sales/**, **support/**, **marketing/**, **devops/** — department folders
-- **leadership/** — CEO, CFO, PM only
-- **sarah/**, **marcus/**, etc. — personal folders, one persona each
-
-### Persona Instructions
-
-Each persona has a skill file at `.claude/skills/<skill-name>/SKILL.md` defining:
-
-- **Behavioral guidelines** — what to focus on, how to think
-- **Communication style** — tone, phrases, structure
-- **When to PASS** — when to stay silent instead of adding noise
-
-Example (Senior Engineer):
-```markdown
-- Think about implementation specifics: data structures, algorithms, error handling
-- Identify edge cases and failure modes others might miss
-- Suggest testing strategies: unit tests, integration tests, load tests
-- Keep responses to 2-4 paragraphs maximum
-
-Respond PASS if:
-- The discussion is about business strategy or high-level prioritization
-- The implementation details have already been covered adequately
-```
+See `scenarios/tech-startup/scenario.yaml` for a complete example.
 
 ## Project Structure
 
 ```
-.
-├── main.py                          # Entry point (server / chat)
-├── pyproject.toml                   # Dependencies and metadata
-├── .env                             # Vertex AI credentials (not committed)
-├── AGENT_LOOP.md                    # Detailed architecture documentation
-├── lib/
-│   ├── cli.py                       # Argument parser
-│   ├── webapp.py                    # Flask server, REST API, SSE, web UI
-│   ├── orchestrator.py              # Event loop, command execution, tiered dispatch
-│   ├── agent_runner.py              # Persistent Claude SDK sessions (AgentPool)
-│   ├── chat_client.py               # HTTP client for the webapp API
-│   ├── personas.py                  # Persona registry, prompt builder (config loaded from scenario)
-│   ├── scenario_loader.py           # Reads scenario.yaml, populates module-level config
-│   ├── response_schema.py           # JSON response parser + command normalizer
-│   ├── docs.py                      # Document storage utilities, folder access
-│   ├── gitlab.py                    # GitLab mock storage utilities
-│   └── tickets.py                   # Ticket storage + ID generation
-├── scenarios/
-│   └── tech-startup/                # Default scenario
-│       ├── scenario.yaml            # Channels, tiers, folders, character refs
-│       └── characters/              # Per-character role prompts (.md)
-├── .claude/skills/                  # Claude Code skill definitions (also used as legacy prompts)
-└── var/                             # Runtime state (gitignored)
-    ├── docs/                        # Document storage (folders + index)
-    ├── gitlab/                      # Git repo storage
-    ├── tickets/                     # Ticket storage
-    ├── logs/                        # Agent session logs
-    ├── instances/                   # Saved session snapshots
-    └── chat.log                     # Message persistence
-```
-
-## REST API
-
-### Messages
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/messages` | List messages (`?since=ID`, `?channels=...`) |
-| POST | `/api/messages` | Post a message (`{sender, content, channel}`) |
-| POST | `/api/messages/clear` | Clear all messages |
-| GET | `/api/messages/stream` | SSE stream for real-time updates |
-
-### Channels
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/channels` | List channels with members |
-| POST | `/api/channels/<name>/join` | Join a channel (`{persona}`) |
-| POST | `/api/channels/<name>/leave` | Leave a channel (`{persona}`) |
-
-### Documents
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/docs` | List documents (`?folder=...`) |
-| POST | `/api/docs` | Create document (`{title, content, author, folder}`) |
-| GET | `/api/docs/search` | Search documents (`?q=...&folders=...`) |
-| GET | `/api/docs/<folder>/<slug>` | Read a document |
-| PUT | `/api/docs/<folder>/<slug>` | Replace document content |
-| POST | `/api/docs/<folder>/<slug>/append` | Append to a document |
-| DELETE | `/api/docs/<folder>/<slug>` | Delete a document |
-
-### GitLab
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/gitlab/repos` | List repositories |
-| POST | `/api/gitlab/repos` | Create repository (`{name, description, author}`) |
-| GET | `/api/gitlab/repos/<project>/tree` | File tree (`?path=subdir`) |
-| GET | `/api/gitlab/repos/<project>/file` | Read file (`?path=...`) |
-| POST | `/api/gitlab/repos/<project>/commit` | Commit files (`{message, files, author}`) |
-| GET | `/api/gitlab/repos/<project>/log` | Commit history (newest first) |
-
-### Tickets
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/tickets` | List tickets (`?status=...`, `?assignee=...`) |
-| POST | `/api/tickets` | Create ticket (`{title, description, priority, assignee, author, blocked_by}`) |
-| GET | `/api/tickets/<id>` | Get a ticket |
-| PUT | `/api/tickets/<id>` | Update ticket status/assignee |
-| POST | `/api/tickets/<id>/comment` | Add a comment |
-| POST | `/api/tickets/<id>/depends` | Add a dependency |
-
-### Folders
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/folders` | List folders with access info |
-
-## Customization
-
-### Adding a Persona
-
-1. Add a character markdown file in `scenarios/<name>/characters/`
-2. Reference it in `scenario.yaml` under `characters` with channel memberships and tier
-3. Create a skill file at `.claude/skills/<skill-name>/SKILL.md`
-4. Add folder access rules and optional personal folder in the scenario's `folders` config
-
-### Adding a Channel
-
-1. Add to the `channels` list in `scenarios/<name>/scenario.yaml`
-2. Add members via character `channels` entries in the same file
-3. The webapp and orchestrator pick it up automatically
-
-### Changing Models
-
-Use `--model` to switch between models for all agents:
-```bash
-python main.py chat --model haiku    # Fast and cheap, good for testing
-python main.py chat --model sonnet   # Default, balanced
-python main.py chat --model opus     # Most capable
+main.py                         # Entry point (server / mcp-server / chat)
+pyproject.toml                  # Dependencies
+Dockerfile.agent                # Agent container image
+agent-hooks.json                # Telemetry hooks for agent containers
+scripts/build-agent-image.sh    # Image build script
+.env                            # Vertex AI credentials (not committed)
+lib/
+  webapp.py                     # Flask server, REST API, SSE, web UI
+  container_orchestrator.py     # Container-based orchestrator + ContainerPool
+  mcp_server.py                 # MCP tool server (Starlette + FastMCP)
+  agent_runner.py               # Model utilities, one-shot agent runner
+  chat_client.py                # HTTP client for Flask REST API
+  personas.py                   # Persona registry, prompt builders (v2 + v3)
+  scenario_loader.py            # YAML scenario loader
+  session.py                    # Session save/load/new
+  docs.py                       # Document storage + folder access control
+  gitlab.py                     # Mock GitLab (repos, commits, files)
+  tickets.py                    # Ticket tracking + ID generation
+  events.py                     # Scenario event pool + event log
+  memos.py                      # Threaded discussion board
+  blog.py                       # Internal + external company blog
+  email.py                      # Corporate email system
+  task_executor.py              # Background task execution
+  cli.py                        # CLI argument parser
+scenarios/
+  tech-startup/                 # Default scenario
+    scenario.yaml               # Channels, tiers, folders, events, settings
+    characters/                 # Per-character prompts (.CS.md files)
+var/                            # Runtime state (gitignored)
+  chat.log                      # Message persistence
+  docs/                         # Document storage
+  gitlab/                       # Repository storage
+  tickets/                      # Ticket storage
+  logs/                         # Agent logs + MCP audit trail
+  tmp/                          # Agent MCP configs + system prompts
+  instances/                    # Saved session snapshots
 ```
 
 ## Dependencies
 
-- **claude-agent-sdk** — persistent Claude sessions via Vertex AI
-- **flask** — web server and REST API
-- **python-dotenv** — environment variable management
-- **pyyaml** — scenario configuration parsing
-- **requests** — HTTP client
+- **claude-agent-sdk** — Claude Agent SDK for background tasks and one-shot agents
+- **flask** — Web server and REST API
+- **mcp** — MCP protocol library (FastMCP)
+- **uvicorn** — ASGI server for the MCP server
+- **httpx** — Async HTTP client (MCP → Flask proxy)
+- **requests** — Sync HTTP client (orchestrator → Flask)
+- **pyyaml** — Scenario YAML parsing
+- **python-dotenv** — Environment variable management
+- **podman** — Container runtime (not a Python dependency)
+- **claude CLI** — Claude Code CLI, installed in the agent image via npm
