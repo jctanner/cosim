@@ -65,8 +65,8 @@ memberships:
   chief: ["#briefing", "#research", "#technical", "#market-intel", "#prototyping", "#synthesis", "#watercooler"]
 
 response_tiers:
-  1: ["director"]
-  2: ["technical", "market", "prototype", "osint"]
+  1: ["technical", "market", "prototype", "osint"]
+  2: ["director"]
   3: ["chief"]
 
 folders:
