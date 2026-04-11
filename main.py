@@ -50,20 +50,6 @@ if __name__ == "__main__":
                     _orchestrator_commands.append({"action": "restart", "scenario": args.scenario})
             app.run(host=args.host, port=args.port, debug=False)
         elif args.command == "chat":
-            # Orchestrator waits for a session command before loading a scenario.
-            # Auto-restarts on CancelledError (SDK cancel scope leak during agent restart).
-            from lib.orchestrator import run_orchestrator
-            while True:
-                try:
-                    asyncio.run(run_orchestrator(args))
-                    break  # clean exit
-                except (asyncio.CancelledError, BaseException) as e:
-                    if isinstance(e, KeyboardInterrupt):
-                        raise
-                    print(f"\nOrchestrator crashed ({type(e).__name__}), restarting in 3 seconds...")
-                    import time
-                    time.sleep(3)
-        elif args.command == "container-chat":
             from lib.container_orchestrator import run_container_orchestrator
             while True:
                 try:
@@ -72,7 +58,7 @@ if __name__ == "__main__":
                 except (asyncio.CancelledError, BaseException) as e:
                     if isinstance(e, KeyboardInterrupt):
                         raise
-                    print(f"\nContainer orchestrator crashed ({type(e).__name__}), restarting in 3 seconds...")
+                    print(f"\nOrchestrator crashed ({type(e).__name__}), restarting in 3 seconds...")
                     import time
                     time.sleep(3)
         elif args.command == "mcp-server":
@@ -81,7 +67,7 @@ if __name__ == "__main__":
             app = build_app(scenario_name=args.scenario, flask_url=args.flask_url)
             uvicorn.run(app, host=args.host, port=args.port)
         else:
-            print("Use 'server', 'chat', 'container-chat', or 'mcp-server' subcommand. See --help.", file=sys.stderr)
+            print("Use 'server', 'chat', or 'mcp-server' subcommand. See --help.", file=sys.stderr)
             sys.exit(1)
     except KeyboardInterrupt:
         print("\n\nInterrupted by user")

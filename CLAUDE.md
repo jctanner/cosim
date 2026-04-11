@@ -20,7 +20,10 @@ EOF
 # Terminal 1: Start Flask server
 python main.py server --port 5000 --host 127.0.0.1
 
-# Terminal 2: Start agent orchestrator
+# Terminal 2: Start MCP server
+python main.py mcp-server --port 5001
+
+# Terminal 3: Start agent orchestrator
 python main.py chat --model sonnet --scenario tech-startup
 ```
 
@@ -31,7 +34,7 @@ Web UI at `http://localhost:5000`.
 ### Two-Process Model
 
 - **Flask Server** (`lib/webapp.py`) — REST API, SSE broadcast, web UI, in-memory state for all subsystems
-- **Orchestrator** (`lib/orchestrator.py`) — Polling loop that drives agent responses via the Claude Agent SDK
+- **Orchestrator** (`lib/container_orchestrator.py`) — Polling loop that drives agent responses via podman containers with MCP tools
 
 The two processes communicate exclusively via HTTP REST calls.
 
@@ -42,36 +45,26 @@ When a human message arrives, agents respond in tiers:
 2. **Tier 2** (Managers): engmgr, architect, pm, marketing, projmgr — see Tier 1 output before responding
 3. **Tier 3** (Executives): ceo, cfo — see all prior tiers before responding
 
-Agents within each tier run sequentially. If agents post to new channels, the loop repeats (up to `max_rounds`).
+Agents within each tier run concurrently (up to `--max-concurrent`). If agents post to new channels, the loop repeats (up to `max_rounds`).
 
-### Persistent Agent Sessions
+### Container-Based Agent Execution
 
-`AgentPool` (`lib/agent_runner.py`) maintains one `ClaudeSDKClient` per persona for the entire orchestrator lifetime — no cold-start per turn. Sessions auto-restart on `CancelledError`.
+`ContainerPool` (`lib/container_orchestrator.py`) manages long-running podman containers — one per persona. Each agent turn runs `podman exec claude -p ...` inside the warm container. Agents interact with the simulation exclusively via MCP tools served by the MCP server (`lib/mcp_server.py`). Tier advancement uses `signal_done` events from the MCP server rather than waiting for process exit.
 
-### Response Protocol
+## Agent Tooling (MCP Tools)
 
-Agents respond with structured JSON:
-```json
-{"action": "respond", "messages": [...], "commands": [...]}
-{"action": "pass"}
-{"action": "ready"}
-```
+Agents interact with the simulation via MCP tools registered on the MCP server. Tool categories:
 
-A regex fallback parser handles the legacy `<<<>>>` command format.
-
-## Agent Tooling (Command Types)
-
-Agents issue structured commands via the `commands` array in their JSON responses. The orchestrator executes these against the server. Command types:
-
-| Command | Module | Description |
-|---------|--------|-------------|
-| `doc` | `lib/docs.py` | Create/update documents in access-controlled folders (shared, department, personal). Folders and access lists defined per-scenario. |
-| `gitlab` | `lib/gitlab.py` | Commit files to simulated Git repos. Supports repo creation, file commits, and optional per-repo access control. |
-| `tickets` | `lib/tickets.py` | Create and manage tickets (`TK-` prefixed IDs). Supports title, description, priority, assignee, status. |
-| `dm` | `lib/orchestrator.py` | Send direct messages to other agents (queued, max 2 per turn, delivered on recipient's next turn). |
-| `channel` | `lib/orchestrator.py` | Join new chat channels dynamically. |
-| `task` | `lib/task_executor.py` | Spawn autonomous background worker sessions with tool access (Bash, Read, Write, Edit, WebFetch, WebSearch). Workers run independently and deliver results (commits, documents) back to the system. |
-| `memo` | `lib/memos.py` | Create threaded discussion threads or post replies (Google Groups / mailing-list style async discussions). |
+| Tool Category | Module | Description |
+|---------------|--------|-------------|
+| Communication | `lib/mcp_server.py` | `post_message`, `get_messages`, `send_dm`, `get_my_dms`, `join_channel`, `get_channel_members` |
+| Documents | `lib/docs.py` | `create_doc`, `update_doc`, `read_doc`, `search_docs`, `list_docs` — access-controlled folders |
+| GitLab | `lib/gitlab.py` | `create_repo`, `commit_files`, `read_file`, `list_repo_tree`, `get_repo_log` |
+| Tickets | `lib/tickets.py` | `create_ticket`, `update_ticket`, `comment_on_ticket`, `list_tickets` |
+| Memos | `lib/memos.py` | `create_memo`, `reply_to_memo` — threaded async discussions |
+| Blog | `lib/blog.py` | `create_blog_post`, `reply_to_blog` |
+| Email | `lib/email.py` | `send_email`, `get_emails` |
+| Meta | `lib/mcp_server.py` | `whoami`, `who_is`, `get_my_channels`, `get_my_tickets`, `get_recent_activity`, `signal_done` |
 
 Additionally, the system provides:
 - **Email** (`lib/email.py`) — Company-wide announcements visible to all agents. Injected by events or sent by agents.
@@ -87,11 +80,11 @@ pyproject.toml              # Dependencies and metadata
 .env                        # Vertex AI credentials (not committed)
 lib/
   webapp.py                 # Flask server, REST API, SSE, web UI
-  orchestrator.py           # Event loop, wave dispatch, command execution
-  agent_runner.py           # Claude SDK session pool (persistent)
+  container_orchestrator.py # Container-based agent loop (podman + MCP)
+  mcp_server.py             # MCP tool server for agent containers
+  agent_runner.py           # Claude SDK utilities + one-shot agent runner
   chat_client.py            # HTTP client for REST API
   personas.py               # Persona registry, prompt builders
-  response_schema.py        # JSON response parser + regex fallback
   scenario_loader.py        # YAML scenario loader
   session.py                # Session save/load/new (full state snapshots)
   docs.py                   # Document storage + folder access control
@@ -175,7 +168,7 @@ All runtime state lives in `var/` (gitignored). The Flask server holds state in-
 # Server
 python main.py server [--port 5000] [--host 127.0.0.1] [--scenario tech-startup]
 
-# Orchestrator
+# Orchestrator (container-based)
 python main.py chat [--scenario tech-startup]
                     [--model sonnet|opus|haiku]
                     [--personas pm,senior,architect]
@@ -183,6 +176,18 @@ python main.py chat [--scenario tech-startup]
                     [--max-auto-rounds 0]
                     [--poll-interval 5.0]
                     [--server-url http://127.0.0.1:5000]
+                    [--mcp-port 5001]
+                    [--mcp-host auto]
+                    [--container-image agent-image:latest]
+                    [--container-timeout 300]
+                    [--max-turns 50]
+                    [--max-concurrent 4]
+                    [--done-timeout 120]
+
+# MCP server (required for orchestrator)
+python main.py mcp-server [--port 5001] [--host 0.0.0.0]
+                          [--flask-url http://127.0.0.1:5000]
+                          [--scenario tech-startup]
 ```
 
 ## Environment Variables (.env)
@@ -201,8 +206,7 @@ Requires GCP application default credentials (`gcloud auth application-default l
 - **Add a persona**: Add a character entry in `scenario.yaml`, create the character `.md` file, assign to channels/tiers/folders
 - **Add a channel**: Add to `channels` and update `memberships` in `scenario.yaml`
 - **Add an event**: Add to `events` list in `scenario.yaml` with `message`, `ticket`, `document`, or `email` actions
-- **Add a new command type**: Add parsing in `lib/response_schema.py` `normalize_commands()`, add execution logic in `lib/orchestrator.py`
-- **Modify prompt building**: Edit `lib/personas.py` (`build_initial_prompt`, `build_turn_prompt`)
-- **Modify response parsing**: Edit `lib/response_schema.py`
+- **Add a new MCP tool**: Register in `lib/mcp_server.py`, add to `MCP_TOOL_NAMES` in `lib/container_orchestrator.py`
+- **Modify prompt building**: Edit `lib/personas.py` (`build_v3_system_prompt`, `build_v3_turn_prompt`)
 - **Add REST endpoints**: Edit `lib/webapp.py`
-- **Add a new subsystem**: Create a module in `lib/`, wire it into `lib/webapp.py` (REST endpoints), `lib/orchestrator.py` (command execution), `lib/response_schema.py` (command parsing), `lib/session.py` (save/load), and `lib/personas.py` (include state in turn prompts)
+- **Add a new subsystem**: Create a module in `lib/`, wire it into `lib/webapp.py` (REST endpoints), `lib/mcp_server.py` (MCP tools), `lib/session.py` (save/load), and `lib/personas.py` (include state in prompts)

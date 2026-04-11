@@ -154,7 +154,7 @@ def save_session(name: str | None = None) -> dict:
 
     # Save DM queue
     try:
-        from lib.orchestrator import get_dm_queue
+        from lib.container_orchestrator import get_dm_queue
         dm_data = get_dm_queue()
         if dm_data:
             (instance_dir / "dm_queue.json").write_text(json.dumps(dm_data, indent=2))
@@ -329,7 +329,7 @@ def load_session(instance_name: str) -> dict:
     dm_path = instance_dir / "dm_queue.json"
     if dm_path.exists():
         try:
-            from lib.orchestrator import set_dm_queue
+            from lib.container_orchestrator import set_dm_queue
             set_dm_queue(json.loads(dm_path.read_text()))
         except Exception:
             pass

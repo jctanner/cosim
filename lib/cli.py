@@ -28,101 +28,65 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Scenario to auto-start (omit to wait for New/Load in UI)",
     )
 
-    # ── chat subcommand ──────────────────────────────────────────────
+    # ── chat subcommand (container orchestrator) ──────────────────────
     chat_parser = subparsers.add_parser(
         "chat",
-        help="Start the agent orchestrator",
+        help="Start the container orchestrator (agents run as podman containers with MCP tools)",
     )
     chat_parser.add_argument(
-        "--personas", type=str, default=None,
-        help="Comma-separated list of personas to activate (default: all). "
-             "Options: pm, engmgr, architect, senior, support, sales",
-    )
-    chat_parser.add_argument(
-        "--server-url", type=str, default="http://127.0.0.1:5000",
-        help="Chat server URL (default: http://127.0.0.1:5000)",
-    )
-    chat_parser.add_argument(
-        "--model", type=str, default="sonnet",
-        choices=["sonnet", "opus", "haiku"],
-        help="Claude model to use (default: sonnet)",
-    )
-    chat_parser.add_argument(
-        "--max-rounds", type=int, default=5,
-        help="Maximum discussion waves per trigger (default: 5)",
-    )
-    chat_parser.add_argument(
-        "--max-auto-rounds", type=int, default=0,
-        help="Maximum autonomous continuation rounds (0 = unlimited, default: 0)",
-    )
-    chat_parser.add_argument(
-        "--poll-interval", type=float, default=5.0,
-        help="Seconds between polling for new messages (default: 5.0)",
-    )
-    chat_parser.add_argument(
-        "--scenario", type=str, default=None,
-        help="Scenario to auto-start (omit to wait for New/Load in UI)",
-    )
-
-    # ── container-chat subcommand ──────────────────────────────────────
-    container_parser = subparsers.add_parser(
-        "container-chat",
-        help="Start the v3 container orchestrator (agents run as podman containers with MCP tools)",
-    )
-    container_parser.add_argument(
         "--personas", type=str, default=None,
         help="Comma-separated list of personas to activate (default: all)",
     )
-    container_parser.add_argument(
+    chat_parser.add_argument(
         "--server-url", type=str, default="http://127.0.0.1:5000",
         help="Chat server URL (default: http://127.0.0.1:5000)",
     )
-    container_parser.add_argument(
+    chat_parser.add_argument(
         "--model", type=str, default="sonnet",
         choices=["sonnet", "opus", "haiku"],
         help="Claude model to use (default: sonnet)",
     )
-    container_parser.add_argument(
+    chat_parser.add_argument(
         "--max-rounds", type=int, default=5,
         help="Maximum discussion waves per trigger (default: 5)",
     )
-    container_parser.add_argument(
+    chat_parser.add_argument(
         "--max-auto-rounds", type=int, default=0,
         help="Maximum autonomous continuation rounds (0 = unlimited, default: 0)",
     )
-    container_parser.add_argument(
+    chat_parser.add_argument(
         "--poll-interval", type=float, default=5.0,
         help="Seconds between polling for new messages (default: 5.0)",
     )
-    container_parser.add_argument(
+    chat_parser.add_argument(
         "--scenario", type=str, default=None,
         help="Scenario to auto-start (omit to wait for New/Load in UI)",
     )
-    container_parser.add_argument(
+    chat_parser.add_argument(
         "--mcp-port", type=int, default=5001,
         help="MCP server port (default: 5001)",
     )
-    container_parser.add_argument(
+    chat_parser.add_argument(
         "--container-image", type=str, default="agent-image:latest",
         help="Container image for agents (default: agent-image:latest)",
     )
-    container_parser.add_argument(
+    chat_parser.add_argument(
         "--container-timeout", type=int, default=300,
         help="Maximum seconds per container run (default: 300)",
     )
-    container_parser.add_argument(
+    chat_parser.add_argument(
         "--max-turns", type=int, default=50,
         help="Maximum Claude turns per container (default: 50)",
     )
-    container_parser.add_argument(
+    chat_parser.add_argument(
         "--max-concurrent", type=int, default=4,
         help="Maximum concurrent agent containers per tier (default: 4)",
     )
-    container_parser.add_argument(
+    chat_parser.add_argument(
         "--done-timeout", type=int, default=120,
         help="Seconds to wait for agents to signal done before advancing tier (default: 120)",
     )
-    container_parser.add_argument(
+    chat_parser.add_argument(
         "--mcp-host", type=str, default=None,
         help="Hostname containers use to reach MCP server on host "
              "(default: auto-detect based on platform — "

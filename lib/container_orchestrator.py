@@ -10,6 +10,7 @@ import json
 import logging
 import platform as _platform
 import subprocess
+import threading
 import time as _time
 from pathlib import Path
 
@@ -27,16 +28,68 @@ from lib.personas import (
     RESPONSE_TIERS,
     PERSONA_TIER,
 )
-from lib.orchestrator import (
-    _is_agent_message,
-    _get_channel_memberships,
-    _requeue_restart,
-)
 
 logger = logging.getLogger("container_orchestrator")
 
 LOG_DIR = Path(__file__).parent.parent / "var" / "logs"
 TMP_DIR = Path(__file__).parent.parent / "var" / "tmp"
+
+# -- DM (Direct Message) queue --
+# recipient_key -> [{from_key, from_name, text, timestamp}]
+_dm_queue: dict[str, list[dict]] = {}
+_dm_queue_lock = threading.Lock()
+
+
+def get_dm_queue() -> dict:
+    """Return a snapshot of the DM queue (for session persistence)."""
+    with _dm_queue_lock:
+        return {k: list(v) for k, v in _dm_queue.items()}
+
+
+def set_dm_queue(data: dict) -> None:
+    """Replace the DM queue with saved data (for session restore)."""
+    with _dm_queue_lock:
+        _dm_queue.clear()
+        _dm_queue.update(data)
+
+
+def _get_agent_display_names() -> set[str]:
+    """Get agent display names dynamically (PERSONAS populated after scenario load)."""
+    return {p["display_name"] for p in PERSONAS.values()}
+
+
+def _is_agent_message(msg: dict) -> bool:
+    """Return True if the message was posted by an agent (not an event or human)."""
+    if msg.get("is_event"):
+        return False  # Event-triggered messages should be treated as external input
+    return msg["sender"] in _get_agent_display_names()
+
+
+def _get_channel_memberships(client: ChatClient) -> dict[str, set[str]]:
+    """Fetch current channel memberships from the server.
+
+    Returns dict[channel_name, set_of_persona_keys].
+    """
+    channels = client.get_channels()
+    return {ch["name"]: set(ch["members"]) for ch in channels}
+
+
+def _requeue_restart(base_url: str, scenario_name: str) -> None:
+    """Re-queue a restart command to the server using a sync HTTP request.
+
+    Called when the orchestrator is about to crash so the command
+    survives the restart.
+    """
+    try:
+        resp = sync_requests.post(
+            f"{base_url}/api/orchestrator/command",
+            json={"action": "restart", "scenario": scenario_name},
+            timeout=5,
+        )
+        print(f"  Re-queue response: {resp.status_code}")
+    except Exception as e:
+        print(f"  Re-queue failed: {e}")
+
 
 # All 32 MCP tool names (must match lib/mcp_server.py registrations)
 MCP_TOOL_NAMES = [
@@ -255,6 +308,7 @@ class ContainerPool:
         cmd = [
             "podman", "run", "-d",
             "--name", container_name,
+            "--dns", "8.8.8.8",
             "-e", f"AGENT_PERSONA_KEY={persona_key}",
             "-e", f"MCP_SERVER_URL={self._mcp_host}:{self._mcp_port}",
             "-v", f"{config_path.resolve()}:/home/agent/.mcp-config.json:ro,Z",
