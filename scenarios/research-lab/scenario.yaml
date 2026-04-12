@@ -200,6 +200,13 @@ settings:
   task_timeout: 900
   enable_memos: true
   enable_blog: true
+  agent_builtin_tools:
+    - Bash
+    - Read
+    - Glob
+    - Grep
+    - WebSearch
+    - WebFetch
   task_allowed_tools:
     - Bash
     - Read
