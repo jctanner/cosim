@@ -63,6 +63,7 @@ def load_scenario(scenario_name: str) -> None:
             "character_file": str(char_path),
             "max_words": char_info.get("max_words"),
             "nrsp_meta": nrsp_meta,
+            "avatar": char_info.get("avatar"),
         }
 
     # --- Populate personas.DEFAULT_CHANNELS ---

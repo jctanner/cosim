@@ -7,7 +7,7 @@ import queue
 import threading
 from pathlib import Path
 
-from flask import Flask, Response, jsonify, request
+from flask import Flask, Response, jsonify, request, send_from_directory
 
 from lib.docs import slugify, DEFAULT_FOLDERS, DEFAULT_FOLDER_ACCESS
 from lib.personas import DEFAULT_CHANNELS, DEFAULT_MEMBERSHIPS, PERSONAS
@@ -928,6 +928,12 @@ WEB_UI = """<!DOCTYPE html>
   #messages-panel { flex: 1; overflow-y: auto; padding: 12px 20px; display: flex;
                     flex-direction: column; gap: 6px; }
   .msg { max-width: 85%; padding: 10px 14px; border-radius: 12px; line-height: 1.5; }
+  .msg-row { display: flex; gap: 10px; align-items: flex-start; }
+  .msg-body { flex: 1; min-width: 0; }
+  .msg-avatar { width: 32px; height: 32px; border-radius: 6px; flex-shrink: 0;
+                display: flex; align-items: center; justify-content: center;
+                font-size: 14px; font-weight: 700; color: #fff; margin-top: 1px; }
+  .msg-avatar img { width: 32px; height: 32px; border-radius: 6px; object-fit: cover; }
   .msg .sender { font-weight: 700; font-size: 13px; margin-bottom: 4px; }
   .msg .content { font-size: 14px; word-break: break-word; }
   .msg .content h1 { font-size: 16px; margin: 8px 0 4px; color: var(--text); }
@@ -2104,6 +2110,7 @@ let seenIds = new Set();
 let SENDER_CLASS_MAP = {};
 let PERSONA_DISPLAY = {};
 let AGENT_NAMES = new Set();
+let PERSONA_AVATARS = {};  // display_name → {avatar: url_or_null, initial: "P", color: "#..."}
 
 // Color palette for agent personas (assigned round-robin on load)
 const AGENT_COLORS = [
@@ -2116,12 +2123,19 @@ async function loadPersonas() {
   const personas = await resp.json();
   SENDER_CLASS_MAP = {};
   PERSONA_DISPLAY = {};
+  PERSONA_AVATARS = {};
   const keys = Object.keys(personas);
   keys.forEach((key, i) => {
     const p = personas[key];
     const cls = 'msg-agent-' + i;
     SENDER_CLASS_MAP[p.display_name] = cls;
     PERSONA_DISPLAY[key] = p.display_name;
+    const color = AGENT_COLORS[i % AGENT_COLORS.length];
+    PERSONA_AVATARS[p.display_name] = {
+      avatar: p.avatar ? '/avatars/' + p.avatar : null,
+      initial: p.display_name.charAt(0).toUpperCase(),
+      color: color,
+    };
   });
   AGENT_NAMES = new Set(Object.keys(SENDER_CLASS_MAP));
 
@@ -2328,9 +2342,29 @@ function appendMessageEl(msg) {
   const ts = new Date(msg.timestamp * 1000).toLocaleTimeString();
   // For human senders, derive a unique color from their name
   const senderStyle = agent ? '' : ' style="color:' + hashColor(msg.sender) + '"';
-  div.innerHTML = '<div class="sender"' + senderStyle + '>' + escapeHtml(msg.sender) + '</div>'
+  // Build avatar element
+  let avatarHtml = '';
+  const pa = PERSONA_AVATARS[msg.sender];
+  if (pa) {
+    if (pa.avatar) {
+      avatarHtml = '<div class="msg-avatar"><img src="' + escapeHtml(pa.avatar) + '" alt=""></div>';
+    } else {
+      avatarHtml = '<div class="msg-avatar" style="background:' + pa.color + '">' + pa.initial + '</div>';
+    }
+  } else if (msg.sender === 'System') {
+    avatarHtml = '<div class="msg-avatar" style="background:#666">S</div>';
+  } else {
+    // Human sender fallback
+    const hc = hashColor(msg.sender);
+    const hi = msg.sender.charAt(0).toUpperCase();
+    avatarHtml = '<div class="msg-avatar" style="background:' + hc + '">' + hi + '</div>';
+  }
+  div.innerHTML = '<div class="msg-row">' + avatarHtml
+    + '<div class="msg-body">'
+    + '<div class="sender"' + senderStyle + '>' + escapeHtml(msg.sender) + '</div>'
     + '<div class="content">' + renderMarkdown(msg.content) + '</div>'
-    + '<div class="ts">' + ts + '</div>';
+    + '<div class="ts">' + ts + '</div>'
+    + '</div></div>';
   messagesPanel.appendChild(div);
   messagesPanel.scrollTop = messagesPanel.scrollHeight;
 }
@@ -3396,8 +3430,19 @@ function createNPCCard(npc) {
   const ls = npc.live_state || 'unknown';
   const lsCss = ls.replace(/ /g, '-');
   card.className = 'npc-card' + (npc.online ? '' : ' offline');
+  // Build NPC avatar for card header
+  let npcAvatarHtml = '';
+  const npa = PERSONA_AVATARS[npc.display_name];
+  if (npa) {
+    if (npa.avatar) {
+      npcAvatarHtml = '<div class="msg-avatar" style="width:24px;height:24px;font-size:11px"><img src="' + escapeHtml(npa.avatar) + '" alt="" style="width:24px;height:24px;border-radius:6px"></div>';
+    } else {
+      npcAvatarHtml = '<div class="msg-avatar" style="width:24px;height:24px;font-size:11px;background:' + npa.color + '">' + npa.initial + '</div>';
+    }
+  }
   card.innerHTML =
     '<div class="npc-card-header">' +
+      npcAvatarHtml +
       '<span class="npc-status-dot ' + lsCss + '"></span>' +
       '<span class="npc-card-name">' + escapeHtml(npc.display_name) + '</span>' +
       '<span class="npc-card-state">' + (LIVE_STATE_LABELS[ls] || ls) + '</span>' +
@@ -6071,6 +6116,7 @@ def create_app() -> Flask:
                     "display_name": p["display_name"],
                     "team_description": p.get("team_description", ""),
                     "character_file": p.get("character_file", ""),
+                    "avatar": p.get("avatar"),
                     "tier": PERSONA_TIER.get(key, 0),
                     "channels": channels,
                     "folders": folders,
@@ -6959,8 +7005,21 @@ Write a compelling recap of this simulation session in the requested style. Keep
                 "key": key,
                 "display_name": p["display_name"],
                 "team_description": p.get("team_description", ""),
+                "avatar": p.get("avatar"),
             }
         return jsonify(result)
+
+    @app.route("/avatars/<path:filename>")
+    def serve_avatar(filename):
+        """Serve avatar images from the current scenario's avatars/ directory."""
+        from lib.scenario_loader import SCENARIOS_DIR
+        scenario = get_current_session().get("scenario")
+        if not scenario:
+            return "No scenario loaded", 404
+        avatars_dir = SCENARIOS_DIR / scenario / "avatars"
+        if not avatars_dir.is_dir():
+            return "Not found", 404
+        return send_from_directory(str(avatars_dir), filename)
 
     # -- Session API --
 
