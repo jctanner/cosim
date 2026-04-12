@@ -6,37 +6,37 @@ characters:
     display_name: "Dr. Chen (Research Director)"
     character_file: "characters/dr-chen-director.CS.md"
     team_description: "research strategy, topic decomposition, focus area assignment"
-    avatar: "director.svg"
+    avatar: "director.jpg"
     max_words: 250
   technical:
     display_name: "Raj (Technical Researcher)"
     character_file: "characters/raj-technical.CS.md"
     team_description: "architecture patterns, implementation feasibility, state-of-the-art survey"
-    avatar: "technical.svg"
+    avatar: "technical.jpg"
     max_words: 200
   market:
     display_name: "Elena (Market Intelligence)"
     character_file: "characters/elena-market.CS.md"
     team_description: "competitive landscape, business models, TAM/SAM, funding data"
-    avatar: "market.svg"
+    avatar: "market.jpg"
     max_words: 200
   prototype:
     display_name: "Sam (Prototype Engineer)"
     character_file: "characters/sam-prototype.CS.md"
     team_description: "proof-of-concept code, feasibility validation, working prototypes"
-    avatar: "prototype.svg"
+    avatar: "prototype.jpg"
     max_words: 200
   osint:
     display_name: "Maya (OSINT Researcher)"
     character_file: "characters/maya-osint.CS.md"
     team_description: "academic papers, blog posts, GitHub repos, conference talks, prior art"
-    avatar: "osint.svg"
+    avatar: "osint.jpg"
     max_words: 200
   chief:
     display_name: "Prof. Hayes (Chief Scientist)"
     character_file: "characters/prof-hayes-chief.CS.md"
     team_description: "synthesis, gap analysis, final dossier production, research quality"
-    avatar: "chief.svg"
+    avatar: "chief.jpg"
     max_words: 300
 
 channels:
