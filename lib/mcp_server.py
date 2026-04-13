@@ -119,10 +119,20 @@ def _register_communication_tools(
     flask_url: str,
     config: dict,
 ):
-    """Register 6 communication tools on the server."""
+    """Register 7 communication tools on the server."""
     my_channels = set(config.get("memberships", {}).get(agent_key, []))
     # Auto-add director channel (created dynamically by Flask, not in scenario YAML)
     my_channels.add(f"#director-{agent_key}")
+
+    @server.tool(
+        name="list_channels",
+        description="List all available chat channels with their descriptions and member counts.",
+    )
+    async def list_channels() -> str:
+        t0 = time.time()
+        result = await _flask("GET", "/api/channels", flask_url)
+        _record_audit(agent_key, "list_channels", {}, f"{len(result)} channels", (time.time() - t0) * 1000)
+        return json.dumps(result)
 
     @server.tool(
         name="post_message",
@@ -222,7 +232,7 @@ def _register_document_tools(
     flask_url: str,
     config: dict,
 ):
-    """Register 6 document tools with folder access control."""
+    """Register 7 document tools with folder access control."""
     my_folders = {
         folder for folder, members in config.get("folder_access", {}).items()
         if agent_key in members
@@ -311,6 +321,20 @@ def _register_document_tools(
         _record_audit(agent_key, "delete_doc", {"folder": folder, "slug": slug}, "deleted", (time.time() - t0) * 1000)
         return json.dumps(result)
 
+    @server.tool(
+        name="append_doc",
+        description="Append content to an existing document without replacing it. Only works in folders you have access to.",
+    )
+    async def append_doc(folder: str, slug: str, content: str) -> str:
+        if folder not in my_folders:
+            return f"Error: you don't have access to folder '{folder}'. Your folders: {sorted(my_folders)}"
+        t0 = time.time()
+        result = await _flask("POST", f"/api/docs/{folder}/{slug}/append", flask_url, json={
+            "content": content, "author": display_name,
+        })
+        _record_audit(agent_key, "append_doc", {"folder": folder, "slug": slug}, "appended", (time.time() - t0) * 1000)
+        return json.dumps(result)
+
 
 def _register_gitlab_tools(
     server: FastMCP,
@@ -319,7 +343,7 @@ def _register_gitlab_tools(
     flask_url: str,
     config: dict,
 ):
-    """Register 5 GitLab tools with optional repo access control."""
+    """Register 6 GitLab tools with optional repo access control."""
     repo_access = config.get("repo_access", {})
 
     def _can_access_repo(repo_name: str) -> bool:
@@ -328,6 +352,16 @@ def _register_gitlab_tools(
         if repo_name not in repo_access:
             return True
         return agent_key in repo_access[repo_name]
+
+    @server.tool(
+        name="list_repos",
+        description="List all GitLab repositories. Returns name, description, and commit count for each.",
+    )
+    async def list_repos() -> str:
+        t0 = time.time()
+        result = await _flask("GET", "/api/gitlab/repos", flask_url)
+        _record_audit(agent_key, "list_repos", {}, f"{len(result)} repos", (time.time() - t0) * 1000)
+        return json.dumps(result)
 
     @server.tool(
         name="create_repo",
@@ -402,7 +436,17 @@ def _register_ticket_tools(
     flask_url: str,
     config: dict,
 ):
-    """Register 4 ticket tools."""
+    """Register 5 ticket tools."""
+
+    @server.tool(
+        name="get_ticket",
+        description="Get a single ticket's full details including description, comments, and history by ticket ID.",
+    )
+    async def get_ticket(ticket_id: str) -> str:
+        t0 = time.time()
+        result = await _flask("GET", f"/api/tickets/{ticket_id}", flask_url)
+        _record_audit(agent_key, "get_ticket", {"ticket_id": ticket_id}, "read", (time.time() - t0) * 1000)
+        return json.dumps(result)
 
     @server.tool(
         name="create_ticket",
@@ -476,7 +520,29 @@ def _register_memo_tools(
     flask_url: str,
     config: dict,
 ):
-    """Register 2 memo tools."""
+    """Register 5 memo tools."""
+
+    @server.tool(
+        name="list_memos",
+        description="List all memo discussion threads. Returns thread ID, title, creator, and post count for each.",
+    )
+    async def list_memos() -> str:
+        t0 = time.time()
+        result = await _flask("GET", "/api/memos/threads", flask_url)
+        _record_audit(agent_key, "list_memos", {}, f"{len(result)} threads", (time.time() - t0) * 1000)
+        return json.dumps(result)
+
+    @server.tool(
+        name="get_memo_thread",
+        description="Get a memo thread's details and all its posts/replies.",
+    )
+    async def get_memo_thread(thread_id: str) -> str:
+        t0 = time.time()
+        thread = await _flask("GET", f"/api/memos/threads/{thread_id}", flask_url)
+        posts = await _flask("GET", f"/api/memos/threads/{thread_id}/posts", flask_url)
+        thread["posts"] = posts
+        _record_audit(agent_key, "get_memo_thread", {"thread_id": thread_id}, f"{len(posts)} posts", (time.time() - t0) * 1000)
+        return json.dumps(thread)
 
     @server.tool(
         name="create_memo",
@@ -502,6 +568,16 @@ def _register_memo_tools(
         _record_audit(agent_key, "reply_to_memo", {"thread_id": thread_id}, "replied", (time.time() - t0) * 1000)
         return json.dumps(result)
 
+    @server.tool(
+        name="delete_memo",
+        description="Delete a memo thread and all its posts.",
+    )
+    async def delete_memo(thread_id: str) -> str:
+        t0 = time.time()
+        result = await _flask("DELETE", f"/api/memos/threads/{thread_id}", flask_url)
+        _record_audit(agent_key, "delete_memo", {"thread_id": thread_id}, "deleted", (time.time() - t0) * 1000)
+        return json.dumps(result)
+
 
 def _register_blog_tools(
     server: FastMCP,
@@ -510,7 +586,7 @@ def _register_blog_tools(
     flask_url: str,
     config: dict,
 ):
-    """Register 5 blog tools."""
+    """Register 7 blog tools."""
 
     @server.tool(
         name="list_blog_posts",
@@ -521,6 +597,18 @@ def _register_blog_tools(
         result = await _flask("GET", "/api/blog/posts", flask_url)
         _record_audit(agent_key, "list_blog_posts", {}, f"{len(result)} posts", (time.time() - t0) * 1000)
         return json.dumps(result)
+
+    @server.tool(
+        name="read_blog_post",
+        description="Read a blog post's full content and all its replies by slug.",
+    )
+    async def read_blog_post(post_slug: str) -> str:
+        t0 = time.time()
+        post = await _flask("GET", f"/api/blog/posts/{post_slug}", flask_url)
+        replies = await _flask("GET", f"/api/blog/posts/{post_slug}/replies", flask_url)
+        post["replies"] = replies
+        _record_audit(agent_key, "read_blog_post", {"post_slug": post_slug}, f"{len(replies)} replies", (time.time() - t0) * 1000)
+        return json.dumps(post)
 
     @server.tool(
         name="create_blog_post",

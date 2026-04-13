@@ -93,19 +93,22 @@ def _requeue_restart(base_url: str, scenario_name: str) -> None:
 
 # All 32 MCP tool names (must match lib/mcp_server.py registrations)
 MCP_TOOL_NAMES = [
-    # Communication (6)
-    "post_message", "get_messages", "send_dm", "get_my_dms",
+    # Communication (7)
+    "list_channels", "post_message", "get_messages", "send_dm", "get_my_dms",
     "join_channel", "get_channel_members",
-    # Documents (6)
-    "create_doc", "update_doc", "read_doc", "search_docs", "list_docs", "delete_doc",
-    # GitLab (5)
-    "create_repo", "commit_files", "read_file", "list_repo_tree", "get_repo_log",
-    # Tickets (4)
-    "create_ticket", "update_ticket", "comment_on_ticket", "list_tickets",
-    # Memos (2)
-    "create_memo", "reply_to_memo",
-    # Blog (5)
-    "list_blog_posts", "create_blog_post", "reply_to_blog", "update_blog_post", "delete_blog_post",
+    # Documents (7)
+    "create_doc", "update_doc", "read_doc", "search_docs", "list_docs",
+    "delete_doc", "append_doc",
+    # GitLab (6)
+    "list_repos", "create_repo", "commit_files", "read_file",
+    "list_repo_tree", "get_repo_log",
+    # Tickets (5)
+    "get_ticket", "create_ticket", "update_ticket", "comment_on_ticket", "list_tickets",
+    # Memos (5)
+    "list_memos", "get_memo_thread", "create_memo", "reply_to_memo", "delete_memo",
+    # Blog (7)
+    "list_blog_posts", "read_blog_post", "create_blog_post", "reply_to_blog",
+    "update_blog_post", "delete_blog_post",
     # Email (2)
     "send_email", "get_emails",
     # Meta (6)
