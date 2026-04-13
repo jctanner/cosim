@@ -28,11 +28,15 @@ LOGS_DIR = Path(__file__).parent.parent / "var" / "logs"
 # Regexes to parse ResultMessage lines written by agent_runner.
 # The usage dict contains nested sub-dicts, so we extract token counts
 # directly from the line rather than trying to parse the full dict.
+# SDK repr format: ResultMessage(...total_cost_usd=0.123, usage={'input_tokens': 10, ...})
 _RESULT_MSG_RE = re.compile(r"ResultMessage\(.*?total_cost_usd=(?P<cost>[0-9eE.+-]+|None)")
-_INPUT_TOKENS_RE = re.compile(r"'input_tokens':\s*(\d+)")
-_OUTPUT_TOKENS_RE = re.compile(r"'output_tokens':\s*(\d+)")
-_CACHE_CREATE_RE = re.compile(r"'cache_creation_input_tokens':\s*(\d+)")
-_CACHE_READ_RE = re.compile(r"'cache_read_input_tokens':\s*(\d+)")
+# Claude CLI JSON format: {"type":"result","total_cost_usd":0.123,"usage":{"input_tokens":10,...}}
+_RESULT_JSON_RE = re.compile(r'"type"\s*:\s*"result".*?"total_cost_usd"\s*:\s*(?P<cost>[0-9eE.+-]+|null)')
+# Token patterns match both single-quoted (Python repr) and double-quoted (JSON) keys
+_INPUT_TOKENS_RE = re.compile(r"""["']input_tokens["']\s*:\s*(\d+)""")
+_OUTPUT_TOKENS_RE = re.compile(r"""["']output_tokens["']\s*:\s*(\d+)""")
+_CACHE_CREATE_RE = re.compile(r"""["']cache_creation_input_tokens["']\s*:\s*(\d+)""")
+_CACHE_READ_RE = re.compile(r"""["']cache_read_input_tokens["']\s*:\s*(\d+)""")
 
 
 def _parse_usage_from_logs() -> dict:
@@ -62,14 +66,14 @@ def _parse_usage_from_logs() -> dict:
         try:
             with open(log_path, encoding="utf-8", errors="replace") as f:
                 for line in f:
-                    m = _RESULT_MSG_RE.search(line)
+                    m = _RESULT_MSG_RE.search(line) or _RESULT_JSON_RE.search(line)
                     if not m:
                         continue
                     agent_data["api_calls"] += 1
 
                     # Parse cost
                     cost_str = m.group("cost")
-                    if cost_str and cost_str != "None":
+                    if cost_str and cost_str not in ("None", "null"):
                         try:
                             agent_data["total_cost_usd"] += float(cost_str)
                         except ValueError:
@@ -3915,10 +3919,40 @@ function formatCost(usd) {
   return '$0.00';
 }
 
+let _lastUsageData = null;
 async function loadUsage() {
   try {
     const resp = await fetch('/api/usage');
+    if (!resp.ok) return;  // keep previous data on error
     const data = await resp.json();
+    if (!data || !data.totals) return;  // keep previous data on bad response
+
+    // Merge with previous data — keep highest values per agent to avoid flicker
+    // from partial log reads during active writes
+    if (_lastUsageData && data.agents) {
+      const prevByName = {};
+      (_lastUsageData.agents || []).forEach(a => { prevByName[a.name] = a; });
+      data.agents.forEach(a => {
+        const prev = prevByName[a.name];
+        if (prev) {
+          a.api_calls = Math.max(a.api_calls, prev.api_calls);
+          a.input_tokens = Math.max(a.input_tokens, prev.input_tokens);
+          a.output_tokens = Math.max(a.output_tokens, prev.output_tokens);
+          a.total_cost_usd = Math.max(a.total_cost_usd, prev.total_cost_usd);
+          delete prevByName[a.name];
+        }
+      });
+      // Keep agents that were in previous data but missing from current parse
+      Object.values(prevByName).forEach(a => { data.agents.push(a); });
+      data.agents.sort((a, b) => b.total_cost_usd - a.total_cost_usd);
+      // Recompute totals from merged agents
+      data.totals.api_calls = data.agents.reduce((s, a) => s + a.api_calls, 0);
+      data.totals.input_tokens = data.agents.reduce((s, a) => s + a.input_tokens, 0);
+      data.totals.output_tokens = data.agents.reduce((s, a) => s + a.output_tokens, 0);
+      data.totals.total_cost_usd = data.agents.reduce((s, a) => s + a.total_cost_usd, 0);
+    }
+    _lastUsageData = data;
+
     const totals = data.totals;
     const agents = data.agents;
 
@@ -3959,7 +3993,7 @@ async function loadUsage() {
 
     container.appendChild(grid);
   } catch(e) {
-    // silently ignore fetch errors
+    // keep previous data on fetch errors
   }
 }
 
@@ -5004,6 +5038,7 @@ async function reloadAllState() {
   messagesByChannel = {};
   seenIds.clear();
   unreadByChannel = {};
+  _lastUsageData = null;
   currentChannel = '#general';
   await loadPersonas();
   await loadRoles();
