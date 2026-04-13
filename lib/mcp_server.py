@@ -222,7 +222,7 @@ def _register_document_tools(
     flask_url: str,
     config: dict,
 ):
-    """Register 5 document tools with folder access control."""
+    """Register 6 document tools with folder access control."""
     my_folders = {
         folder for folder, members in config.get("folder_access", {}).items()
         if agent_key in members
@@ -297,6 +297,18 @@ def _register_document_tools(
         if not folder:
             result = [d for d in result if d.get("folder", "") in my_folders]
         _record_audit(agent_key, "list_docs", {"folder": folder}, f"{len(result)} docs", (time.time() - t0) * 1000)
+        return json.dumps(result)
+
+    @server.tool(
+        name="delete_doc",
+        description="Delete a document by folder and slug. Only works in folders you have access to.",
+    )
+    async def delete_doc(folder: str, slug: str) -> str:
+        if folder not in my_folders:
+            return f"Error: you don't have access to folder '{folder}'. Your folders: {sorted(my_folders)}"
+        t0 = time.time()
+        result = await _flask("DELETE", f"/api/docs/{folder}/{slug}", flask_url)
+        _record_audit(agent_key, "delete_doc", {"folder": folder, "slug": slug}, "deleted", (time.time() - t0) * 1000)
         return json.dumps(result)
 
 
@@ -498,7 +510,17 @@ def _register_blog_tools(
     flask_url: str,
     config: dict,
 ):
-    """Register 2 blog tools."""
+    """Register 5 blog tools."""
+
+    @server.tool(
+        name="list_blog_posts",
+        description="List all blog posts. Returns title, slug, author, status, tags, and reply count for each post.",
+    )
+    async def list_blog_posts() -> str:
+        t0 = time.time()
+        result = await _flask("GET", "/api/blog/posts", flask_url)
+        _record_audit(agent_key, "list_blog_posts", {}, f"{len(result)} posts", (time.time() - t0) * 1000)
+        return json.dumps(result)
 
     @server.tool(
         name="create_blog_post",
@@ -528,6 +550,43 @@ def _register_blog_tools(
             "text": text, "author": display_name,
         })
         _record_audit(agent_key, "reply_to_blog", {"post_slug": post_slug}, "replied", (time.time() - t0) * 1000)
+        return json.dumps(result)
+
+    @server.tool(
+        name="update_blog_post",
+        description="Update an existing blog post. You can change title, body, status (draft/published/unpublished), is_external, or tags.",
+    )
+    async def update_blog_post(
+        post_slug: str, title: str | None = None, body: str | None = None,
+        status: str | None = None, is_external: bool | None = None,
+        tags: list[str] | None = None,
+    ) -> str:
+        t0 = time.time()
+        payload: dict[str, Any] = {}
+        if title is not None:
+            payload["title"] = title
+        if body is not None:
+            payload["body"] = body
+        if status is not None:
+            payload["status"] = status
+        if is_external is not None:
+            payload["is_external"] = is_external
+        if tags is not None:
+            payload["tags"] = tags
+        if not payload:
+            return "Error: no fields to update. Provide at least one of: title, body, status, is_external, tags."
+        result = await _flask("PUT", f"/api/blog/posts/{post_slug}", flask_url, json=payload)
+        _record_audit(agent_key, "update_blog_post", {"post_slug": post_slug}, "updated", (time.time() - t0) * 1000)
+        return json.dumps(result)
+
+    @server.tool(
+        name="delete_blog_post",
+        description="Delete a blog post and all its replies.",
+    )
+    async def delete_blog_post(post_slug: str) -> str:
+        t0 = time.time()
+        result = await _flask("DELETE", f"/api/blog/posts/{post_slug}", flask_url)
+        _record_audit(agent_key, "delete_blog_post", {"post_slug": post_slug}, "deleted", (time.time() - t0) * 1000)
         return json.dumps(result)
 
 

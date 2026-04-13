@@ -458,9 +458,9 @@ def _reinitialize():
 def _restore_session_extras(instance_name: str):
     """Re-restore session data that gets cleared by _load_scenario / _reinitialize.
 
-    load_session() restores memos, events, emails, and recaps, but
+    load_session() restores memos, events, emails, blog, and recaps, but
     _load_scenario() resets the event pool and _reinitialize() clears
-    memos, emails, and recaps. This function re-applies the saved data.
+    memos, emails, blog, and recaps. This function re-applies the saved data.
     """
     import json
     from lib.session import INSTANCES_DIR
@@ -495,6 +495,16 @@ def _restore_session_extras(instance_name: str):
         try:
             from lib.email import restore_inbox
             restore_inbox(json.loads(emails_path.read_text()))
+        except Exception:
+            pass
+
+    # Blog
+    blog_path = instance_dir / "blog.json"
+    if blog_path.exists():
+        try:
+            from lib.blog import restore_blog
+            blog_data = json.loads(blog_path.read_text())
+            restore_blog(blog_data.get("posts", {}), blog_data.get("replies", []))
         except Exception:
             pass
 
