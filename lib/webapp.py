@@ -1668,7 +1668,7 @@ WEB_UI = """<!DOCTYPE html>
             <button id="blog-delete-btn" style="background:transparent;border:1px solid var(--accent);color:var(--accent);padding:4px 10px;border-radius:4px;font-size:11px;cursor:pointer" title="Delete post">Delete</button>
           </div>
         </div>
-        <div id="blog-post-body" style="font-size:14px;color:var(--text);line-height:1.7;margin-bottom:20px;white-space:pre-wrap"></div>
+        <div id="blog-post-body" style="font-size:14px;color:var(--text);line-height:1.7;margin-bottom:20px"></div>
         <div style="border-top:1px solid var(--border-dark);padding-top:12px">
           <h3 id="blog-replies-header" style="font-size:14px;color:var(--text);margin-bottom:10px"></h3>
           <div id="blog-replies-list" style="margin-bottom:16px"></div>
@@ -4567,7 +4567,7 @@ async function viewBlogPost(slug) {
     tagsEl.appendChild(span);
   });
 
-  document.getElementById('blog-post-body').textContent = post.body || '';
+  document.getElementById('blog-post-body').innerHTML = renderMarkdown(post.body || '');
 
   const replies = post.replies || [];
   document.getElementById('blog-replies-header').textContent = replies.length + ' Repl' + (replies.length !== 1 ? 'ies' : 'y');
@@ -4582,7 +4582,7 @@ async function viewBlogPost(slug) {
         '<span class="blog-reply-author">' + escapeHtml(r.author) + '</span>' +
         '<span class="blog-reply-date">' + ts + '</span>' +
       '</div>' +
-      '<div class="blog-reply-text">' + escapeHtml(r.text) + '</div>';
+      '<div class="blog-reply-text">' + renderMarkdown(r.text) + '</div>';
     repliesList.appendChild(div);
   });
 
