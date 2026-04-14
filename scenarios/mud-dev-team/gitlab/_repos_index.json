@@ -1,0 +1,8 @@
+{
+  "realm-of-the-forgotten-crown": {
+    "name": "realm-of-the-forgotten-crown",
+    "description": "A text-based MUD built in Python — asyncio server, combat engine, world builder",
+    "created_by": "Tyraziel (Head Wizard)",
+    "created_at": 1742428800.0
+  }
+}
