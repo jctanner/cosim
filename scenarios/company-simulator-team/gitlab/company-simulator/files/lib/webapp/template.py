@@ -1,539 +1,5 @@
-"""Flask chat server with SSE broadcast and web UI."""
+"""Single-page HTML/CSS/JS template for the web UI."""
 
-import json
-import re
-import time
-import queue
-import threading
-from pathlib import Path
-
-from flask import Flask, Response, jsonify, request
-
-from lib.docs import slugify, DEFAULT_FOLDERS, DEFAULT_FOLDER_ACCESS
-from lib.personas import DEFAULT_CHANNELS, DEFAULT_MEMBERSHIPS, PERSONAS
-from lib.gitlab import GITLAB_DIR, init_gitlab_storage, load_repos_index, save_repos_index, generate_commit_id
-from lib.tickets import TICKETS_DIR, init_tickets_storage, load_tickets_index, save_tickets_index, generate_ticket_id
-from lib.session import (
-    save_session, load_session, new_session, list_sessions,
-    get_current_session, set_scenario, get_memberships_from_instance,
-)
-from lib.scenario_loader import list_scenarios
-
-
-CHAT_LOG = Path(__file__).parent.parent / "var" / "chat.log"
-DOCS_DIR = Path(__file__).parent.parent / "var" / "docs"
-LOGS_DIR = Path(__file__).parent.parent / "var" / "logs"
-
-# Regexes to parse ResultMessage lines written by agent_runner.
-# The usage dict contains nested sub-dicts, so we extract token counts
-# directly from the line rather than trying to parse the full dict.
-_RESULT_MSG_RE = re.compile(r"ResultMessage\(.*?total_cost_usd=(?P<cost>[0-9eE.+-]+|None)")
-_INPUT_TOKENS_RE = re.compile(r"'input_tokens':\s*(\d+)")
-_OUTPUT_TOKENS_RE = re.compile(r"'output_tokens':\s*(\d+)")
-_CACHE_CREATE_RE = re.compile(r"'cache_creation_input_tokens':\s*(\d+)")
-_CACHE_READ_RE = re.compile(r"'cache_read_input_tokens':\s*(\d+)")
-
-
-def _parse_usage_from_logs() -> dict:
-    """Parse token usage and cost data from agent log files in var/logs/.
-
-    Returns dict with 'totals' (session-wide) and 'agents' (per-agent list).
-    """
-    agents: dict[str, dict] = {}
-
-    if not LOGS_DIR.is_dir():
-        return {"totals": {"input_tokens": 0, "output_tokens": 0,
-                           "total_cost_usd": 0.0, "api_calls": 0},
-                "agents": []}
-
-    for log_path in sorted(LOGS_DIR.glob("*.log")):
-        # Derive agent name from log filename (reverse of agent_runner's naming)
-        agent_name = log_path.stem.replace("_", " ")
-
-        agent_data = {
-            "name": agent_name,
-            "input_tokens": 0,
-            "output_tokens": 0,
-            "total_cost_usd": 0.0,
-            "api_calls": 0,
-        }
-
-        try:
-            with open(log_path, encoding="utf-8", errors="replace") as f:
-                for line in f:
-                    m = _RESULT_MSG_RE.search(line)
-                    if not m:
-                        continue
-                    agent_data["api_calls"] += 1
-
-                    # Parse cost
-                    cost_str = m.group("cost")
-                    if cost_str and cost_str != "None":
-                        try:
-                            agent_data["total_cost_usd"] += float(cost_str)
-                        except ValueError:
-                            pass
-
-                    # Extract token counts directly from line text.
-                    # Input = input_tokens + cache_creation + cache_read
-                    for pat in (_INPUT_TOKENS_RE, _CACHE_CREATE_RE, _CACHE_READ_RE):
-                        tok_m = pat.search(line)
-                        if tok_m:
-                            agent_data["input_tokens"] += int(tok_m.group(1))
-
-                    tok_m = _OUTPUT_TOKENS_RE.search(line)
-                    if tok_m:
-                        agent_data["output_tokens"] += int(tok_m.group(1))
-        except OSError:
-            continue
-
-        if agent_data["api_calls"] > 0:
-            agents[agent_name] = agent_data
-
-    # Compute session totals
-    totals = {
-        "input_tokens": sum(a["input_tokens"] for a in agents.values()),
-        "output_tokens": sum(a["output_tokens"] for a in agents.values()),
-        "total_cost_usd": round(sum(a["total_cost_usd"] for a in agents.values()), 6),
-        "api_calls": sum(a["api_calls"] for a in agents.values()),
-    }
-
-    # Round per-agent costs
-    for a in agents.values():
-        a["total_cost_usd"] = round(a["total_cost_usd"], 6)
-
-    return {
-        "totals": totals,
-        "agents": sorted(agents.values(), key=lambda a: a["total_cost_usd"], reverse=True),
-    }
-
-
-# In-memory state
-_messages: list[dict] = []
-_lock = threading.Lock()
-_subscribers: list[queue.Queue] = []
-_sub_lock = threading.Lock()
-
-# Channel registry: channel_name -> {description, is_external, created_at}
-_channels: dict[str, dict] = {}
-# Channel membership: channel_name -> set of persona keys
-_channel_members: dict[str, set[str]] = {}
-_channel_lock = threading.Lock()
-
-# Document index: slug -> metadata dict
-_docs_index: dict[str, dict] = {}
-_docs_lock = threading.Lock()
-
-# Folder registry: folder_name -> {type, description}
-_folders: dict[str, dict] = {}
-# Folder access: folder_name -> set of persona keys
-_folder_access: dict[str, set[str]] = {}
-_folder_lock = threading.Lock()
-
-# GitLab state: repo_name -> metadata, repo_name -> commit list
-_gitlab_repos: dict[str, dict] = {}
-_gitlab_commits: dict[str, list[dict]] = {}
-_gitlab_lock = threading.Lock()
-
-# Tickets state: ticket_id -> full ticket dict
-_tickets: dict[str, dict] = {}
-_tickets_lock = threading.Lock()
-
-# Recaps: list of generated recaps
-_recaps: list[dict] = []
-
-# Agent online/offline state: persona_key -> True (online) / False (offline)
-_agent_online: dict[str, bool] = {}
-_agent_firing: set[str] = set()  # agents being fired (waiting for session close)
-_agent_verbosity: dict[str, str] = {}  # persona_key -> verbosity level
-_agent_online_lock = threading.Lock()
-
-# Agent thoughts: persona_key -> list of {thinking, response, timestamp}
-_agent_thoughts: dict[str, list[dict]] = {}
-_agent_thoughts_lock = threading.Lock()
-
-# Orchestrator status (updated via heartbeat from orchestrator process)
-_orchestrator_status: dict = {
-    "state": "disconnected",  # disconnected, starting, ready, responding, restarting
-    "scenario": None,
-    "agents": {},             # persona_key -> {state, display_name}
-    "last_heartbeat": 0,
-    "message": "",
-}
-_orchestrator_lock = threading.Lock()
-
-# Control signal queue for orchestrator (checked on each poll)
-_orchestrator_commands: list[dict] = []
-_command_lock = threading.Lock()
-
-
-def _init_channels():
-    """Initialize channels and memberships from persona defaults."""
-    with _channel_lock:
-        _channels.clear()
-        _channel_members.clear()
-        now = time.time()
-        for ch_name, ch_info in DEFAULT_CHANNELS.items():
-            _channels[ch_name] = {
-                "description": ch_info["description"],
-                "is_external": ch_info["is_external"],
-                "created_at": now,
-            }
-            _channel_members[ch_name] = set()
-
-        # Always create #system channel for operator messages (no agent membership)
-        _channels["#system"] = {
-            "description": "System events and operator messages",
-            "is_external": False,
-            "is_system": True,
-            "created_at": now,
-        }
-        _channel_members["#system"] = set()
-
-        # Create #dms channel for agent-to-agent DM visibility
-        _channels["#dms"] = {
-            "description": "Agent direct messages (operator visibility)",
-            "is_external": False,
-            "is_system": True,
-            "created_at": now,
-        }
-        _channel_members["#dms"] = set()
-
-        # Create #announcements channel for company-wide emails
-        _channels["#announcements"] = {
-            "description": "Company-wide announcements and emails",
-            "is_external": False,
-            "is_system": False,  # agents should see this channel
-            "created_at": now,
-        }
-        # All agents are members of #announcements
-        _channel_members["#announcements"] = set(PERSONAS.keys())
-
-        # Create director channels for each persona
-        for pk, p_info in PERSONAS.items():
-            ch_name = f"#director-{pk}"
-            display = p_info.get("display_name", pk)
-            _channels[ch_name] = {
-                "description": f"Private channel with {display}",
-                "is_external": False,
-                "is_director": True,
-                "director_persona": pk,
-                "created_at": now,
-            }
-            _channel_members[ch_name] = set()
-
-        for persona_key, ch_set in DEFAULT_MEMBERSHIPS.items():
-            # Auto-add all agents to #announcements
-            ch_set.add("#announcements")
-            for ch_name in ch_set:
-                if ch_name in _channel_members:
-                    _channel_members[ch_name].add(persona_key)
-
-
-def _persist_message(msg: dict):
-    """Append a message to chat.log."""
-    with open(CHAT_LOG, "a") as f:
-        f.write(json.dumps(msg) + "\n")
-
-
-def _broadcast(msg: dict):
-    """Send message to all SSE subscribers."""
-    data = json.dumps(msg)
-    with _sub_lock:
-        dead = []
-        for q in _subscribers:
-            try:
-                q.put_nowait(data)
-            except queue.Full:
-                dead.append(q)
-        for q in dead:
-            _subscribers.remove(q)
-
-
-def _broadcast_channel_update(channel_name: str, members: list[str]):
-    """Notify SSE subscribers that a channel's membership changed."""
-    data = json.dumps({
-        "type": "channel_update",
-        "channel": channel_name,
-        "members": members,
-    })
-    with _sub_lock:
-        dead = []
-        for q in _subscribers:
-            try:
-                q.put_nowait(data)
-            except queue.Full:
-                dead.append(q)
-        for q in dead:
-            _subscribers.remove(q)
-
-
-# -- Document storage helpers --
-
-def _init_folders():
-    """Initialize folder registry from defaults."""
-    with _folder_lock:
-        _folders.clear()
-        _folder_access.clear()
-        _folders.update(DEFAULT_FOLDERS)
-        for folder_name, access_set in DEFAULT_FOLDER_ACCESS.items():
-            _folder_access[folder_name] = set(access_set)
-
-
-def _init_docs():
-    """Create docs/ dir with folder subdirs and load or migrate index."""
-    DOCS_DIR.mkdir(parents=True, exist_ok=True)
-
-    # Create subdirectories for each folder
-    for folder_name in DEFAULT_FOLDERS:
-        (DOCS_DIR / folder_name).mkdir(exist_ok=True)
-
-    index_path = DOCS_DIR / "_index.json"
-    with _docs_lock:
-        _docs_index.clear()
-
-        # Migrate flat .txt files into shared/ folder
-        flat_files = [f for f in DOCS_DIR.glob("*.txt") if f.is_file()]
-        if flat_files:
-            shared_dir = DOCS_DIR / "shared"
-            shared_dir.mkdir(exist_ok=True)
-            for txt in flat_files:
-                dest = shared_dir / txt.name
-                if not dest.exists():
-                    txt.rename(dest)
-                else:
-                    txt.unlink()
-
-        if index_path.exists():
-            try:
-                data = json.loads(index_path.read_text())
-                _docs_index.update(data)
-            except (json.JSONDecodeError, OSError):
-                pass
-
-            # Migrate existing entries: add "folder" field if missing
-            for slug, meta in _docs_index.items():
-                if "folder" not in meta:
-                    meta["folder"] = "shared"
-            _save_index()
-
-        if not _docs_index:
-            # Fallback: scan .txt files in folder subdirectories
-            for folder_name in DEFAULT_FOLDERS:
-                folder_dir = DOCS_DIR / folder_name
-                if not folder_dir.is_dir():
-                    continue
-                for txt in folder_dir.glob("*.txt"):
-                    slug = txt.stem
-                    stat = txt.stat()
-                    content = txt.read_text(encoding="utf-8", errors="replace")
-                    _docs_index[slug] = {
-                        "slug": slug,
-                        "title": slug.replace("-", " ").title(),
-                        "folder": folder_name,
-                        "created_at": stat.st_ctime,
-                        "updated_at": stat.st_mtime,
-                        "created_by": "unknown",
-                        "size": stat.st_size,
-                        "preview": content[:100],
-                    }
-
-
-def _save_index():
-    """Persist _docs_index to docs/_index.json.  Caller must hold _docs_lock."""
-    index_path = DOCS_DIR / "_index.json"
-    index_path.write_text(json.dumps(_docs_index, indent=2))
-
-
-def _broadcast_doc_event(action: str, doc_meta: dict):
-    """Send a doc_event through the existing SSE subscribers."""
-    payload = {"type": "doc_event", "action": action}
-    payload.update(doc_meta)
-    data = json.dumps(payload)
-    with _sub_lock:
-        dead = []
-        for q in _subscribers:
-            try:
-                q.put_nowait(data)
-            except queue.Full:
-                dead.append(q)
-        for q in dead:
-            _subscribers.remove(q)
-
-
-def _broadcast_gitlab_event(action: str, data: dict):
-    """Send a gitlab_event through the existing SSE subscribers."""
-    payload = {"type": "gitlab_event", "action": action}
-    payload.update(data)
-    raw = json.dumps(payload)
-    with _sub_lock:
-        dead = []
-        for q in _subscribers:
-            try:
-                q.put_nowait(raw)
-            except queue.Full:
-                dead.append(q)
-        for q in dead:
-            _subscribers.remove(q)
-
-
-def _init_gitlab():
-    """Initialize GitLab storage and load repos/commits from disk."""
-    init_gitlab_storage()
-    with _gitlab_lock:
-        _gitlab_repos.clear()
-        _gitlab_commits.clear()
-        index = load_repos_index()
-        _gitlab_repos.update(index)
-        # Load commit logs for each repo
-        for repo_name in index:
-            commits_path = GITLAB_DIR / repo_name / "_commits.json"
-            if commits_path.exists():
-                try:
-                    _gitlab_commits[repo_name] = json.loads(commits_path.read_text())
-                except (json.JSONDecodeError, OSError):
-                    _gitlab_commits[repo_name] = []
-            else:
-                _gitlab_commits[repo_name] = []
-
-
-def _init_tickets():
-    """Initialize tickets storage and load tickets from disk."""
-    init_tickets_storage()
-    with _tickets_lock:
-        _tickets.clear()
-        index = load_tickets_index()
-        _tickets.update(index)
-
-
-def _init_agent_online():
-    """Initialize agent online/offline state from PERSONAS."""
-    with _agent_online_lock:
-        _agent_online.clear()
-        for key in PERSONAS:
-            _agent_online[key] = True
-
-
-def _load_chat_log():
-    """Load messages from chat.log into _messages."""
-    with _lock:
-        _messages.clear()
-    if not CHAT_LOG.exists():
-        return
-    with open(CHAT_LOG) as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                msg = json.loads(line)
-                with _lock:
-                    _messages.append(msg)
-            except json.JSONDecodeError:
-                pass
-
-
-def _reinitialize():
-    """Re-initialize all subsystems from disk state."""
-    _init_channels()
-    _init_folders()
-    _init_docs()
-    _init_gitlab()
-    _init_tickets()
-    _init_agent_online()
-    _load_chat_log()
-    # Clear emails and recaps (restored separately by session load if needed)
-    from lib.email import clear_inbox
-    clear_inbox()
-    from lib.memos import clear_memos
-    clear_memos()
-    from lib.blog import clear_blog
-    clear_blog()
-    _recaps.clear()
-
-
-def _restore_session_extras(instance_name: str):
-    """Re-restore session data that gets cleared by _load_scenario / _reinitialize.
-
-    load_session() restores memos, events, emails, and recaps, but
-    _load_scenario() resets the event pool and _reinitialize() clears
-    memos, emails, and recaps. This function re-applies the saved data.
-    """
-    import json
-    from lib.session import INSTANCES_DIR
-
-    instance_dir = INSTANCES_DIR / instance_name
-
-    # Memos
-    memos_path = instance_dir / "memos.json"
-    if memos_path.exists():
-        try:
-            from lib.memos import restore_memos
-            memo_data = json.loads(memos_path.read_text())
-            restore_memos(memo_data.get("threads", {}), memo_data.get("posts", []))
-        except Exception:
-            pass
-
-    # Events (pool + log)
-    pool_path = instance_dir / "event_pool.json"
-    log_path = instance_dir / "event_log.json"
-    if pool_path.exists():
-        try:
-            from lib.events import restore_events
-            pool = json.loads(pool_path.read_text())
-            log = json.loads(log_path.read_text()) if log_path.exists() else []
-            restore_events(pool, log)
-        except Exception:
-            pass
-
-    # Emails
-    emails_path = instance_dir / "emails.json"
-    if emails_path.exists():
-        try:
-            from lib.email import restore_inbox
-            restore_inbox(json.loads(emails_path.read_text()))
-        except Exception:
-            pass
-
-    # Recaps
-    recaps_path = instance_dir / "recaps.json"
-    if recaps_path.exists():
-        try:
-            data = json.loads(recaps_path.read_text())
-            _recaps.clear()
-            _recaps.extend(data)
-        except Exception:
-            pass
-
-    # Agent thoughts
-    thoughts_path = instance_dir / "thoughts.json"
-    if thoughts_path.exists():
-        try:
-            thoughts = json.loads(thoughts_path.read_text())
-            with _agent_thoughts_lock:
-                _agent_thoughts.clear()
-                _agent_thoughts.update(thoughts)
-        except Exception:
-            pass
-
-
-def _broadcast_tickets_event(action: str, data: dict):
-    """Send a tickets_event through the existing SSE subscribers."""
-    payload = {"type": "tickets_event", "action": action}
-    payload.update(data)
-    raw = json.dumps(payload)
-    with _sub_lock:
-        dead = []
-        for q in _subscribers:
-            try:
-                q.put_nowait(raw)
-            except queue.Full:
-                dead.append(q)
-        for q in dead:
-            _subscribers.remove(q)
-
-
-# -- Web UI HTML --
 
 WEB_UI = """<!DOCTYPE html>
 <html lang="en">
@@ -925,6 +391,12 @@ WEB_UI = """<!DOCTYPE html>
   #messages-panel { flex: 1; overflow-y: auto; padding: 12px 20px; display: flex;
                     flex-direction: column; gap: 6px; }
   .msg { max-width: 85%; padding: 10px 14px; border-radius: 12px; line-height: 1.5; }
+  .msg-row { display: flex; gap: 10px; align-items: flex-start; }
+  .msg-body { flex: 1; min-width: 0; }
+  .msg-avatar { width: 32px; height: 32px; border-radius: 6px; flex-shrink: 0;
+                display: flex; align-items: center; justify-content: center;
+                font-size: 14px; font-weight: 700; color: #fff; margin-top: 1px; }
+  .msg-avatar img { width: 32px; height: 32px; border-radius: 6px; object-fit: cover; }
   .msg .sender { font-weight: 700; font-size: 13px; margin-bottom: 4px; }
   .msg .content { font-size: 14px; word-break: break-word; }
   .msg .content h1 { font-size: 16px; margin: 8px 0 4px; color: var(--text); }
@@ -1649,7 +1121,7 @@ WEB_UI = """<!DOCTYPE html>
             <button id="blog-delete-btn" style="background:transparent;border:1px solid var(--accent);color:var(--accent);padding:4px 10px;border-radius:4px;font-size:11px;cursor:pointer" title="Delete post">Delete</button>
           </div>
         </div>
-        <div id="blog-post-body" style="font-size:14px;color:var(--text);line-height:1.7;margin-bottom:20px;white-space:pre-wrap"></div>
+        <div id="blog-post-body" style="font-size:14px;color:var(--text);line-height:1.7;margin-bottom:20px"></div>
         <div style="border-top:1px solid var(--border-dark);padding-top:12px">
           <h3 id="blog-replies-header" style="font-size:14px;color:var(--text);margin-bottom:10px"></h3>
           <div id="blog-replies-list" style="margin-bottom:16px"></div>
@@ -1670,8 +1142,32 @@ WEB_UI = """<!DOCTYPE html>
   <!-- Advanced tab -->
   <div id="advanced-pane" class="tab-pane">
     <div id="advanced-main" style="flex:1;padding:20px;overflow-y:auto">
-      <div style="max-width:600px">
+      <div style="max-width:800px">
         <h3 style="color:var(--text);margin-bottom:16px">Advanced Actions</h3>
+
+        <!-- Session Manager -->
+        <div style="margin-bottom:32px">
+          <div style="font-size:12px;font-weight:600;color:var(--text);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">Session Manager</div>
+          <p style="font-size:12px;color:var(--text-dim);margin-bottom:12px">Manage saved sessions — load, rename, or delete.</p>
+          <div id="session-manager-table-wrap" style="overflow-x:auto">
+            <table id="session-manager-table" style="width:100%;border-collapse:collapse;font-size:13px">
+              <thead>
+                <tr style="border-bottom:1px solid var(--border-dark);text-align:left">
+                  <th data-sm-sort="name" style="padding:8px 10px;color:var(--text-dim);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;cursor:pointer;user-select:none">Name <span class="sm-sort-arrow"></span></th>
+                  <th data-sm-sort="scenario" style="padding:8px 10px;color:var(--text-dim);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;cursor:pointer;user-select:none">Scenario <span class="sm-sort-arrow"></span></th>
+                  <th data-sm-sort="created_at" style="padding:8px 10px;color:var(--text-dim);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;cursor:pointer;user-select:none">Created <span class="sm-sort-arrow"></span></th>
+                  <th data-sm-sort="saved_at" style="padding:8px 10px;color:var(--text-dim);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;cursor:pointer;user-select:none">Last Saved <span class="sm-sort-arrow"></span></th>
+                  <th style="padding:8px 10px;color:var(--text-dim);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;text-align:right">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="session-manager-body">
+                <tr><td colspan="5" style="padding:16px 10px;color:var(--text-dim);text-align:center">Loading...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Danger Zone -->
         <div style="margin-bottom:24px">
           <div style="font-size:12px;font-weight:600;color:var(--accent);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">Danger Zone</div>
           <p style="font-size:12px;color:var(--text-dim);margin-bottom:12px">These actions are destructive and cannot be undone. Save your session first.</p>
@@ -1770,12 +1266,18 @@ WEB_UI = """<!DOCTYPE html>
 
 <!-- Save Session Modal -->
 <div class="modal-overlay" id="save-session-modal">
-  <div class="modal">
+  <div class="modal" style="max-width:480px">
     <h2>Save Session</h2>
+    <div class="modal-field" id="save-session-existing-wrap">
+      <label>Existing saves</label>
+      <div id="save-session-list" style="max-height:180px;overflow-y:auto;border:1px solid var(--border-dark);border-radius:6px;background:var(--bg-darker,var(--bg))">
+        <div style="padding:12px;color:var(--text-dim);text-align:center;font-size:12px">Loading...</div>
+      </div>
+    </div>
     <div class="modal-field">
-      <label>Session Name (optional)</label>
+      <label>Save as</label>
       <input id="save-session-name" type="text" placeholder="e.g. before-demo" autocomplete="off" />
-      <div class="field-hint">Leave blank to auto-generate from scenario + date</div>
+      <div class="field-hint">Leave blank to auto-generate. Click an existing save to branch from it.</div>
     </div>
     <div class="modal-status" id="save-session-status"></div>
     <div class="modal-actions">
@@ -1787,13 +1289,26 @@ WEB_UI = """<!DOCTYPE html>
 
 <!-- Load Session Modal -->
 <div class="modal-overlay" id="load-session-modal">
-  <div class="modal">
+  <div class="modal" style="max-width:600px">
     <h2>Load Session</h2>
     <div class="modal-field">
       <label>Saved Sessions</label>
-      <select id="load-session-select" size="6" style="height:auto"></select>
+      <div style="max-height:280px;overflow-y:auto;border:1px solid var(--border-dark);border-radius:6px">
+        <table id="load-session-table" style="width:100%;border-collapse:collapse;font-size:13px">
+          <thead>
+            <tr style="border-bottom:1px solid var(--border-dark);text-align:left;position:sticky;top:0;background:var(--bg-surface,var(--bg))">
+              <th data-lm-sort="name" style="padding:6px 10px;color:var(--text-dim);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;cursor:pointer;user-select:none">Name <span class="lm-sort-arrow"></span></th>
+              <th data-lm-sort="scenario" style="padding:6px 10px;color:var(--text-dim);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;cursor:pointer;user-select:none">Scenario <span class="lm-sort-arrow"></span></th>
+              <th data-lm-sort="created_at" style="padding:6px 10px;color:var(--text-dim);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;cursor:pointer;user-select:none">Created <span class="lm-sort-arrow"></span></th>
+              <th data-lm-sort="saved_at" style="padding:6px 10px;color:var(--text-dim);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;cursor:pointer;user-select:none">Last Saved <span class="lm-sort-arrow"></span></th>
+            </tr>
+          </thead>
+          <tbody id="load-session-body">
+            <tr><td colspan="4" style="padding:16px 10px;color:var(--text-dim);text-align:center">Loading...</td></tr>
+          </tbody>
+        </table>
+      </div>
     </div>
-    <div id="load-session-detail" style="font-size:12px;color:var(--text-dim);min-height:30px;margin-bottom:8px"></div>
     <div class="modal-status" id="load-session-status"></div>
     <div class="modal-actions">
       <button class="modal-btn-cancel" id="load-session-cancel">Cancel</button>
@@ -2058,6 +1573,7 @@ let seenIds = new Set();
 let SENDER_CLASS_MAP = {};
 let PERSONA_DISPLAY = {};
 let AGENT_NAMES = new Set();
+let PERSONA_AVATARS = {};  // display_name → {avatar: url_or_null, initial: "P", color: "#..."}
 
 // Color palette for agent personas (assigned round-robin on load)
 const AGENT_COLORS = [
@@ -2070,12 +1586,19 @@ async function loadPersonas() {
   const personas = await resp.json();
   SENDER_CLASS_MAP = {};
   PERSONA_DISPLAY = {};
+  PERSONA_AVATARS = {};
   const keys = Object.keys(personas);
   keys.forEach((key, i) => {
     const p = personas[key];
     const cls = 'msg-agent-' + i;
     SENDER_CLASS_MAP[p.display_name] = cls;
     PERSONA_DISPLAY[key] = p.display_name;
+    const color = AGENT_COLORS[i % AGENT_COLORS.length];
+    PERSONA_AVATARS[p.display_name] = {
+      avatar: p.avatar ? '/avatars/' + p.avatar : null,
+      initial: p.display_name.charAt(0).toUpperCase(),
+      color: color,
+    };
   });
   AGENT_NAMES = new Set(Object.keys(SENDER_CLASS_MAP));
 
@@ -2172,6 +1695,7 @@ document.querySelectorAll('.header-tab').forEach(tab => {
     if (target === 'blog') loadBlogPosts();
     if (target === 'recap') renderRecapList();
     if (target === 'usage') loadUsage();
+    if (target === 'advanced') loadSessionManagerTable();
   });
 });
 
@@ -2281,9 +1805,29 @@ function appendMessageEl(msg) {
   const ts = new Date(msg.timestamp * 1000).toLocaleTimeString();
   // For human senders, derive a unique color from their name
   const senderStyle = agent ? '' : ' style="color:' + hashColor(msg.sender) + '"';
-  div.innerHTML = '<div class="sender"' + senderStyle + '>' + escapeHtml(msg.sender) + '</div>'
+  // Build avatar element
+  let avatarHtml = '';
+  const pa = PERSONA_AVATARS[msg.sender];
+  if (pa) {
+    if (pa.avatar) {
+      avatarHtml = '<div class="msg-avatar"><img src="' + escapeHtml(pa.avatar) + '" alt=""></div>';
+    } else {
+      avatarHtml = '<div class="msg-avatar" style="background:' + pa.color + '">' + pa.initial + '</div>';
+    }
+  } else if (msg.sender === 'System') {
+    avatarHtml = '<div class="msg-avatar" style="background:#666">S</div>';
+  } else {
+    // Human sender fallback
+    const hc = hashColor(msg.sender);
+    const hi = msg.sender.charAt(0).toUpperCase();
+    avatarHtml = '<div class="msg-avatar" style="background:' + hc + '">' + hi + '</div>';
+  }
+  div.innerHTML = '<div class="msg-row">' + avatarHtml
+    + '<div class="msg-body">'
+    + '<div class="sender"' + senderStyle + '>' + escapeHtml(msg.sender) + '</div>'
     + '<div class="content">' + renderMarkdown(msg.content) + '</div>'
-    + '<div class="ts">' + ts + '</div>';
+    + '<div class="ts">' + ts + '</div>'
+    + '</div></div>';
   messagesPanel.appendChild(div);
   messagesPanel.scrollTop = messagesPanel.scrollHeight;
 }
@@ -3349,8 +2893,19 @@ function createNPCCard(npc) {
   const ls = npc.live_state || 'unknown';
   const lsCss = ls.replace(/ /g, '-');
   card.className = 'npc-card' + (npc.online ? '' : ' offline');
+  // Build NPC avatar for card header
+  let npcAvatarHtml = '';
+  const npa = PERSONA_AVATARS[npc.display_name];
+  if (npa) {
+    if (npa.avatar) {
+      npcAvatarHtml = '<div class="msg-avatar" style="width:24px;height:24px;font-size:11px"><img src="' + escapeHtml(npa.avatar) + '" alt="" style="width:24px;height:24px;border-radius:6px"></div>';
+    } else {
+      npcAvatarHtml = '<div class="msg-avatar" style="width:24px;height:24px;font-size:11px;background:' + npa.color + '">' + npa.initial + '</div>';
+    }
+  }
   card.innerHTML =
     '<div class="npc-card-header">' +
+      npcAvatarHtml +
       '<span class="npc-status-dot ' + lsCss + '"></span>' +
       '<span class="npc-card-name">' + escapeHtml(npc.display_name) + '</span>' +
       '<span class="npc-card-state">' + (LIVE_STATE_LABELS[ls] || ls) + '</span>' +
@@ -3494,10 +3049,18 @@ function selectThought(idx) {
 
 async function loadNPCPrompt() {
   const body = document.getElementById('npc-detail-prompt');
-  body.textContent = 'Loading...';
+  body.innerHTML = '<span style="color:var(--text-dimmer)">Loading...</span>';
   const resp = await fetch('/api/npcs/' + encodeURIComponent(_npcDetailKey) + '/prompt');
   const data = await resp.json();
-  body.textContent = data.content || data.error || 'No prompt found.';
+  if (data.error) { body.textContent = data.error; return; }
+  let html = '';
+  if (data.context) {
+    html += '<div style="margin-bottom:12px"><div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--highlight);margin-bottom:8px">Character Context</div>';
+    html += '<div style="white-space:pre-wrap">' + escapeHtml(data.context) + '</div></div>';
+    html += '<div style="border-top:2px solid var(--accent);margin:16px 0;position:relative"><span style="position:absolute;top:-10px;left:12px;background:var(--input-bg);padding:0 8px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--accent)">Simulation Directives</span></div>';
+  }
+  html += '<div style="white-space:pre-wrap;margin-top:' + (data.context ? '16px' : '0') + '">' + escapeHtml(data.prompt) + '</div>';
+  body.innerHTML = html;
 }
 
 async function loadNPCCharacter() {
@@ -3805,10 +3368,40 @@ function formatCost(usd) {
   return '$0.00';
 }
 
+let _lastUsageData = null;
 async function loadUsage() {
   try {
     const resp = await fetch('/api/usage');
+    if (!resp.ok) return;  // keep previous data on error
     const data = await resp.json();
+    if (!data || !data.totals) return;  // keep previous data on bad response
+
+    // Merge with previous data — keep highest values per agent to avoid flicker
+    // from partial log reads during active writes
+    if (_lastUsageData && data.agents) {
+      const prevByName = {};
+      (_lastUsageData.agents || []).forEach(a => { prevByName[a.name] = a; });
+      data.agents.forEach(a => {
+        const prev = prevByName[a.name];
+        if (prev) {
+          a.api_calls = Math.max(a.api_calls, prev.api_calls);
+          a.input_tokens = Math.max(a.input_tokens, prev.input_tokens);
+          a.output_tokens = Math.max(a.output_tokens, prev.output_tokens);
+          a.total_cost_usd = Math.max(a.total_cost_usd, prev.total_cost_usd);
+          delete prevByName[a.name];
+        }
+      });
+      // Keep agents that were in previous data but missing from current parse
+      Object.values(prevByName).forEach(a => { data.agents.push(a); });
+      data.agents.sort((a, b) => b.total_cost_usd - a.total_cost_usd);
+      // Recompute totals from merged agents
+      data.totals.api_calls = data.agents.reduce((s, a) => s + a.api_calls, 0);
+      data.totals.input_tokens = data.agents.reduce((s, a) => s + a.input_tokens, 0);
+      data.totals.output_tokens = data.agents.reduce((s, a) => s + a.output_tokens, 0);
+      data.totals.total_cost_usd = data.agents.reduce((s, a) => s + a.total_cost_usd, 0);
+    }
+    _lastUsageData = data;
+
     const totals = data.totals;
     const agents = data.agents;
 
@@ -3849,7 +3442,7 @@ async function loadUsage() {
 
     container.appendChild(grid);
   } catch(e) {
-    // silently ignore fetch errors
+    // keep previous data on fetch errors
   }
 }
 
@@ -3880,6 +3473,210 @@ document.getElementById('clear-all-btn').addEventListener('click', async () => {
     showNotice('Everything cleared. Fresh start.');
   }
 });
+
+// -- Session Manager (Advanced tab) --
+
+function _fmtSessionDate(ts) {
+  if (!ts) return '—';
+  const d = new Date(ts * 1000);
+  const mon = d.toLocaleString('en-US', {month: 'short'});
+  const day = d.getDate();
+  const h = d.getHours();
+  const m = String(d.getMinutes()).padStart(2, '0');
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  const h12 = h % 12 || 12;
+  return `${mon} ${day}, ${h12}:${m} ${ampm}`;
+}
+
+let _smSessions = [];
+let _smSortCol = 'saved_at';
+let _smSortAsc = false;
+
+function _smUpdateSortArrows() {
+  document.querySelectorAll('#session-manager-table th[data-sm-sort]').forEach(th => {
+    const arrow = th.querySelector('.sm-sort-arrow');
+    if (th.dataset.smSort === _smSortCol) {
+      arrow.textContent = _smSortAsc ? ' \\u25B2' : ' \\u25BC';
+      th.style.color = 'var(--text)';
+    } else {
+      arrow.textContent = '';
+      th.style.color = 'var(--text-dim)';
+    }
+  });
+}
+
+function _smRenderRows() {
+  const tbody = document.getElementById('session-manager-body');
+  if (_smSessions.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="5" style="padding:16px 10px;color:var(--text-dim);text-align:center">No saved sessions</td></tr>';
+    return;
+  }
+  const sorted = [..._smSessions];
+  sorted.sort((a, b) => {
+    let va, vb;
+    if (_smSortCol === 'name') {
+      va = (a.name || a.instance_dir).toLowerCase();
+      vb = (b.name || b.instance_dir).toLowerCase();
+    } else if (_smSortCol === 'scenario') {
+      va = (a.scenario || '').toLowerCase();
+      vb = (b.scenario || '').toLowerCase();
+    } else {
+      va = a[_smSortCol] || 0;
+      vb = b[_smSortCol] || 0;
+    }
+    if (va < vb) return _smSortAsc ? -1 : 1;
+    if (va > vb) return _smSortAsc ? 1 : -1;
+    return 0;
+  });
+  tbody.innerHTML = '';
+  sorted.forEach(s => {
+    const tr = document.createElement('tr');
+    tr.style.borderBottom = '1px solid var(--border-dark)';
+    tr.dataset.instance = s.instance_dir;
+    const nameTd = document.createElement('td');
+    nameTd.style.cssText = 'padding:8px 10px;color:var(--text)';
+    nameTd.innerHTML = '<span class="sm-name-display">' + escapeHtml(s.name || s.instance_dir) + '</span>'
+      + '<input class="sm-name-input" type="text" style="display:none;width:100%;background:var(--input-bg);color:var(--text);border:1px solid var(--accent);padding:4px 6px;border-radius:4px;font-size:13px" />';
+    const scenarioTd = document.createElement('td');
+    scenarioTd.style.cssText = 'padding:8px 10px;color:var(--text-dim)';
+    scenarioTd.textContent = s.scenario || '—';
+    const createdTd = document.createElement('td');
+    createdTd.style.cssText = 'padding:8px 10px;color:var(--text-dim);white-space:nowrap';
+    createdTd.textContent = _fmtSessionDate(s.created_at);
+    const savedTd = document.createElement('td');
+    savedTd.style.cssText = 'padding:8px 10px;color:var(--text-dim);white-space:nowrap';
+    savedTd.textContent = _fmtSessionDate(s.saved_at);
+    const actionsTd = document.createElement('td');
+    actionsTd.style.cssText = 'padding:8px 10px;text-align:right;white-space:nowrap';
+    const loadBtn = document.createElement('button');
+    loadBtn.className = 'session-btn';
+    loadBtn.textContent = 'Load';
+    loadBtn.style.cssText = 'font-size:11px;padding:3px 10px;margin-left:4px';
+    loadBtn.addEventListener('click', () => _smLoad(s.instance_dir));
+    const renameBtn = document.createElement('button');
+    renameBtn.className = 'session-btn';
+    renameBtn.textContent = 'Rename';
+    renameBtn.style.cssText = 'font-size:11px;padding:3px 10px;margin-left:4px';
+    renameBtn.addEventListener('click', () => _smStartRename(tr, s));
+    const deleteBtn = document.createElement('button');
+    deleteBtn.className = 'session-btn';
+    deleteBtn.textContent = 'Delete';
+    deleteBtn.style.cssText = 'font-size:11px;padding:3px 10px;margin-left:4px;border-color:var(--accent);color:var(--accent)';
+    deleteBtn.addEventListener('click', () => _smDelete(s.instance_dir, s.name || s.instance_dir));
+    actionsTd.appendChild(loadBtn);
+    actionsTd.appendChild(renameBtn);
+    actionsTd.appendChild(deleteBtn);
+    tr.appendChild(nameTd);
+    tr.appendChild(scenarioTd);
+    tr.appendChild(createdTd);
+    tr.appendChild(savedTd);
+    tr.appendChild(actionsTd);
+    tbody.appendChild(tr);
+  });
+  _smUpdateSortArrows();
+}
+
+document.querySelectorAll('#session-manager-table th[data-sm-sort]').forEach(th => {
+  th.addEventListener('click', () => {
+    const col = th.dataset.smSort;
+    if (_smSortCol === col) {
+      _smSortAsc = !_smSortAsc;
+    } else {
+      _smSortCol = col;
+      _smSortAsc = (col === 'name' || col === 'scenario');
+    }
+    _smRenderRows();
+  });
+});
+
+async function loadSessionManagerTable() {
+  const tbody = document.getElementById('session-manager-body');
+  tbody.innerHTML = '<tr><td colspan="5" style="padding:16px 10px;color:var(--text-dim);text-align:center">Loading...</td></tr>';
+  try {
+    const resp = await fetch('/api/session/list');
+    _smSessions = await resp.json();
+    _smRenderRows();
+  } catch (e) {
+    tbody.innerHTML = '<tr><td colspan="5" style="padding:16px 10px;color:var(--accent);text-align:center">Failed to load sessions</td></tr>';
+  }
+}
+
+async function _smLoad(instance) {
+  showLoading('Loading session...');
+  try {
+    const resp = await fetch('/api/session/load', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({instance}),
+    });
+    if (resp.ok) {
+      await reloadAllState();
+      showNotice('Session loaded.');
+    } else {
+      const err = await resp.json();
+      hideLoading();
+      showNotice('Error: ' + (err.error || 'unknown'));
+    }
+  } finally {
+    hideLoading();
+  }
+}
+
+function _smStartRename(tr, session) {
+  const display = tr.querySelector('.sm-name-display');
+  const input = tr.querySelector('.sm-name-input');
+  display.style.display = 'none';
+  input.style.display = '';
+  input.value = session.name || session.instance_dir;
+  input.focus();
+  input.select();
+  const finish = async () => {
+    input.removeEventListener('blur', finish);
+    input.removeEventListener('keydown', onKey);
+    const newName = input.value.trim();
+    if (!newName || newName === (session.name || session.instance_dir)) {
+      display.style.display = '';
+      input.style.display = 'none';
+      return;
+    }
+    try {
+      const resp = await fetch('/api/session/' + encodeURIComponent(session.instance_dir), {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({name: newName}),
+      });
+      if (resp.ok) {
+        session.name = newName;
+        display.textContent = newName;
+      }
+    } catch(e) {}
+    display.style.display = '';
+    input.style.display = 'none';
+  };
+  const onKey = (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); finish(); }
+    if (e.key === 'Escape') { input.value = session.name || session.instance_dir; finish(); }
+  };
+  input.addEventListener('blur', finish);
+  input.addEventListener('keydown', onKey);
+}
+
+async function _smDelete(instance, displayName) {
+  if (!confirm('Delete session "' + displayName + '"? This cannot be undone.')) return;
+  try {
+    const resp = await fetch('/api/session/' + encodeURIComponent(instance), {method: 'DELETE'});
+    if (resp.ok) {
+      _smSessions = _smSessions.filter(s => s.instance_dir !== instance);
+      _smRenderRows();
+      showNotice('Session deleted.');
+    } else {
+      const err = await resp.json();
+      showNotice('Error: ' + (err.error || 'unknown'));
+    }
+  } catch(e) {
+    showNotice('Delete failed.');
+  }
+}
 
 // -- Recap tab --
 
@@ -4253,7 +4050,7 @@ async function viewBlogPost(slug) {
     tagsEl.appendChild(span);
   });
 
-  document.getElementById('blog-post-body').textContent = post.body || '';
+  document.getElementById('blog-post-body').innerHTML = renderMarkdown(post.body || '');
 
   const replies = post.replies || [];
   document.getElementById('blog-replies-header').textContent = replies.length + ' Repl' + (replies.length !== 1 ? 'ies' : 'y');
@@ -4268,7 +4065,7 @@ async function viewBlogPost(slug) {
         '<span class="blog-reply-author">' + escapeHtml(r.author) + '</span>' +
         '<span class="blog-reply-date">' + ts + '</span>' +
       '</div>' +
-      '<div class="blog-reply-text">' + escapeHtml(r.text) + '</div>';
+      '<div class="blog-reply-text">' + renderMarkdown(r.text) + '</div>';
     repliesList.appendChild(div);
   });
 
@@ -4690,6 +4487,7 @@ async function reloadAllState() {
   messagesByChannel = {};
   seenIds.clear();
   unreadByChannel = {};
+  _lastUsageData = null;
   currentChannel = '#general';
   await loadPersonas();
   await loadRoles();
@@ -4761,10 +4559,58 @@ document.getElementById('new-session-confirm').addEventListener('click', async (
 
 // -- Save Session Modal --
 
-document.getElementById('session-save-btn').addEventListener('click', () => {
+async function _populateSaveSessionList() {
+  const listEl = document.getElementById('save-session-list');
+  listEl.innerHTML = '<div style="padding:12px;color:var(--text-dim);text-align:center;font-size:12px">Loading...</div>';
+  try {
+    const resp = await fetch('/api/session/list');
+    const sessions = await resp.json();
+    if (sessions.length === 0) {
+      listEl.innerHTML = '<div style="padding:12px;color:var(--text-dim);text-align:center;font-size:12px">No existing saves</div>';
+      return;
+    }
+    sessions.sort((a, b) => (b.saved_at || 0) - (a.saved_at || 0));
+    listEl.innerHTML = '';
+    sessions.forEach(s => {
+      const row = document.createElement('div');
+      row.style.cssText = 'display:flex;align-items:center;padding:8px 12px;cursor:pointer;border-bottom:1px solid var(--border-dark)';
+      row.addEventListener('mouseenter', () => row.style.background = 'var(--bg-hover, rgba(255,255,255,0.04))');
+      row.addEventListener('mouseleave', () => row.style.background = '');
+      const nameSpan = document.createElement('span');
+      nameSpan.style.cssText = 'flex:1;color:var(--text);font-size:13px';
+      nameSpan.textContent = s.name || s.instance_dir;
+      const dateSpan = document.createElement('span');
+      dateSpan.style.cssText = 'color:var(--text-dim);font-size:11px;margin-left:12px;white-space:nowrap';
+      dateSpan.textContent = _fmtSessionDate(s.saved_at);
+      row.appendChild(nameSpan);
+      row.appendChild(dateSpan);
+      row.addEventListener('click', () => {
+        // Pre-fill with name + fresh timestamp for easy branching
+        const now = new Date();
+        const ts = now.getFullYear()
+          + String(now.getMonth() + 1).padStart(2, '0')
+          + String(now.getDate()).padStart(2, '0')
+          + '-' + String(now.getHours()).padStart(2, '0')
+          + String(now.getMinutes()).padStart(2, '0');
+        const baseName = (s.name || s.instance_dir).replace(/--?[0-9]{4}-?[0-9]{2}-?[0-9]{2}-?[0-9]{4}$/, '').replace(/-[0-9]{8}-[0-9]{4}$/, '');
+        document.getElementById('save-session-name').value = baseName + '-' + ts;
+        document.getElementById('save-session-name').focus();
+        // Highlight selected row
+        listEl.querySelectorAll('div').forEach(r => r.style.borderLeft = '');
+        row.style.borderLeft = '3px solid var(--accent)';
+      });
+      listEl.appendChild(row);
+    });
+  } catch (e) {
+    listEl.innerHTML = '<div style="padding:12px;color:var(--accent);text-align:center;font-size:12px">Failed to load sessions</div>';
+  }
+}
+
+document.getElementById('session-save-btn').addEventListener('click', async () => {
   document.getElementById('save-session-name').value = '';
   document.getElementById('save-session-status').textContent = '';
   openModal('save-session-modal');
+  await _populateSaveSessionList();
   document.getElementById('save-session-name').focus();
 });
 
@@ -4801,50 +4647,112 @@ document.getElementById('save-session-confirm').addEventListener('click', async 
 
 // -- Load Session Modal --
 
-let _sessionsCache = [];
+let _lmSessions = [];
+let _lmSortCol = 'saved_at';
+let _lmSortAsc = false;
+let _lmSelected = null;
 
-async function refreshSessionsList() {
-  const sel = document.getElementById('load-session-select');
-  sel.innerHTML = '';
-  const resp = await fetch('/api/session/list');
-  _sessionsCache = await resp.json();
-  if (_sessionsCache.length === 0) {
-    const opt = document.createElement('option');
-    opt.disabled = true;
-    opt.textContent = 'No saved sessions';
-    sel.appendChild(opt);
-    document.getElementById('load-session-confirm').disabled = true;
-    return;
-  }
-  _sessionsCache.forEach(s => {
-    const opt = document.createElement('option');
-    opt.value = s.instance_dir;
-    const date = new Date((s.saved_at || s.created_at) * 1000).toLocaleString();
-    opt.textContent = (s.name || s.instance_dir);
-    opt.dataset.date = date;
-    opt.dataset.scenario = s.scenario || '';
-    sel.appendChild(opt);
+function _lmUpdateSortArrows() {
+  document.querySelectorAll('#load-session-table th[data-lm-sort]').forEach(th => {
+    const arrow = th.querySelector('.lm-sort-arrow');
+    if (th.dataset.lmSort === _lmSortCol) {
+      arrow.textContent = _lmSortAsc ? ' \\u25B2' : ' \\u25BC';
+      th.style.color = 'var(--text)';
+    } else {
+      arrow.textContent = '';
+      th.style.color = 'var(--text-dim)';
+    }
   });
 }
 
-// Modal's session list selection
-document.getElementById('load-session-select').addEventListener('change', (e) => {
-  const val = e.target.value;
-  const s = _sessionsCache.find(x => x.instance_dir === val);
-  const detail = document.getElementById('load-session-detail');
-  if (s) {
-    const date = new Date((s.saved_at || s.created_at) * 1000).toLocaleString();
-    detail.textContent = 'Scenario: ' + (s.scenario || '?') + '  |  Saved: ' + date;
-    document.getElementById('load-session-confirm').disabled = false;
-  } else {
-    detail.textContent = '';
+function _lmRenderRows() {
+  const tbody = document.getElementById('load-session-body');
+  if (_lmSessions.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="4" style="padding:16px 10px;color:var(--text-dim);text-align:center">No saved sessions</td></tr>';
     document.getElementById('load-session-confirm').disabled = true;
+    return;
   }
+  const sorted = [..._lmSessions];
+  sorted.sort((a, b) => {
+    let va, vb;
+    if (_lmSortCol === 'name') {
+      va = (a.name || a.instance_dir).toLowerCase();
+      vb = (b.name || b.instance_dir).toLowerCase();
+    } else if (_lmSortCol === 'scenario') {
+      va = (a.scenario || '').toLowerCase();
+      vb = (b.scenario || '').toLowerCase();
+    } else {
+      va = a[_lmSortCol] || 0;
+      vb = b[_lmSortCol] || 0;
+    }
+    if (va < vb) return _lmSortAsc ? -1 : 1;
+    if (va > vb) return _lmSortAsc ? 1 : -1;
+    return 0;
+  });
+  tbody.innerHTML = '';
+  sorted.forEach(s => {
+    const tr = document.createElement('tr');
+    tr.style.cssText = 'border-bottom:1px solid var(--border-dark);cursor:pointer';
+    if (_lmSelected === s.instance_dir) {
+      tr.style.background = 'rgba(231,76,60,0.12)';
+    }
+    tr.addEventListener('mouseenter', () => { if (_lmSelected !== s.instance_dir) tr.style.background = 'var(--bg-hover, rgba(255,255,255,0.04))'; });
+    tr.addEventListener('mouseleave', () => { if (_lmSelected !== s.instance_dir) tr.style.background = ''; });
+    tr.addEventListener('click', () => {
+      _lmSelected = s.instance_dir;
+      document.getElementById('load-session-confirm').disabled = false;
+      _lmRenderRows();
+    });
+    tr.addEventListener('dblclick', () => {
+      _lmSelected = s.instance_dir;
+      document.getElementById('load-session-confirm').click();
+    });
+    const nameTd = document.createElement('td');
+    nameTd.style.cssText = 'padding:7px 10px;color:var(--text)';
+    nameTd.textContent = s.name || s.instance_dir;
+    const scenarioTd = document.createElement('td');
+    scenarioTd.style.cssText = 'padding:7px 10px;color:var(--text-dim)';
+    scenarioTd.textContent = s.scenario || '—';
+    const createdTd = document.createElement('td');
+    createdTd.style.cssText = 'padding:7px 10px;color:var(--text-dim);white-space:nowrap';
+    createdTd.textContent = _fmtSessionDate(s.created_at);
+    const savedTd = document.createElement('td');
+    savedTd.style.cssText = 'padding:7px 10px;color:var(--text-dim);white-space:nowrap';
+    savedTd.textContent = _fmtSessionDate(s.saved_at);
+    tr.appendChild(nameTd);
+    tr.appendChild(scenarioTd);
+    tr.appendChild(createdTd);
+    tr.appendChild(savedTd);
+    tbody.appendChild(tr);
+  });
+  _lmUpdateSortArrows();
+}
+
+document.querySelectorAll('#load-session-table th[data-lm-sort]').forEach(th => {
+  th.addEventListener('click', () => {
+    const col = th.dataset.lmSort;
+    if (_lmSortCol === col) {
+      _lmSortAsc = !_lmSortAsc;
+    } else {
+      _lmSortCol = col;
+      _lmSortAsc = (col === 'name' || col === 'scenario');
+    }
+    _lmRenderRows();
+  });
 });
 
-document.getElementById('load-session-select').addEventListener('dblclick', () => {
-  document.getElementById('load-session-confirm').click();
-});
+async function refreshSessionsList() {
+  const tbody = document.getElementById('load-session-body');
+  tbody.innerHTML = '<tr><td colspan="4" style="padding:16px 10px;color:var(--text-dim);text-align:center">Loading...</td></tr>';
+  try {
+    const resp = await fetch('/api/session/list');
+    _lmSessions = await resp.json();
+    _lmSelected = null;
+    _lmRenderRows();
+  } catch (e) {
+    tbody.innerHTML = '<tr><td colspan="4" style="padding:16px 10px;color:var(--accent);text-align:center">Failed to load sessions</td></tr>';
+  }
+}
 
 // Replace header load dropdown with a button
 {
@@ -4859,7 +4767,6 @@ document.getElementById('load-session-select').addEventListener('dblclick', () =
 
   loadBtn.addEventListener('click', async () => {
     document.getElementById('load-session-status').textContent = '';
-    document.getElementById('load-session-detail').textContent = '';
     document.getElementById('load-session-confirm').disabled = true;
     await refreshSessionsList();
     openModal('load-session-modal');
@@ -4869,9 +4776,7 @@ document.getElementById('load-session-select').addEventListener('dblclick', () =
 document.getElementById('load-session-cancel').addEventListener('click', () => closeModal('load-session-modal'));
 
 document.getElementById('load-session-confirm').addEventListener('click', async () => {
-  const sel = document.getElementById('load-session-select');
-  const instance = sel.value;
-  if (!instance) return;
+  if (!_lmSelected) return;
   const status = document.getElementById('load-session-status');
   status.textContent = 'Loading session...';
   document.getElementById('load-session-confirm').disabled = true;
@@ -4881,7 +4786,7 @@ document.getElementById('load-session-confirm').addEventListener('click', async 
     const resp = await fetch('/api/session/load', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({instance}),
+      body: JSON.stringify({instance: _lmSelected}),
     });
     if (resp.ok) {
       await reloadAllState();
@@ -4901,1759 +4806,3 @@ document.getElementById('load-session-confirm').addEventListener('click', async 
 </script>
 </body>
 </html>"""
-
-
-def create_app() -> Flask:
-    """Create and configure the Flask chat application."""
-    app = Flask(__name__)
-
-    # Initialize channels, folders, and docs
-    _init_channels()
-    print(f"Channels initialized: {sorted(_channels.keys())}")
-
-    _init_folders()
-    print(f"Folders initialized: {sorted(_folders.keys())}")
-
-    _init_docs()
-    print(f"Docs directory ready: {DOCS_DIR}  ({len(_docs_index)} existing docs)")
-
-    _init_gitlab()
-    print(f"GitLab storage ready: {GITLAB_DIR}  ({len(_gitlab_repos)} existing repos)")
-
-    _init_tickets()
-    print(f"Tickets storage ready: {TICKETS_DIR}  ({len(_tickets)} existing tickets)")
-
-    _init_agent_online()
-
-    _load_chat_log()
-    print(f"Chat log: {len(_messages)} messages loaded")
-
-    @app.route("/")
-    def index():
-        return WEB_UI
-
-    # -- Channel API --
-
-    @app.route("/api/channels", methods=["GET"])
-    def list_channels():
-        with _channel_lock:
-            result = []
-            for name, info in sorted(_channels.items()):
-                members = sorted(_channel_members.get(name, set()))
-                entry = {
-                    "name": name,
-                    "description": info["description"],
-                    "is_external": info["is_external"],
-                    "members": members,
-                }
-                if info.get("is_system"):
-                    entry["is_system"] = True
-                if info.get("is_director"):
-                    entry["is_director"] = True
-                    entry["director_persona"] = info.get("director_persona", "")
-                result.append(entry)
-        return jsonify(result)
-
-    @app.route("/api/channels/<path:name>/join", methods=["POST"])
-    def join_channel(name):
-        # Handle URL-encoded '#'
-        if not name.startswith("#"):
-            name = "#" + name
-        data = request.get_json(force=True)
-        persona = data.get("persona", "").strip()
-        if not persona:
-            return jsonify({"error": "persona required"}), 400
-
-        with _channel_lock:
-            if name not in _channels:
-                return jsonify({"error": f"channel '{name}' not found"}), 404
-            _channel_members.setdefault(name, set()).add(persona)
-            members = sorted(_channel_members[name])
-
-        _broadcast_channel_update(name, members)
-        print(f"Channel join: {persona} -> {name}")
-        return jsonify({"channel": name, "members": members})
-
-    @app.route("/api/channels/<path:name>/leave", methods=["POST"])
-    def leave_channel(name):
-        if not name.startswith("#"):
-            name = "#" + name
-        data = request.get_json(force=True)
-        persona = data.get("persona", "").strip()
-        if not persona:
-            return jsonify({"error": "persona required"}), 400
-
-        with _channel_lock:
-            if name not in _channels:
-                return jsonify({"error": f"channel '{name}' not found"}), 404
-            _channel_members.get(name, set()).discard(persona)
-            members = sorted(_channel_members.get(name, set()))
-
-        _broadcast_channel_update(name, members)
-        print(f"Channel leave: {persona} <- {name}")
-        return jsonify({"channel": name, "members": members})
-
-    # -- Messages --
-
-    @app.route("/api/messages", methods=["GET"])
-    def get_messages():
-        since = request.args.get("since", type=int)
-        channels_param = request.args.get("channels", type=str)
-        with _lock:
-            result = list(_messages)
-            if since is not None:
-                result = [m for m in result if m["id"] > since]
-            if channels_param is not None:
-                ch_set = set()
-                for c in channels_param.split(","):
-                    c = c.strip()
-                    if not c.startswith("#"):
-                        c = "#" + c
-                    ch_set.add(c)
-                result = [m for m in result if m.get("channel", "#general") in ch_set]
-        return jsonify(result)
-
-    @app.route("/api/messages", methods=["POST"])
-    def post_message():
-        data = request.get_json(force=True)
-        sender = data.get("sender", "").strip()
-        content = data.get("content", "").strip()
-        channel = data.get("channel", "#general").strip()
-        if not sender or not content:
-            return jsonify({"error": "sender and content required"}), 400
-        with _channel_lock:
-            if channel not in _channels:
-                return jsonify({"error": f"unknown channel: {channel}"}), 400
-        with _lock:
-            msg = {
-                "id": len(_messages) + 1,
-                "sender": sender,
-                "content": content,
-                "channel": channel,
-                "timestamp": time.time(),
-            }
-            _messages.append(msg)
-        _persist_message(msg)
-        _broadcast(msg)
-        return jsonify(msg), 201
-
-    @app.route("/api/messages/clear", methods=["POST"])
-    def clear_messages():
-        with _lock:
-            _messages.clear()
-        if CHAT_LOG.exists():
-            CHAT_LOG.unlink()
-        return jsonify({"status": "cleared"})
-
-    @app.route("/api/messages/stream")
-    def stream():
-        def generate():
-            q = queue.Queue(maxsize=256)
-            with _sub_lock:
-                _subscribers.append(q)
-            try:
-                while True:
-                    try:
-                        data = q.get(timeout=30)
-                        yield f"event: message\ndata: {data}\n\n"
-                    except queue.Empty:
-                        yield ": keepalive\n\n"
-            except GeneratorExit:
-                with _sub_lock:
-                    if q in _subscribers:
-                        _subscribers.remove(q)
-
-        return Response(generate(), mimetype="text/event-stream",
-                        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
-
-    # -- Folder API --
-
-    @app.route("/api/folders", methods=["GET"])
-    def list_folders():
-        with _folder_lock:
-            result = []
-            for name in sorted(_folders.keys()):
-                info = _folders[name]
-                access = sorted(_folder_access.get(name, set()))
-                result.append({
-                    "name": name,
-                    "type": info["type"],
-                    "description": info["description"],
-                    "access": access,
-                })
-        return jsonify(result)
-
-    # -- Document API --
-
-    @app.route("/api/docs", methods=["GET"])
-    def list_docs():
-        folder_filter = request.args.get("folder")
-        with _docs_lock:
-            docs = list(_docs_index.values())
-        if folder_filter:
-            docs = [d for d in docs if d.get("folder") == folder_filter]
-        return jsonify(docs)
-
-    @app.route("/api/docs", methods=["POST"])
-    def create_doc():
-        data = request.get_json(force=True)
-        title = data.get("title", "").strip()
-        content = data.get("content", "")
-        author = data.get("author", "unknown")
-        folder = data.get("folder", "shared").strip()
-        if not title:
-            return jsonify({"error": "title required"}), 400
-
-        with _folder_lock:
-            if folder not in _folders:
-                return jsonify({"error": f"folder '{folder}' not found"}), 400
-
-        slug = slugify(title)
-        folder_dir = DOCS_DIR / folder
-        folder_dir.mkdir(parents=True, exist_ok=True)
-        doc_path = folder_dir / f"{slug}.txt"
-
-        with _docs_lock:
-            if slug in _docs_index:
-                return jsonify({"error": f"document '{slug}' already exists"}), 409
-
-            doc_path.write_text(content, encoding="utf-8")
-            now = time.time()
-            meta = {
-                "slug": slug,
-                "title": title,
-                "folder": folder,
-                "created_at": now,
-                "updated_at": now,
-                "created_by": author,
-                "size": len(content.encode("utf-8")),
-                "preview": content[:100],
-            }
-            _docs_index[slug] = meta
-            _save_index()
-
-        _broadcast_doc_event("created", meta)
-        return jsonify(meta), 201
-
-    @app.route("/api/docs/search", methods=["GET"])
-    def search_docs():
-        query = request.args.get("q", "").strip().lower()
-        folders_param = request.args.get("folders", "")
-        if not query:
-            return jsonify([])
-
-        folder_filter = None
-        if folders_param:
-            folder_filter = {f.strip() for f in folders_param.split(",") if f.strip()}
-
-        results = []
-        with _docs_lock:
-            for slug, meta in _docs_index.items():
-                if folder_filter and meta.get("folder") not in folder_filter:
-                    continue
-                folder = meta.get("folder", "shared")
-                doc_path = DOCS_DIR / folder / f"{slug}.txt"
-                if not doc_path.exists():
-                    continue
-                content = doc_path.read_text(encoding="utf-8", errors="replace")
-                if query in meta.get("title", "").lower() or query in content.lower():
-                    results.append({
-                        **meta,
-                        "snippet": _extract_snippet(content, query),
-                    })
-        return jsonify(results)
-
-    @app.route("/api/docs/<folder>/<slug>", methods=["GET"])
-    def get_doc(folder, slug):
-        with _docs_lock:
-            meta = _docs_index.get(slug)
-        if meta is None or meta.get("folder") != folder:
-            return jsonify({"error": "not found"}), 404
-        doc_path = DOCS_DIR / folder / f"{slug}.txt"
-        if not doc_path.exists():
-            return jsonify({"error": "not found"}), 404
-        content = doc_path.read_text(encoding="utf-8", errors="replace")
-        return jsonify({**meta, "content": content})
-
-    @app.route("/api/docs/<folder>/<slug>", methods=["PUT"])
-    def update_doc(folder, slug):
-        data = request.get_json(force=True)
-        content = data.get("content", "")
-        author = data.get("author", "unknown")
-
-        with _docs_lock:
-            meta = _docs_index.get(slug)
-            if meta is None or meta.get("folder") != folder:
-                return jsonify({"error": "not found"}), 404
-
-            doc_path = DOCS_DIR / folder / f"{slug}.txt"
-
-            # Save current content as a version before overwriting
-            old_content = ""
-            if doc_path.exists():
-                old_content = doc_path.read_text(encoding="utf-8", errors="replace")
-            if "history" not in meta:
-                meta["history"] = []
-            meta["history"].append({
-                "content": old_content,
-                "updated_by": meta.get("updated_by", meta.get("created_by", "unknown")),
-                "updated_at": meta.get("updated_at", meta.get("created_at", 0)),
-            })
-
-            doc_path.write_text(content, encoding="utf-8")
-            meta["updated_at"] = time.time()
-            meta["updated_by"] = author
-            meta["size"] = len(content.encode("utf-8"))
-            meta["preview"] = content[:100]
-            _save_index()
-
-        _broadcast_doc_event("updated", meta)
-        return jsonify(meta)
-
-    @app.route("/api/docs/<folder>/<slug>/history", methods=["GET"])
-    def get_doc_history(folder, slug):
-        with _docs_lock:
-            meta = _docs_index.get(slug)
-        if meta is None or meta.get("folder") != folder:
-            return jsonify({"error": "not found"}), 404
-        history = meta.get("history", [])
-        # Add current version as the first entry
-        doc_path = DOCS_DIR / folder / f"{slug}.txt"
-        current_content = ""
-        if doc_path.exists():
-            current_content = doc_path.read_text(encoding="utf-8", errors="replace")
-        current = {
-            "content": current_content,
-            "updated_by": meta.get("updated_by", meta.get("created_by", "unknown")),
-            "updated_at": meta.get("updated_at", meta.get("created_at", 0)),
-            "is_current": True,
-        }
-        return jsonify([current] + list(reversed(history)))
-
-    @app.route("/api/docs/<folder>/<slug>/append", methods=["POST"])
-    def append_doc(folder, slug):
-        data = request.get_json(force=True)
-        content = data.get("content", "")
-        author = data.get("author", "unknown")
-
-        with _docs_lock:
-            meta = _docs_index.get(slug)
-            if meta is None or meta.get("folder") != folder:
-                return jsonify({"error": "not found"}), 404
-
-            doc_path = DOCS_DIR / folder / f"{slug}.txt"
-            existing = doc_path.read_text(encoding="utf-8", errors="replace")
-
-            # Save current content as a version before appending
-            if "history" not in meta:
-                meta["history"] = []
-            meta["history"].append({
-                "content": existing,
-                "updated_by": meta.get("updated_by", meta.get("created_by", "unknown")),
-                "updated_at": meta.get("updated_at", meta.get("created_at", 0)),
-            })
-
-            new_content = existing + "\n" + content
-            doc_path.write_text(new_content, encoding="utf-8")
-            meta["updated_at"] = time.time()
-            meta["updated_by"] = author
-            meta["size"] = len(new_content.encode("utf-8"))
-            meta["preview"] = new_content[:100]
-            _save_index()
-
-        _broadcast_doc_event("appended", meta)
-        return jsonify(meta)
-
-    @app.route("/api/docs/<folder>/<slug>", methods=["DELETE"])
-    def delete_doc(folder, slug):
-        with _docs_lock:
-            meta = _docs_index.get(slug)
-            if meta is None or meta.get("folder") != folder:
-                return jsonify({"error": "not found"}), 404
-            _docs_index.pop(slug)
-
-            doc_path = DOCS_DIR / folder / f"{slug}.txt"
-            if doc_path.exists():
-                doc_path.unlink()
-            _save_index()
-
-        _broadcast_doc_event("deleted", meta)
-        return jsonify({"status": "deleted", "slug": slug, "folder": folder})
-
-    # -- Backward-compatible flat doc routes (redirect to shared) --
-
-    @app.route("/api/docs/<slug>", methods=["GET"])
-    def get_doc_flat(slug):
-        """Backward-compatible: look up doc by slug alone."""
-        with _docs_lock:
-            meta = _docs_index.get(slug)
-        if meta is None:
-            return jsonify({"error": "not found"}), 404
-        folder = meta.get("folder", "shared")
-        doc_path = DOCS_DIR / folder / f"{slug}.txt"
-        if not doc_path.exists():
-            return jsonify({"error": "not found"}), 404
-        content = doc_path.read_text(encoding="utf-8", errors="replace")
-        return jsonify({**meta, "content": content})
-
-    # -- GitLab API --
-
-    @app.route("/api/gitlab/repos", methods=["GET"])
-    def list_gitlab_repos():
-        with _gitlab_lock:
-            repos = list(_gitlab_repos.values())
-        return jsonify(repos)
-
-    @app.route("/api/gitlab/repos", methods=["POST"])
-    def create_gitlab_repo():
-        data = request.get_json(force=True)
-        name = data.get("name", "").strip()
-        description = data.get("description", "")
-        author = data.get("author", "unknown")
-        if not name:
-            return jsonify({"error": "name required"}), 400
-
-        with _gitlab_lock:
-            if name in _gitlab_repos:
-                return jsonify({"error": f"repo '{name}' already exists"}), 409
-
-            now = time.time()
-            meta = {
-                "name": name,
-                "description": description,
-                "created_by": author,
-                "created_at": now,
-            }
-            _gitlab_repos[name] = meta
-            _gitlab_commits[name] = []
-
-            # Persist to disk
-            repo_dir = GITLAB_DIR / name / "files"
-            repo_dir.mkdir(parents=True, exist_ok=True)
-            commits_path = GITLAB_DIR / name / "_commits.json"
-            commits_path.write_text("[]")
-            save_repos_index(dict(_gitlab_repos))
-
-        _broadcast_gitlab_event("repo_created", meta)
-        return jsonify(meta), 201
-
-    @app.route("/api/gitlab/repos/<project>/tree", methods=["GET"])
-    def gitlab_tree(project):
-        path = request.args.get("path", "").strip().strip("/")
-        with _gitlab_lock:
-            if project not in _gitlab_repos:
-                return jsonify({"error": "repo not found"}), 404
-
-        files_dir = GITLAB_DIR / project / "files"
-        if path:
-            target = files_dir / path
-        else:
-            target = files_dir
-
-        if not target.exists() or not target.is_dir():
-            return jsonify([])
-
-        entries = []
-        for item in sorted(target.iterdir()):
-            rel = str(item.relative_to(files_dir))
-            entry = {"name": item.name, "path": rel}
-            if item.is_dir():
-                entry["type"] = "dir"
-            else:
-                entry["type"] = "file"
-            entries.append(entry)
-
-        # Sort: dirs first, then files
-        entries.sort(key=lambda e: (0 if e["type"] == "dir" else 1, e["name"]))
-        return jsonify(entries)
-
-    @app.route("/api/gitlab/repos/<project>/file", methods=["GET"])
-    def gitlab_file(project):
-        path = request.args.get("path", "").strip()
-        if not path:
-            return jsonify({"error": "path required"}), 400
-
-        with _gitlab_lock:
-            if project not in _gitlab_repos:
-                return jsonify({"error": "repo not found"}), 404
-
-        file_path = GITLAB_DIR / project / "files" / path
-        if not file_path.exists() or not file_path.is_file():
-            return jsonify({"error": "file not found"}), 404
-
-        content = file_path.read_text(encoding="utf-8", errors="replace")
-        return jsonify({"path": path, "content": content})
-
-    @app.route("/api/gitlab/repos/<project>/commit", methods=["POST"])
-    def gitlab_commit(project):
-        data = request.get_json(force=True)
-        message = data.get("message", "").strip()
-        files = data.get("files", [])
-        author = data.get("author", "unknown")
-        if not message:
-            return jsonify({"error": "message required"}), 400
-        if not files:
-            return jsonify({"error": "files required"}), 400
-
-        with _gitlab_lock:
-            if project not in _gitlab_repos:
-                return jsonify({"error": "repo not found"}), 404
-
-            now = time.time()
-            commit_id = generate_commit_id(message, author, now)
-
-            # Write files to disk
-            files_dir = GITLAB_DIR / project / "files"
-            paths = []
-            for f in files:
-                fp = files_dir / f["path"]
-                fp.parent.mkdir(parents=True, exist_ok=True)
-                fp.write_text(f["content"], encoding="utf-8")
-                paths.append(f["path"])
-
-            commit = {
-                "id": commit_id,
-                "message": message,
-                "author": author,
-                "timestamp": now,
-                "files": paths,
-            }
-            _gitlab_commits.setdefault(project, []).append(commit)
-
-            # Persist commits
-            commits_path = GITLAB_DIR / project / "_commits.json"
-            commits_path.write_text(json.dumps(_gitlab_commits[project], indent=2))
-
-        _broadcast_gitlab_event("committed", {"project": project, "commit": commit})
-        return jsonify(commit), 201
-
-    @app.route("/api/gitlab/repos/<project>/log", methods=["GET"])
-    def gitlab_log(project):
-        with _gitlab_lock:
-            if project not in _gitlab_repos:
-                return jsonify({"error": "repo not found"}), 404
-            commits = list(_gitlab_commits.get(project, []))
-        # Return newest first
-        commits.reverse()
-        return jsonify(commits)
-
-    # -- Tickets API --
-
-    @app.route("/api/tickets", methods=["GET"])
-    def list_tickets():
-        status_filter = request.args.get("status")
-        assignee_filter = request.args.get("assignee")
-        with _tickets_lock:
-            tickets = list(_tickets.values())
-        if status_filter:
-            tickets = [t for t in tickets if t.get("status") == status_filter]
-        if assignee_filter:
-            tickets = [t for t in tickets if t.get("assignee") == assignee_filter]
-        return jsonify(tickets)
-
-    @app.route("/api/tickets", methods=["POST"])
-    def create_ticket():
-        data = request.get_json(force=True)
-        title = data.get("title", "").strip()
-        description = data.get("description", "")
-        priority = data.get("priority", "medium").strip()
-        assignee = data.get("assignee", "").strip()
-        author = data.get("author", "unknown").strip()
-        blocked_by = data.get("blocked_by", [])
-        if not title:
-            return jsonify({"error": "title required"}), 400
-        if priority not in ("low", "medium", "high", "critical"):
-            return jsonify({"error": "priority must be low/medium/high/critical"}), 400
-
-        now = time.time()
-        ticket_id = generate_ticket_id(title, now)
-
-        with _tickets_lock:
-            if ticket_id in _tickets:
-                # Unlikely collision — append a char
-                ticket_id = ticket_id + "X"
-
-            ticket = {
-                "id": ticket_id,
-                "title": title,
-                "description": description,
-                "status": "open",
-                "priority": priority,
-                "assignee": assignee,
-                "created_by": author,
-                "created_at": now,
-                "updated_at": now,
-                "comments": [],
-                "blocked_by": [],
-                "blocks": [],
-            }
-
-            # Set up dependencies
-            if blocked_by:
-                if isinstance(blocked_by, str):
-                    blocked_by = [b.strip() for b in blocked_by.split(",") if b.strip()]
-                for dep_id in blocked_by:
-                    if dep_id in _tickets:
-                        ticket["blocked_by"].append(dep_id)
-                        if ticket_id not in _tickets[dep_id].get("blocks", []):
-                            _tickets[dep_id].setdefault("blocks", []).append(ticket_id)
-
-            _tickets[ticket_id] = ticket
-            save_tickets_index(dict(_tickets))
-
-        _broadcast_tickets_event("created", ticket)
-        return jsonify(ticket), 201
-
-    @app.route("/api/tickets/<ticket_id>", methods=["GET"])
-    def get_ticket(ticket_id):
-        with _tickets_lock:
-            ticket = _tickets.get(ticket_id)
-        if ticket is None:
-            return jsonify({"error": "ticket not found"}), 404
-        return jsonify(ticket)
-
-    @app.route("/api/tickets/<ticket_id>", methods=["PUT"])
-    def update_ticket(ticket_id):
-        data = request.get_json(force=True)
-        with _tickets_lock:
-            ticket = _tickets.get(ticket_id)
-            if ticket is None:
-                return jsonify({"error": "ticket not found"}), 404
-
-            if "status" in data:
-                status = data["status"].strip()
-                if status not in ("open", "in_progress", "resolved", "closed"):
-                    return jsonify({"error": "invalid status"}), 400
-                ticket["status"] = status
-            if "assignee" in data:
-                ticket["assignee"] = data["assignee"].strip()
-            if "priority" in data:
-                priority = data["priority"].strip()
-                if priority in ("low", "medium", "high", "critical"):
-                    ticket["priority"] = priority
-
-            ticket["updated_at"] = time.time()
-            save_tickets_index(dict(_tickets))
-
-        _broadcast_tickets_event("updated", ticket)
-        return jsonify(ticket)
-
-    @app.route("/api/tickets/<ticket_id>/comment", methods=["POST"])
-    def comment_ticket(ticket_id):
-        data = request.get_json(force=True)
-        text = data.get("text", "").strip()
-        author = data.get("author", "unknown").strip()
-        if not text:
-            return jsonify({"error": "text required"}), 400
-
-        with _tickets_lock:
-            ticket = _tickets.get(ticket_id)
-            if ticket is None:
-                return jsonify({"error": "ticket not found"}), 404
-
-            comment = {
-                "author": author,
-                "text": text,
-                "timestamp": time.time(),
-            }
-            ticket.setdefault("comments", []).append(comment)
-            ticket["updated_at"] = time.time()
-            save_tickets_index(dict(_tickets))
-
-        _broadcast_tickets_event("commented", {"ticket_id": ticket_id, "comment": comment})
-        return jsonify(ticket), 201
-
-    @app.route("/api/tickets/<ticket_id>/depends", methods=["POST"])
-    def ticket_depends(ticket_id):
-        data = request.get_json(force=True)
-        blocked_by = data.get("blocked_by", "").strip()
-        if not blocked_by:
-            return jsonify({"error": "blocked_by required"}), 400
-
-        with _tickets_lock:
-            ticket = _tickets.get(ticket_id)
-            if ticket is None:
-                return jsonify({"error": "ticket not found"}), 404
-
-            dep_ids = [b.strip() for b in blocked_by.split(",") if b.strip()]
-            for dep_id in dep_ids:
-                if dep_id not in _tickets:
-                    continue
-                if dep_id not in ticket.get("blocked_by", []):
-                    ticket.setdefault("blocked_by", []).append(dep_id)
-                if ticket_id not in _tickets[dep_id].get("blocks", []):
-                    _tickets[dep_id].setdefault("blocks", []).append(ticket_id)
-
-            ticket["updated_at"] = time.time()
-            save_tickets_index(dict(_tickets))
-
-        _broadcast_tickets_event("depends_updated", ticket)
-        return jsonify(ticket)
-
-    # -- Status & Control API --
-
-    @app.route("/api/status", methods=["GET"])
-    def get_status():
-        with _orchestrator_lock:
-            orch = dict(_orchestrator_status)
-            # Mark as disconnected if no heartbeat in 15 seconds
-            if orch["last_heartbeat"] == 0 or time.time() - orch["last_heartbeat"] > 30:
-                orch["state"] = "disconnected"
-        return jsonify({
-            "server": "running",
-            "scenario": get_current_session().get("scenario"),
-            "messages": len(_messages),
-            "documents": len(_docs_index),
-            "repos": len(_gitlab_repos),
-            "tickets": len(_tickets),
-            "channels": len(_channels),
-            "orchestrator": orch,
-        })
-
-    @app.route("/api/orchestrator/heartbeat", methods=["POST"])
-    def orchestrator_heartbeat():
-        data = request.get_json(force=True)
-        with _orchestrator_lock:
-            _orchestrator_status["state"] = data.get("state", "ready")
-            _orchestrator_status["scenario"] = data.get("scenario")
-            _orchestrator_status["agents"] = data.get("agents", {})
-            _orchestrator_status["last_heartbeat"] = time.time()
-            _orchestrator_status["message"] = data.get("message", "")
-        # Return any pending command (only if caller wants to check)
-        if data.get("check_commands", True):
-            with _command_lock:
-                if _orchestrator_commands:
-                    cmd = _orchestrator_commands.pop(0)
-                    print(f"[cmd queue] consumed: {cmd.get('action')} key={cmd.get('key','')} (remaining: {len(_orchestrator_commands)})")
-                else:
-                    cmd = {"action": None}
-                return jsonify(cmd)
-        return jsonify({"action": None})
-
-    @app.route("/api/orchestrator/command", methods=["POST"])
-    def orchestrator_command():
-        data = request.get_json(force=True)
-        action = data.get("action")
-        if action not in ("restart", "shutdown", "add_agent", "remove_agent", None):
-            return jsonify({"error": "invalid action"}), 400
-        with _command_lock:
-            _orchestrator_commands.append(data)
-            print(f"[cmd queue] added: {action} (queue size: {len(_orchestrator_commands)})")
-        return jsonify({"queued": action})
-
-    # -- Typing indicators --
-
-    @app.route("/api/typing", methods=["POST"])
-    def typing_indicator():
-        data = request.get_json(force=True)
-        event = {
-            "type": "typing",
-            "sender": data.get("sender", ""),
-            "channel": data.get("channel", "#general"),
-            "active": data.get("active", True),
-        }
-        _broadcast(event)
-        return jsonify({"ok": True})
-
-    # -- NPC API --
-
-    @app.route("/api/npcs", methods=["GET"])
-    def list_npcs():
-        from lib.personas import PERSONAS, RESPONSE_TIERS, PERSONA_TIER, DEFAULT_MEMBERSHIPS
-        from lib.docs import get_accessible_folders
-        from lib.gitlab import DEFAULT_REPO_ACCESS
-        all_repo_names = sorted(_gitlab_repos.keys())
-        result = []
-        with _orchestrator_lock:
-            agent_states = _orchestrator_status.get("agents", {})
-            orch_state = _orchestrator_status.get("state", "disconnected")
-            last_hb = _orchestrator_status.get("last_heartbeat", 0)
-        orch_connected = last_hb > 0 and (time.time() - last_hb < 30)
-        with _agent_online_lock:
-            for key, p in PERSONAS.items():
-                channels = sorted(DEFAULT_MEMBERSHIPS.get(key, set()))
-                folders = sorted(get_accessible_folders(key))
-                # Repos: if no access control, all repos; otherwise filter
-                if DEFAULT_REPO_ACCESS:
-                    repos = sorted(r for r in all_repo_names
-                                   if r not in DEFAULT_REPO_ACCESS or key in DEFAULT_REPO_ACCESS.get(r, set()))
-                else:
-                    repos = all_repo_names
-                toggled_online = _agent_online.get(key, True)
-                # Determine live state from orchestrator heartbeat
-                agent_info = agent_states.get(key, {})
-                is_firing = key in _agent_firing
-                if not orch_connected:
-                    live_state = "firing" if is_firing else "disconnected"
-                elif is_firing:
-                    live_state = "firing"
-                elif not toggled_online:
-                    live_state = "offline"
-                else:
-                    live_state = agent_info.get("state", "unknown")
-                result.append({
-                    "key": key,
-                    "display_name": p["display_name"],
-                    "team_description": p.get("team_description", ""),
-                    "character_file": p.get("character_file", ""),
-                    "tier": PERSONA_TIER.get(key, 0),
-                    "channels": channels,
-                    "folders": folders,
-                    "repos": repos,
-                    "online": toggled_online,
-                    "verbosity": _agent_verbosity.get(key, "normal"),
-                    "live_state": live_state,
-                })
-        return jsonify(result)
-
-    @app.route("/api/npcs/<key>/toggle", methods=["POST"])
-    def toggle_npc(key):
-        from lib.personas import PERSONAS
-        if key not in PERSONAS:
-            return jsonify({"error": f"unknown agent: {key}"}), 404
-        display_name = PERSONAS[key]["display_name"]
-        with _agent_online_lock:
-            current = _agent_online.get(key, True)
-            _agent_online[key] = not current
-            new_state = _agent_online[key]
-        # Post system message
-        if new_state:
-            msg = f"{display_name} is back online"
-        else:
-            msg = f"{display_name} is now out of office"
-        with _lock:
-            sys_msg = {
-                "id": len(_messages) + 1,
-                "sender": "System",
-                "content": msg,
-                "channel": "#system",
-                "timestamp": time.time(),
-            }
-            _messages.append(sys_msg)
-        _persist_message(sys_msg)
-        _broadcast(sys_msg)
-        return jsonify({"key": key, "online": new_state, "display_name": display_name})
-
-    # -- Events API --
-
-    @app.route("/api/events/pool", methods=["GET"])
-    def get_event_pool():
-        from lib.events import get_event_pool as _get_pool
-        return jsonify(_get_pool())
-
-    @app.route("/api/events/pool", methods=["POST"])
-    def add_event_to_pool():
-        from lib.events import add_event
-        data = request.get_json(force=True)
-        idx = add_event(data)
-        return jsonify({"ok": True, "index": idx}), 201
-
-    @app.route("/api/events/pool/<int:index>", methods=["PUT"])
-    def update_event_in_pool(index):
-        from lib.events import update_event
-        data = request.get_json(force=True)
-        update_event(index, data)
-        return jsonify({"ok": True})
-
-    @app.route("/api/events/pool/<int:index>", methods=["DELETE"])
-    def delete_event_from_pool(index):
-        from lib.events import delete_event
-        delete_event(index)
-        return jsonify({"ok": True})
-
-    @app.route("/api/events/trigger", methods=["POST"])
-    def trigger_event():
-        from lib.events import fire_event
-        data = request.get_json(force=True)
-        results = []
-        # Execute each action
-        for action in data.get("actions", []):
-            action_type = action.get("type", "")
-            if action_type == "message":
-                sender = action.get("sender", "System")
-                content = action.get("content", "")
-                channel = action.get("channel", "#general")
-                with _lock:
-                    msg = {
-                        "id": len(_messages) + 1,
-                        "sender": sender,
-                        "content": content,
-                        "channel": channel,
-                        "timestamp": time.time(),
-                        "is_event": True,
-                    }
-                    _messages.append(msg)
-                _persist_message(msg)
-                _broadcast(msg)
-                results.append({"type": "message", "channel": channel, "sender": sender})
-            elif action_type == "ticket":
-                title = action.get("title", "")
-                if title:
-                    author = action.get("author", "System")
-                    ticket_id = generate_ticket_id(title, time.time())
-                    now = time.time()
-                    ticket = {
-                        "id": ticket_id,
-                        "title": title,
-                        "description": action.get("description", ""),
-                        "status": "open",
-                        "priority": action.get("priority", "medium"),
-                        "assignee": action.get("assignee", ""),
-                        "created_by": author,
-                        "created_at": now,
-                        "updated_at": now,
-                        "comments": [],
-                        "blocked_by": [],
-                        "blocks": [],
-                    }
-                    with _tickets_lock:
-                        _tickets[ticket_id] = ticket
-                        save_tickets_index(dict(_tickets))
-                    _broadcast_tickets_event("created", ticket)
-                    results.append({"type": "ticket", "id": ticket_id, "title": title})
-            elif action_type == "document":
-                title = action.get("title", "")
-                if title:
-                    from lib.docs import slugify
-                    author = action.get("author", "System")
-                    folder = action.get("folder", "shared")
-                    content = action.get("content", "")
-                    slug = slugify(title)
-                    folder_dir = DOCS_DIR / folder
-                    folder_dir.mkdir(parents=True, exist_ok=True)
-                    doc_path = folder_dir / f"{slug}.txt"
-                    with _docs_lock:
-                        if slug not in _docs_index:
-                            doc_path.write_text(content, encoding="utf-8")
-                            now = time.time()
-                            meta = {
-                                "slug": slug,
-                                "title": title,
-                                "folder": folder,
-                                "created_at": now,
-                                "updated_at": now,
-                                "created_by": author,
-                                "size": len(content.encode("utf-8")),
-                                "preview": content[:100],
-                            }
-                            _docs_index[slug] = meta
-                            _save_index()
-                            _broadcast_doc_event("created", meta)
-                            results.append({"type": "document", "title": title, "folder": folder, "slug": slug})
-            elif action_type == "email":
-                from lib.email import send_email
-                sender = action.get("sender", action.get("from", "System"))
-                subject = action.get("subject", "")
-                body = action.get("body", action.get("content", ""))
-                if subject:
-                    entry = send_email(sender, subject, body)
-                    results.append({"type": "email", "id": entry["id"], "subject": subject})
-                    # Also post to #announcements so agents see it in chat
-                    with _lock:
-                        msg = {
-                            "id": len(_messages) + 1,
-                            "sender": sender,
-                            "content": f"**[EMAIL] {subject}**\n\n{body}",
-                            "channel": "#announcements",
-                            "timestamp": time.time(),
-                        }
-                        _messages.append(msg)
-                    _persist_message(msg)
-                    _broadcast(msg)
-            elif action_type == "memo":
-                from lib.memos import create_thread, post_memo
-                title = action.get("title", action.get("thread_title", ""))
-                creator = action.get("sender", action.get("creator", "System"))
-                description = action.get("description", "")
-                text = action.get("text", action.get("content", ""))
-                thread_id = action.get("thread_id", "")
-                if thread_id and text:
-                    # Post to existing thread
-                    try:
-                        post = post_memo(thread_id, text, creator)
-                        results.append({"type": "memo", "action": "posted", "thread_id": thread_id, "post_id": post["id"]})
-                    except ValueError:
-                        results.append({"type": "memo", "action": "post_failed", "error": "thread not found"})
-                elif title:
-                    # Create new thread, optionally with an initial post
-                    thread = create_thread(title, creator, description)
-                    if text:
-                        post_memo(thread["id"], text, creator)
-                    results.append({"type": "memo", "action": "created", "thread_id": thread["id"], "title": title})
-            elif action_type == "blog":
-                from lib.blog import create_post as create_blog, reply_to_post as reply_blog
-                title = action.get("title", "")
-                body = action.get("body", action.get("content", ""))
-                creator = action.get("sender", action.get("author", "System"))
-                is_external = action.get("is_external", False)
-                tags = action.get("tags", [])
-                post_slug = action.get("post_slug", "")
-                text = action.get("text", "")
-                if post_slug and text:
-                    # Reply to existing post
-                    try:
-                        reply = reply_blog(post_slug, text, creator)
-                        results.append({"type": "blog", "action": "replied", "post_slug": post_slug, "reply_id": reply["id"]})
-                    except ValueError:
-                        results.append({"type": "blog", "action": "reply_failed", "error": "post not found"})
-                elif title:
-                    # Create new blog post
-                    post = create_blog(title, body, creator, is_external=is_external, tags=tags)
-                    results.append({"type": "blog", "action": "created", "slug": post["slug"], "title": title})
-        # Log the event with results
-        data["results"] = results
-        entry = fire_event(data)
-        return jsonify(entry)
-
-    @app.route("/api/events/log", methods=["GET"])
-    def get_events_log():
-        from lib.events import get_event_log
-        return jsonify(get_event_log())
-
-    # -- Recap API --
-
-    @app.route("/api/recaps", methods=["GET"])
-    def list_recaps():
-        return jsonify(_recaps)
-
-    @app.route("/api/recap", methods=["POST"])
-    def generate_recap():
-        import asyncio
-        import threading
-        from lib.agent_runner import run_agent_for_response
-        from pathlib import Path
-
-        data = request.get_json(force=True)
-        style = data.get("style", "normal")
-        print(f"[recap] Generating recap in style: {style}")
-
-        STYLE_PROMPTS = {
-            "normal": "Write a clear, professional summary of what happened.",
-            "ye-olde-english": "Write the recap in Ye Olde English, with 'thee', 'thou', 'hath', 'forsooth', and medieval phrasing throughout.",
-            "tolkien": "Write the recap as if it were a passage from The Lord of the Rings — epic, sweeping, with references to quests, fellowships, and dark forces.",
-            "star-wars": "Write the recap as a Star Wars opening crawl. Start with 'A long time ago, in a codebase far, far away...' and use space opera drama.",
-            "star-trek": "Write the recap as a Captain's Log entry. 'Captain's Log, Stardate...' Include references to the crew, away missions, and the prime directive.",
-            "dr-who": "Write the recap as if The Doctor is explaining what happened to a confused companion. Wibbly-wobbly, timey-wimey.",
-            "morse-code": "Write the recap normally but add STOP after each sentence, like a telegraph message. Keep it terse.",
-            "dr-seuss": "Write the recap in the style of Dr. Seuss — rhyming couplets, whimsical language, 'I do not like green bugs in prod, I do not like them, oh my cod.'",
-            "shakespeare": "Write the recap as a Shakespearean monologue. Iambic pentameter where possible. Include asides and dramatic declarations.",
-            "80s-rock-ballad": "Write the recap as lyrics to an 80s power ballad. Include a key change, a guitar solo section [GUITAR SOLO], and dramatic crescendo.",
-            "90s-alternative": "Write the recap in the style of 90s alternative rock lyrics — angsty, introspective, ironic detachment about the state of the codebase.",
-            "heavy-metal": "Write the recap as HEAVY METAL lyrics. ALL CAPS for emphasis. References to DESTRUCTION, CHAOS, DEPLOYING TO PRODUCTION, and THE ETERNAL VOID OF TECHNICAL DEBT.",
-            "dystopian": "Write the recap as a dystopian narrative. The company is a megacorp. The codebase is a surveillance system. Compliance training is re-education. The open office is a panopticon. Hope is a deprecated feature.",
-            "matrix": "Write the recap as if Morpheus is explaining what happened to Neo. 'What if I told you...' References to the Matrix, agents (the bad kind), red pills, blue pills, the desert of the real. The codebase IS the Matrix.",
-            "pharaoh": "Write the recap as a royal decree from a Pharaoh. 'So let it be written, so let it be done.' Grand proclamations about what was commanded and what was achieved. References to building monuments (features), the Nile (the data pipeline), golden treasures (shipped code), and scribes (developers). End each major point with 'So let it be written, so let it be done.'",
-            "tombstone": "Write the recap in the style of a Western, Tombstone specifically. Narrate like Doc Holliday and Wyatt Earp are reviewing the sprint. 'I'm your huckleberry.' References to showdowns (code reviews), outlaws (bugs), the OK Corral (production), and riding into the sunset. Dry wit, whiskey references, and dramatic standoffs over merge conflicts.",
-            "survivor": "Write the recap as a Survivor tribal council. Jeff Probst is hosting. The team members are contestants. Alliances formed over architecture decisions. Blindsides during code review. 'The tribe has spoken' when a feature gets cut. Confessional-style asides where team members reveal their true feelings. Someone plays a hidden immunity idol (a revert commit). End with 'Grab your torch' and snuff it.",
-            "hackernews": "Write the recap as a Hacker News-worthy blog post. Technical but accessible. Start with a hook that makes people click. Include architecture decisions, tradeoffs considered, and lessons learned. Sprinkle in references to scaling, first principles thinking, and 'we considered X but chose Y because Z.' End with a thoughtful takeaway. The tone should make HN commenters say 'this is actually good' instead of their usual complaints.",
-        }
-
-        style_instruction = STYLE_PROMPTS.get(style, STYLE_PROMPTS["normal"])
-
-        # Collect all state
-        with _lock:
-            msgs = list(_messages)
-
-        msg_summary = []
-        for m in msgs[-100:]:
-            msg_summary.append(f"[{m.get('channel', '#general')}] {m['sender']}: {m['content'][:200]}")
-
-        from lib.events import get_event_log
-        event_log = get_event_log()
-        event_summary = []
-        for e in event_log:
-            event_summary.append(f"[{e.get('severity', 'medium')}] {e.get('name', 'Event')} - {len(e.get('actions', []))} actions")
-
-        nl = chr(10)
-        prompt = f"""You are a recap writer. Summarize what happened in this simulation session.
-
-## Style
-{style_instruction}
-
-## Chat Messages (most recent {len(msg_summary)})
-{nl.join(msg_summary) if msg_summary else "No messages yet."}
-
-## Events Fired ({len(event_log)})
-{nl.join(event_summary) if event_summary else "No events fired."}
-
-## Documents Created
-{len(_docs_index)} documents
-
-## Tickets
-{len(_tickets)} tickets
-
-## Stats
-- Total messages: {len(msgs)}
-- Channels active: {len(set(m.get('channel', '#general') for m in msgs))}
-
-Write a compelling recap of this simulation session in the requested style. Keep it to no more than 15 paragraphs. Make it entertaining and capture the key moments, decisions, and drama."""
-
-        result_holder = [None]
-        error_holder = [None]
-
-        async def _run():
-            try:
-                result = await run_agent_for_response(
-                    name="Recap Writer",
-                    prompt=prompt,
-                    log_dir=Path(__file__).parent.parent / "var" / "logs",
-                    model="sonnet",
-                )
-                result_holder[0] = result
-            except Exception as e:
-                error_holder[0] = str(e)
-
-        def _thread_target():
-            asyncio.run(_run())
-
-        t = threading.Thread(target=_thread_target)
-        t.start()
-        t.join(timeout=120)
-
-        if error_holder[0]:
-            return jsonify({"error": error_holder[0]}), 500
-        if result_holder[0] and result_holder[0].get("success"):
-            recap_entry = {"recap": result_holder[0]["response_text"], "style": style, "timestamp": time.time()}
-            _recaps.append(recap_entry)
-            print(f"[recap] Generated {style} recap ({len(result_holder[0]['response_text'])} chars)")
-            return jsonify(recap_entry)
-        return jsonify({"error": "Recap generation failed or timed out"}), 500
-
-    # -- Roles API --
-
-    DEFAULT_HUMAN_ROLES = [
-        "Scenario Director", "Consultant", "Customer", "New Hire",
-        "Board Member", "Intern", "Vendor", "Investor", "Auditor",
-        "Competitor", "Regulator", "The Press", "Hacker", "God",
-    ]
-
-    DEFAULT_JOB_TITLES = [
-        "PM", "Eng Manager", "Architect", "Senior Eng", "Junior Eng",
-        "Support Eng", "Sales Eng", "QA Lead", "DevOps", "Designer",
-        "Marketing", "Security Specialist", "CEO", "CFO", "CTO", "COO",
-        "Project Mgr", "Intern", "Contractor",
-    ]
-
-    @app.route("/api/roles", methods=["GET"])
-    def get_roles():
-        from lib.scenario_loader import SCENARIO_SETTINGS
-        human_roles = SCENARIO_SETTINGS.get("human_roles", DEFAULT_HUMAN_ROLES)
-        job_titles = SCENARIO_SETTINGS.get("job_titles", DEFAULT_JOB_TITLES)
-        return jsonify({"human_roles": human_roles, "job_titles": job_titles})
-
-    # -- Email/Announcements API --
-
-    @app.route("/api/emails", methods=["GET"])
-    def list_emails():
-        from lib.email import get_inbox
-        return jsonify(get_inbox())
-
-    @app.route("/api/emails", methods=["POST"])
-    def create_email():
-        from lib.email import send_email
-        data = request.get_json(force=True)
-        sender = data.get("sender", "System")
-        subject = data.get("subject", "").strip()
-        body = data.get("body", "").strip()
-        if not subject:
-            return jsonify({"error": "subject required"}), 400
-        entry = send_email(sender, subject, body)
-        # Also post to #announcements
-        with _lock:
-            msg = {
-                "id": len(_messages) + 1,
-                "sender": sender,
-                "content": f"**[EMAIL] {subject}**\n\n{body}",
-                "channel": "#announcements",
-                "timestamp": time.time(),
-            }
-            _messages.append(msg)
-        _persist_message(msg)
-        _broadcast(msg)
-        return jsonify(entry), 201
-
-    @app.route("/api/emails/<int:email_id>", methods=["GET"])
-    def get_email_detail(email_id):
-        from lib.email import get_email
-        entry = get_email(email_id)
-        if not entry:
-            return jsonify({"error": "not found"}), 404
-        return jsonify(entry)
-
-    # -- Memo-list API --
-
-    @app.route("/api/memos/threads", methods=["GET"])
-    def list_memo_threads():
-        from lib.memos import get_threads
-        include_posts = request.args.get("include_posts", "").lower() in ("1", "true")
-        return jsonify(get_threads(include_recent_posts=include_posts))
-
-    @app.route("/api/memos/threads", methods=["POST"])
-    def create_memo_thread_endpoint():
-        from lib.memos import create_thread
-        data = request.get_json(force=True)
-        title = data.get("title", "").strip()
-        if not title:
-            return jsonify({"error": "title required"}), 400
-        creator = data.get("creator", "System")
-        description = data.get("description", "").strip()
-        entry = create_thread(title, creator, description)
-        return jsonify(entry), 201
-
-    @app.route("/api/memos/threads/<thread_id>", methods=["GET"])
-    def get_memo_thread_detail(thread_id):
-        from lib.memos import get_thread, get_posts
-        thread = get_thread(thread_id)
-        if not thread:
-            return jsonify({"error": "not found"}), 404
-        thread["posts"] = get_posts(thread_id)
-        return jsonify(thread)
-
-    @app.route("/api/memos/threads/<thread_id>/posts", methods=["GET"])
-    def list_memo_posts(thread_id):
-        from lib.memos import get_posts
-        return jsonify(get_posts(thread_id))
-
-    @app.route("/api/memos/threads/<thread_id>/posts", methods=["POST"])
-    def post_memo_endpoint(thread_id):
-        from lib.memos import post_memo
-        data = request.get_json(force=True)
-        text = data.get("text", "").strip()
-        if not text:
-            return jsonify({"error": "text required"}), 400
-        author = data.get("author", "System")
-        try:
-            entry = post_memo(thread_id, text, author)
-        except ValueError as e:
-            return jsonify({"error": str(e)}), 404
-        return jsonify(entry), 201
-
-    @app.route("/api/memos/threads/<thread_id>", methods=["DELETE"])
-    def delete_memo_thread_endpoint(thread_id):
-        from lib.memos import delete_thread
-        if delete_thread(thread_id):
-            return jsonify({"ok": True})
-        return jsonify({"error": "not found"}), 404
-
-    # -- Blog API --
-
-    @app.route("/api/blog/posts", methods=["GET"])
-    def list_blog_posts():
-        from lib.blog import get_posts
-        include_replies = request.args.get("include_replies", "").lower() in ("1", "true")
-        posts = get_posts(include_recent_replies=include_replies)
-        filt = request.args.get("filter", "")
-        if filt == "internal":
-            posts = [p for p in posts if not p.get("is_external")]
-        elif filt == "external":
-            posts = [p for p in posts if p.get("is_external")]
-        return jsonify(posts)
-
-    @app.route("/api/blog/posts", methods=["POST"])
-    def create_blog_post_endpoint():
-        from lib.blog import create_post
-        data = request.get_json(force=True)
-        title = data.get("title", "").strip()
-        if not title:
-            return jsonify({"error": "title required"}), 400
-        body = data.get("body", "").strip()
-        author = data.get("author", "System")
-        is_external = data.get("is_external", False)
-        tags = data.get("tags", [])
-        entry = create_post(title, body, author, is_external=is_external, tags=tags)
-        return jsonify(entry), 201
-
-    @app.route("/api/blog/posts/<post_slug>", methods=["GET"])
-    def get_blog_post_detail(post_slug):
-        from lib.blog import get_post, get_replies
-        post = get_post(post_slug)
-        if not post:
-            return jsonify({"error": "not found"}), 404
-        post["replies"] = get_replies(post_slug)
-        return jsonify(post)
-
-    @app.route("/api/blog/posts/<post_slug>", methods=["PUT"])
-    def update_blog_post_endpoint(post_slug):
-        from lib.blog import update_post
-        data = request.get_json(force=True)
-        kwargs = {}
-        for key in ("title", "body", "status", "is_external", "tags"):
-            if key in data:
-                kwargs[key] = data[key]
-        if not kwargs:
-            return jsonify({"error": "no fields to update"}), 400
-        try:
-            entry = update_post(post_slug, **kwargs)
-        except ValueError as e:
-            return jsonify({"error": str(e)}), 404
-        return jsonify(entry)
-
-    @app.route("/api/blog/posts/<post_slug>/replies", methods=["GET"])
-    def list_blog_replies(post_slug):
-        from lib.blog import get_replies
-        return jsonify(get_replies(post_slug))
-
-    @app.route("/api/blog/posts/<post_slug>/replies", methods=["POST"])
-    def reply_to_blog_post_endpoint(post_slug):
-        from lib.blog import reply_to_post
-        data = request.get_json(force=True)
-        text = data.get("text", "").strip()
-        if not text:
-            return jsonify({"error": "text required"}), 400
-        author = data.get("author", "System")
-        try:
-            entry = reply_to_post(post_slug, text, author)
-        except ValueError as e:
-            return jsonify({"error": str(e)}), 404
-        return jsonify(entry), 201
-
-    @app.route("/api/blog/posts/<post_slug>", methods=["DELETE"])
-    def delete_blog_post_endpoint(post_slug):
-        from lib.blog import delete_post
-        if delete_post(post_slug):
-            return jsonify({"ok": True})
-        return jsonify({"error": "not found"}), 404
-
-    # -- Character templates API --
-
-    @app.route("/api/templates", methods=["GET"])
-    def list_templates():
-        from lib.scenario_loader import SCENARIOS_DIR
-        templates_dir = SCENARIOS_DIR / "character-templates"
-        result = []
-        if templates_dir.exists():
-            for f in sorted(templates_dir.glob("*.CS.md")):
-                key_name = f.name.replace(".CS.md", "")
-                name = key_name.replace("-", " ").title()
-                result.append({"key": key_name, "name": name})
-            if not result:
-                # Fallback to old .md format
-                for f in sorted(templates_dir.glob("*.md")):
-                    if f.name.endswith(".CS.md"):
-                        continue
-                    name = f.stem.replace("-", " ").title()
-                    result.append({"key": f.stem, "name": name})
-        return jsonify(result)
-
-    @app.route("/api/templates/<key>", methods=["GET"])
-    def get_template(key):
-        from lib.scenario_loader import SCENARIOS_DIR
-        path = SCENARIOS_DIR / "character-templates" / f"{key}.CS.md"
-        if not path.exists():
-            path = SCENARIOS_DIR / "character-templates" / f"{key}.md"
-        if not path.exists():
-            return jsonify({"error": "template not found"}), 404
-        content = path.read_text()
-        return jsonify({"key": key, "content": content})
-
-    # -- NPC hire/fire API --
-
-    @app.route("/api/npcs/<key>/fire", methods=["POST"])
-    def fire_npc(key):
-        from lib.personas import PERSONAS
-        if key not in PERSONAS:
-            return jsonify({"error": f"unknown agent: {key}"}), 404
-
-        display_name = PERSONAS[key]["display_name"]
-
-        # Mark as firing — agent stays in PERSONAS but is skipped in responses
-        with _agent_online_lock:
-            _agent_online[key] = False  # skip in response waves
-            _agent_firing.add(key)
-
-        # Signal orchestrator to remove this agent's session
-        # Orchestrator will call back to /api/npcs/<key>/finalize-fire after session closes
-        with _command_lock:
-            _orchestrator_commands.append({"action": "remove_agent", "key": key})
-            print(f"[cmd queue] fire: remove_agent key={key} (queue size: {len(_orchestrator_commands)})")
-
-        # Post system message
-        with _lock:
-            sys_msg = {
-                "id": len(_messages) + 1,
-                "sender": "System",
-                "content": f"{display_name} has left the company.",
-                "channel": "#system",
-                "timestamp": time.time(),
-            }
-            _messages.append(sys_msg)
-        _persist_message(sys_msg)
-        _broadcast(sys_msg)
-
-        return jsonify({"ok": True, "key": key, "display_name": display_name, "fired": True})
-
-    @app.route("/api/npcs/<key>/finalize-fire", methods=["POST"])
-    def finalize_fire(key):
-        """Called by orchestrator after closing the agent's session."""
-        from lib.personas import PERSONAS, DEFAULT_MEMBERSHIPS, PERSONA_TIER, RESPONSE_TIERS
-        from lib.docs import DEFAULT_FOLDER_ACCESS
-        from lib.gitlab import DEFAULT_REPO_ACCESS
-        if key not in PERSONAS:
-            return jsonify({"ok": True})  # already removed
-
-        display_name = PERSONAS[key]["display_name"]
-        del PERSONAS[key]
-        DEFAULT_MEMBERSHIPS.pop(key, None)
-        with _channel_lock:
-            for members in _channel_members.values():
-                members.discard(key)
-        old_tier = PERSONA_TIER.pop(key, None)
-        if old_tier and old_tier in RESPONSE_TIERS:
-            if key in RESPONSE_TIERS[old_tier]:
-                RESPONSE_TIERS[old_tier].remove(key)
-        for access_set in DEFAULT_FOLDER_ACCESS.values():
-            access_set.discard(key)
-        for access_set in DEFAULT_REPO_ACCESS.values():
-            access_set.discard(key)
-        with _agent_online_lock:
-            _agent_online.pop(key, None)
-        with _agent_online_lock:
-            _agent_firing.discard(key)
-        print(f"[fire] finalized: {display_name} removed from PERSONAS")
-        return jsonify({"ok": True, "key": key, "finalized": True})
-
-    @app.route("/api/npcs/hire", methods=["POST"])
-    def hire_npc():
-        from lib.personas import PERSONAS, DEFAULT_MEMBERSHIPS, PERSONA_TIER, RESPONSE_TIERS
-        from lib.docs import DEFAULT_FOLDERS, DEFAULT_FOLDER_ACCESS
-
-        data = request.get_json(force=True)
-        display_name = data.get("display_name", "").strip()
-        key = data.get("key", "").strip().lower().replace(" ", "")
-        team_description = data.get("team_description", "").strip()
-        prompt_content = data.get("prompt", "").strip()
-        tier = int(data.get("tier", 1))
-        channels = data.get("channels", ["#general"])
-        folders = data.get("folders", ["shared", "public"])
-
-        if not display_name or not key:
-            return jsonify({"error": "display_name and key required"}), 400
-        if key in PERSONAS:
-            return jsonify({"error": f"agent key '{key}' already exists"}), 409
-
-        # Save character file to instance runtime directory (not the scenario template)
-        from lib.session import VAR_DIR, get_current_session
-        scenario = get_current_session().get("scenario", "tech-startup")
-        char_dir = VAR_DIR / "characters"
-        char_dir.mkdir(parents=True, exist_ok=True)
-        char_file = char_dir / f"{key}.md"
-        char_file.write_text(prompt_content or f"# {display_name}\\n\\nYou are {display_name}.")
-
-        # Add to PERSONAS
-        PERSONAS[key] = {
-            "name": key,
-            "display_name": display_name,
-            "team_description": team_description,
-            "character_file": str(char_file),
-        }
-
-        # Add to memberships
-        DEFAULT_MEMBERSHIPS[key] = set(channels)
-        with _channel_lock:
-            for ch in channels:
-                if ch in _channel_members:
-                    _channel_members[ch].add(key)
-
-        # Add to tier
-        RESPONSE_TIERS.setdefault(tier, [])
-        if key not in RESPONSE_TIERS[tier]:
-            RESPONSE_TIERS[tier].append(key)
-        PERSONA_TIER[key] = tier
-
-        # Add folder access
-        for folder_name in folders:
-            DEFAULT_FOLDER_ACCESS.setdefault(folder_name, set()).add(key)
-
-        # Create personal folder
-        personal_name = display_name.split("(")[0].strip().lower().replace(" ", "")
-        if personal_name not in DEFAULT_FOLDERS:
-            DEFAULT_FOLDERS[personal_name] = {
-                "type": "personal",
-                "description": f"{display_name}'s private folder",
-            }
-            DEFAULT_FOLDER_ACCESS[personal_name] = {key}
-
-        # Set online and verbosity
-        verbosity = data.get("verbosity", "normal")
-        with _agent_online_lock:
-            _agent_online[key] = True
-            if verbosity != "normal":
-                _agent_verbosity[key] = verbosity
-
-        # Create director channel
-        with _channel_lock:
-            ch_name = f"#director-{key}"
-            _channels[ch_name] = {
-                "description": f"Private channel with {display_name}",
-                "is_external": False,
-                "is_director": True,
-                "director_persona": key,
-                "created_at": time.time(),
-            }
-            _channel_members[ch_name] = set()
-
-        # Signal orchestrator to add this agent's session
-        with _command_lock:
-            _orchestrator_commands.append({"action": "add_agent", "key": key})
-            print(f"[cmd queue] hire: add_agent key={key} (queue size: {len(_orchestrator_commands)})")
-
-        # Post system message
-        with _lock:
-            sys_msg = {
-                "id": len(_messages) + 1,
-                "sender": "System",
-                "content": f"Welcome {display_name} to the team!",
-                "channel": "#system",
-                "timestamp": time.time(),
-            }
-            _messages.append(sys_msg)
-        _persist_message(sys_msg)
-        _broadcast(sys_msg)
-
-        return jsonify({"ok": True, "key": key, "display_name": display_name, "hired": True}), 201
-
-    # -- NPC configuration API --
-
-    @app.route("/api/npcs/<key>/config", methods=["PUT"])
-    def update_npc_config(key):
-        from lib.personas import PERSONAS, DEFAULT_MEMBERSHIPS, PERSONA_TIER, RESPONSE_TIERS
-        from lib.docs import DEFAULT_FOLDER_ACCESS
-        from lib.gitlab import DEFAULT_REPO_ACCESS
-        if key not in PERSONAS:
-            return jsonify({"error": f"unknown agent: {key}"}), 404
-
-        data = request.get_json(force=True)
-        display_name = PERSONAS[key]["display_name"]
-
-        # Update channel memberships
-        if "channels" in data:
-            new_channels = set(data["channels"])
-            DEFAULT_MEMBERSHIPS[key] = new_channels
-            # Update live channel members
-            with _channel_lock:
-                for ch_name in _channels:
-                    members = _channel_members.get(ch_name, set())
-                    if ch_name in new_channels:
-                        members.add(key)
-                    else:
-                        members.discard(key)
-
-        # Update folder access
-        if "folders" in data:
-            new_folders = set(data["folders"])
-            for folder_name in list(DEFAULT_FOLDER_ACCESS.keys()):
-                if folder_name in new_folders:
-                    DEFAULT_FOLDER_ACCESS[folder_name].add(key)
-                else:
-                    DEFAULT_FOLDER_ACCESS[folder_name].discard(key)
-
-        # Update tier
-        if "tier" in data:
-            new_tier = int(data["tier"])
-            old_tier = PERSONA_TIER.get(key)
-            if old_tier != new_tier:
-                # Remove from old tier
-                if old_tier in RESPONSE_TIERS:
-                    if key in RESPONSE_TIERS[old_tier]:
-                        RESPONSE_TIERS[old_tier].remove(key)
-                # Add to new tier
-                RESPONSE_TIERS.setdefault(new_tier, [])
-                if key not in RESPONSE_TIERS[new_tier]:
-                    RESPONSE_TIERS[new_tier].append(key)
-                PERSONA_TIER[key] = new_tier
-
-        # Update verbosity
-        if "verbosity" in data:
-            with _agent_online_lock:
-                _agent_verbosity[key] = data["verbosity"]
-
-        # Update repo access
-        if "repos" in data:
-            new_repos = set(data["repos"])
-            with _gitlab_lock:
-                for repo_name in _gitlab_repos:
-                    # If repo has no access control yet, initialize with all agents
-                    if repo_name not in DEFAULT_REPO_ACCESS:
-                        DEFAULT_REPO_ACCESS[repo_name] = set(PERSONAS.keys())
-                    if repo_name in new_repos:
-                        DEFAULT_REPO_ACCESS[repo_name].add(key)
-                    else:
-                        DEFAULT_REPO_ACCESS[repo_name].discard(key)
-
-        return jsonify({"ok": True, "key": key, "display_name": display_name})
-
-    # -- Agent thoughts API --
-
-    @app.route("/api/npcs/<key>/thoughts", methods=["GET"])
-    def get_agent_thoughts(key):
-        with _agent_thoughts_lock:
-            thoughts = list(_agent_thoughts.get(key, []))
-        return jsonify(thoughts)
-
-    @app.route("/api/npcs/<key>/thoughts", methods=["POST"])
-    def post_agent_thoughts(key):
-        data = request.get_json(force=True)
-        entry = {
-            "thinking": data.get("thinking", ""),
-            "response": data.get("response", ""),
-            "timestamp": time.time(),
-        }
-        with _agent_thoughts_lock:
-            _agent_thoughts.setdefault(key, []).append(entry)
-        return jsonify({"ok": True})
-
-    @app.route("/api/npcs/<key>/character-sheet", methods=["GET"])
-    def get_agent_character_sheet(key):
-        """Return the parsed NRSP character sheet for this agent."""
-        from lib.personas import PERSONAS
-        from lib.scenario_loader import _parse_frontmatter
-        if key not in PERSONAS:
-            return jsonify({"error": "unknown agent"}), 404
-        try:
-            char_path = PERSONAS[key].get("character_file", "")
-            if not char_path or not Path(char_path).exists():
-                return jsonify({"error": "character file not found"}), 404
-            text = Path(char_path).read_text()
-            frontmatter = _parse_frontmatter(text)
-            # Strip frontmatter from body
-            body = re.sub(r"^---\n.*?---\n", "", text, count=1, flags=re.DOTALL).strip()
-            # Parse sections (## headers)
-            sections = []
-            current_title = None
-            current_lines = []
-            for line in body.split("\n"):
-                if line.startswith("## ") and not line.startswith("### "):
-                    if current_title is not None:
-                        sections.append({"title": current_title, "content": "\n".join(current_lines).strip()})
-                    current_title = line[3:].strip()
-                    current_lines = []
-                else:
-                    current_lines.append(line)
-            if current_title is not None:
-                sections.append({"title": current_title, "content": "\n".join(current_lines).strip()})
-            return jsonify({"key": key, "frontmatter": frontmatter, "sections": sections})
-        except Exception as e:
-            return jsonify({"error": str(e)}), 500
-
-    @app.route("/api/npcs/<key>/prompt", methods=["GET"])
-    def get_agent_prompt(key):
-        """Return the character file content for this agent."""
-        from lib.personas import PERSONAS, load_persona_instructions
-        if key not in PERSONAS:
-            return jsonify({"error": "unknown agent"}), 404
-        try:
-            content = load_persona_instructions(key)
-            return jsonify({"key": key, "content": content})
-        except Exception as e:
-            return jsonify({"error": str(e)}), 500
-
-    # -- Personas API --
-
-    @app.route("/api/personas", methods=["GET"])
-    def get_personas():
-        from lib.personas import PERSONAS
-        result = {}
-        for key, p in PERSONAS.items():
-            result[key] = {
-                "key": key,
-                "display_name": p["display_name"],
-                "team_description": p.get("team_description", ""),
-            }
-        return jsonify(result)
-
-    # -- Session API --
-
-    @app.route("/api/session/current", methods=["GET"])
-    def session_current():
-        return jsonify(get_current_session())
-
-    @app.route("/api/session/list", methods=["GET"])
-    def session_list():
-        return jsonify(list_sessions())
-
-    @app.route("/api/session/scenarios", methods=["GET"])
-    def session_scenarios():
-        return jsonify(list_scenarios())
-
-    @app.route("/api/session/save", methods=["POST"])
-    def session_save():
-        data = request.get_json(force=True) if request.data else {}
-        name = data.get("name")
-        try:
-            meta = save_session(name)
-            return jsonify(meta), 201
-        except Exception as e:
-            return jsonify({"error": str(e)}), 500
-
-    @app.route("/api/session/load", methods=["POST"])
-    def session_load():
-        data = request.get_json(force=True)
-        instance_name = data.get("instance")
-        if not instance_name:
-            return jsonify({"error": "instance required"}), 400
-        try:
-            meta = load_session(instance_name)
-            # Load the scenario config so channels/personas/folders are populated
-            scenario = meta.get("scenario")
-            if scenario:
-                from lib.scenario_loader import load_scenario as _load_scenario
-                _load_scenario(scenario)
-                set_scenario(scenario)
-            _reinitialize()
-            # Re-restore memos, events, emails, and recaps that were
-            # cleared by _load_scenario / _reinitialize
-            _restore_session_extras(instance_name)
-            # Apply saved memberships on top of defaults
-            memberships = get_memberships_from_instance(instance_name)
-            if memberships:
-                with _channel_lock:
-                    for ch, members in memberships.items():
-                        if ch in _channel_members:
-                            _channel_members[ch] = set(members)
-            # Signal orchestrator to restart with this session's scenario
-            with _command_lock:
-                _orchestrator_commands.append({"action": "restart", "scenario": scenario})
-            return jsonify(meta)
-        except FileNotFoundError as e:
-            return jsonify({"error": str(e)}), 404
-        except Exception as e:
-            return jsonify({"error": str(e)}), 500
-
-    @app.route("/api/session/new", methods=["POST"])
-    def session_new():
-        data = request.get_json(force=True) if request.data else {}
-        scenario = data.get("scenario")
-        try:
-            meta = new_session(scenario)
-            _reinitialize()
-            # Signal orchestrator to restart with the new scenario
-            with _command_lock:
-                _orchestrator_commands.append({"action": "restart", "scenario": scenario or get_current_session().get("scenario")})
-            meta["restarting_agents"] = True
-            return jsonify(meta)
-        except Exception as e:
-            return jsonify({"error": str(e)}), 500
-
-    # -- Usage API --
-
-    @app.route("/api/usage", methods=["GET"])
-    def get_usage():
-        return jsonify(_parse_usage_from_logs())
-
-    return app
-
-
-def _extract_snippet(content: str, query: str, context_chars: int = 80) -> str:
-    """Extract a short snippet around the first occurrence of query in content."""
-    lower = content.lower()
-    idx = lower.find(query.lower())
-    if idx == -1:
-        return content[:160]
-    start = max(0, idx - context_chars)
-    end = min(len(content), idx + len(query) + context_chars)
-    snippet = content[start:end]
-    if start > 0:
-        snippet = "..." + snippet
-    if end < len(content):
-        snippet = snippet + "..."
-    return snippet

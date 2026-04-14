@@ -154,7 +154,7 @@ def save_session(name: str | None = None) -> dict:
 
     # Save DM queue
     try:
-        from lib.orchestrator import get_dm_queue
+        from lib.container_orchestrator import get_dm_queue
         dm_data = get_dm_queue()
         if dm_data:
             (instance_dir / "dm_queue.json").write_text(json.dumps(dm_data, indent=2))
@@ -329,7 +329,7 @@ def load_session(instance_name: str) -> dict:
     dm_path = instance_dir / "dm_queue.json"
     if dm_path.exists():
         try:
-            from lib.orchestrator import set_dm_queue
+            from lib.container_orchestrator import set_dm_queue
             set_dm_queue(json.loads(dm_path.read_text()))
         except Exception:
             pass
@@ -477,6 +477,41 @@ def new_session(scenario_name: str | None = None) -> dict:
 
     print(f"New session started: scenario={scenario}")
     return get_current_session()
+
+
+def delete_session(instance_name: str) -> None:
+    """Delete a saved session instance directory.
+
+    Refuses to delete the currently loaded session.
+    """
+    current = _current_session.get("instance_name")
+    if current and current == instance_name:
+        raise RuntimeError("Cannot delete the currently loaded session")
+    instance_dir = INSTANCES_DIR / instance_name
+    if not instance_dir.exists():
+        raise FileNotFoundError(f"Instance not found: {instance_name}")
+    shutil.rmtree(instance_dir)
+    print(f"Session deleted: {instance_dir}")
+
+
+def rename_session(instance_name: str, new_name: str) -> dict:
+    """Rename a saved session's display name (updates metadata.json).
+
+    The instance directory on disk stays the same — only the
+    display name stored in metadata changes.
+    """
+    instance_dir = INSTANCES_DIR / instance_name
+    if not instance_dir.exists():
+        raise FileNotFoundError(f"Instance not found: {instance_name}")
+    meta_path = instance_dir / "metadata.json"
+    if not meta_path.exists():
+        raise FileNotFoundError(f"No metadata.json in instance: {instance_name}")
+    meta = json.loads(meta_path.read_text())
+    meta["name"] = new_name
+    meta_path.write_text(json.dumps(meta, indent=2))
+    meta["instance_dir"] = instance_name
+    print(f"Session renamed: {instance_name} -> {new_name}")
+    return meta
 
 
 def get_memberships_from_instance(instance_name: str) -> dict[str, list[str]] | None:

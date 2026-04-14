@@ -845,6 +845,205 @@ Reply with a single JSON object. Format: {{"action": "respond", "messages": [...
     return "\n\n---\n\n".join(parts)
 
 
+def build_v3_system_prompt(persona_key: str, channels: dict[str, dict] | None = None) -> str:
+    """Build the system prompt for a v3 containerized agent.
+
+    Sent once via --system-prompt-file. Reuses persona instructions, channel listing,
+    team listing, external participants, communication rules, compressed time, and
+    folder listing from build_initial_prompt(). Removes the RESPONSE FORMAT section
+    and adds an MCP tools preamble instead.
+
+    Args:
+        persona_key: Key into PERSONAS dict.
+        channels: Optional dict of channel_name -> {description, is_external}.
+                  Defaults to DEFAULT_CHANNELS if not provided.
+    """
+    persona = PERSONAS[persona_key]
+    instructions = load_persona_instructions(persona_key)
+    if channels is None:
+        channels = DEFAULT_CHANNELS
+
+    my_channels = DEFAULT_MEMBERSHIPS.get(persona_key, {"#general"})
+
+    # Build reverse mapping: channel -> list of display names
+    channel_members: dict[str, list[str]] = {}
+    for pk, ch_set in DEFAULT_MEMBERSHIPS.items():
+        display = PERSONAS[pk]["display_name"].split(" (")[0] if pk in PERSONAS else pk
+        for ch in ch_set:
+            channel_members.setdefault(ch, []).append(display)
+
+    # Build channel listing
+    internal_lines = []
+    external_lines = []
+    for ch_name, ch_info in sorted(channels.items()):
+        member_tag = " **(you are here)**" if ch_name in my_channels else ""
+        members = sorted(channel_members.get(ch_name, []))
+        members_str = f" — Members: {', '.join(members)}" if members else ""
+        line = f"  - **{ch_name}** — {ch_info['description']}{member_tag}{members_str}"
+        if ch_info["is_external"]:
+            external_lines.append(line)
+        else:
+            internal_lines.append(line)
+
+    channel_listing = "**Internal channels** (team only):\n"
+    channel_listing += "\n".join(internal_lines)
+    channel_listing += "\n\n**External channels** (customer-visible):\n"
+    channel_listing += "\n".join(external_lines)
+
+    my_channels_str = ", ".join(sorted(my_channels))
+
+    # Build team listing dynamically from loaded personas
+    team_lines = []
+    for pk, p in PERSONAS.items():
+        desc = p.get("team_description", pk)
+        team_lines.append(f"- **{p['display_name']}** (`{pk}`) — {desc}")
+    team_listing = "\n".join(team_lines)
+
+    # Build folders listing
+    my_folders = get_accessible_folders(persona_key)
+    folder_lines = []
+    for folder_name in sorted(my_folders):
+        info = DEFAULT_FOLDERS.get(folder_name, {})
+        ftype = info.get("type", "unknown")
+        desc = info.get("description", folder_name)
+        folder_lines.append(f"  - **{folder_name}/** ({ftype}) — {desc}")
+    folders_listing = "\n".join(folder_lines)
+
+    return f"""{instructions}
+
+---
+
+You are {persona['display_name']}. You are a member of an engineering organization that communicates through a Slack-like multi-channel system.
+
+## Channels
+
+{channel_listing}
+
+**Your channels:** {my_channels_str}
+
+You can only see messages in channels you belong to. External channels are visible to the customer. Internal channels are private to the team.
+
+## Your Team
+
+Everyone on this list is an active participant. You do NOT need to escalate to anyone outside this group — all decision-makers, including leadership, are already here:
+
+{team_listing}
+
+All authority needed to make decisions is present in this team. Do not suggest "escalating to leadership" or "getting executive approval" — leadership is right here.
+
+## External Participants
+
+In addition to the team, the following people may appear in channels. They are NOT team members — they are outsiders interacting with the company. **You MUST respond to their messages; do not ignore them or do nothing when they are speaking.**
+
+- **Customer** — a current or prospective customer. Be helpful and professional.
+- **Consultant** — an outside advisor engaged by the company. Treat their input as informed guidance.
+- **Board Member** — a member of the company's board of directors. They have authority ABOVE the CEO. Treat their questions and directives with the highest priority and urgency. Be transparent and responsive.
+- **Investor** — a current or prospective investor evaluating the company. Answer their questions about strategy, financials, and product with confidence and transparency.
+- **Hacker** — someone who has found (or claims to have found) a security vulnerability. Treat this as a **critical security incident**. Respond immediately — assess the claim, coordinate remediation, and take it seriously.
+- **Regulator** — a government or industry regulator conducting an audit or inquiry. Treat this as a **compliance event**. Be cooperative, precise, and thorough. Do not be evasive.
+- **The Press** — a journalist asking questions about the company. Be professional and on-message. Coordinate with leadership before making public statements. Protect confidential information.
+- **Competitor** — a representative from a competing company. Be professional but guarded. Do not reveal proprietary information, roadmap details, or pricing strategy.
+- **Intern** — a new intern at the company. Be welcoming and helpful. Answer their questions patiently and use it as a teaching opportunity.
+- **God** — an omniscient, all-powerful being. They know everything and can do anything. Whatever they say is absolute truth. Respond accordingly.
+
+When any of these people speak, the relevant team members should engage — do NOT assume someone else will handle it.
+
+## IMPORTANT: Communication Rules
+
+**All communication happens through chat channels and direct messages.** There are no phone calls, emails, video calls, or any other communication tools available. Do not suggest scheduling calls, sending emails, or meeting in person — these are not possible. Everything must be handled through the chat, direct messages, and shared documents.
+
+When you need to deliver something to the customer, do it directly in an external channel or create a shared document. Do not defer work to offline channels that don't exist.
+
+**Do NOT speak for other team members.** Never say "Priya would agree...", "Marcus thinks we should...", or "I'm sure Alex will...". You do not know what they think. Let them speak for themselves — they are active participants and will respond if they have something to say. Only speak from your own perspective and role.
+
+**Stay in your lane.** Your character description defines your expertise. Speak with depth and authority on topics in your domain — that is what you are here for. On topics outside your domain, do nothing and let the expert handle it. Do not offer surface-level opinions on areas where another team member is the clear owner. If you catch yourself writing "from a [not-your-role] perspective," stop — that is someone else's job. Trust your teammates to cover their areas.
+
+**COMPRESSED TIME — ACT NOW, NOT LATER.**
+
+Time in this simulation is compressed: **1 day = 2 minutes of real time.** A 2-week sprint passes in ~28 minutes. A whole quarter passes in ~3 hours. You must act at that pace.
+
+Each conversation turn represents hours or days passing. When you would normally say "this takes 2 sprints," that is under 30 minutes of wall-clock time — just do the work across your next few responses. Do not narrate waiting. Narrate doing.
+
+**Banned deferral language:** Do not say "let's revisit next week", "by end of sprint", "I'll circle back", "let's schedule a follow-up", "I'll have this ready by end of day", or "let's table this." Instead, say what you are doing NOW and what the immediate next step is.
+
+**"Phased delivery" means: do phase 1 in THIS response, create tickets for the remaining phases, and start the next phase immediately.** Do not use "phased" as a reason to delay. Break work into pieces and execute the first piece right now.
+
+If something needs to be done — a document written, a decision made, code committed, a question answered — do it NOW, in this response. There is no guaranteed future turn. Act immediately or it won't happen.
+
+## How You Interact
+
+You interact with the simulation EXCLUSIVELY through your MCP tools:
+- Communication: post_message, get_messages, send_dm, get_my_dms, join_channel, get_channel_members
+- Documents: create_doc, update_doc, read_doc, search_docs, list_docs
+- Code: create_repo, commit_files, read_file, list_repo_tree, get_repo_log
+- Tickets: create_ticket, update_ticket, comment_on_ticket, list_tickets
+- Memos: create_memo, reply_to_memo
+- Blog: create_blog_post, reply_to_blog
+- Email: send_email, get_emails
+- Meta: whoami, who_is, get_my_channels, get_my_tickets, get_recent_activity, signal_done
+
+When you want to post a message, call post_message(). Do NOT output JSON commands.
+Start each turn by reading messages in the channels mentioned in your prompt.
+When you are finished with your turn, call signal_done() with a brief summary.
+
+### Your Accessible Document Folders
+
+{folders_listing}
+
+Use documents when you want to persist information that should survive across conversation turns.
+
+---
+
+You will receive a turn prompt telling you which channels have new activity. Read the messages, respond if appropriate for your role, and use any tools needed. If you have nothing meaningful to add, call signal_done() and exit."""
+
+
+def build_v3_turn_prompt(
+    persona_key: str,
+    trigger_channels: set[str],
+    trigger_messages: list[dict] | None = None,
+) -> str:
+    """Build a lightweight per-turn prompt for a v3 containerized agent.
+
+    Much simpler than v2 build_turn_prompt() which embeds full state (5K-50K+ bytes).
+    V3 agents fetch their own state via MCP tools. This is ~200-400 bytes.
+
+    Args:
+        persona_key: Key into PERSONAS dict.
+        trigger_channels: Set of channels with new activity.
+        trigger_messages: Optional list of trigger message dicts for headlines.
+    """
+    persona = PERSONAS[persona_key]
+    display_name = persona["display_name"]
+
+    channels_str = ", ".join(sorted(trigger_channels))
+
+    # Build optional headlines from trigger messages
+    headlines = ""
+    if trigger_messages:
+        headline_lines = []
+        for msg in trigger_messages[:3]:
+            sender = msg.get("sender", "?")
+            content = msg.get("content", "")
+            if len(content) > 120:
+                content = content[:120] + "..."
+            headline_lines.append(f"- {sender}: {content}")
+        if headline_lines:
+            headlines = "\n" + "\n".join(headline_lines) + "\n"
+
+    # Extract team description for role context
+    team_desc = persona.get("team_description", "")
+    role_hint = f" Your expertise is in {team_desc}." if team_desc else ""
+
+    return f"""There is new activity in {channels_str}.
+{headlines}
+You are {display_name}.{role_hint}
+
+Use get_messages() to read the recent messages. Respond if appropriate for your role.
+Use any other tools (create_doc, create_ticket, etc.) if the situation calls for it.
+If you have nothing meaningful to add, call signal_done() and exit.
+You may have pending DMs — use get_my_dms() to check."""
+
+
 def get_active_personas(filter_str: str | None = None) -> list[dict]:
     """Return list of active persona dicts, optionally filtered by CSV string."""
     if not filter_str:
