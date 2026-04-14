@@ -61,6 +61,13 @@ if __name__ == "__main__":
                     import traceback
                     print(f"\nOrchestrator crashed ({type(e).__name__}): {e}")
                     traceback.print_exc()
+                    # Don't restart for setup/config errors — they'll just fail again
+                    msg = str(e)
+                    if isinstance(e, RuntimeError) and any(hint in msg for hint in [
+                        "not found", "not reachable", "Build it first",
+                    ]):
+                        print("\nThis is a setup error — fix it before restarting.")
+                        raise SystemExit(1)
                     print("Restarting in 3 seconds...")
                     import time
                     time.sleep(3)
