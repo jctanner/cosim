@@ -58,7 +58,10 @@ if __name__ == "__main__":
                 except (asyncio.CancelledError, BaseException) as e:
                     if isinstance(e, KeyboardInterrupt):
                         raise
-                    print(f"\nOrchestrator crashed ({type(e).__name__}), restarting in 3 seconds...")
+                    import traceback
+                    print(f"\nOrchestrator crashed ({type(e).__name__}): {e}")
+                    traceback.print_exc()
+                    print("Restarting in 3 seconds...")
                     import time
                     time.sleep(3)
         elif args.command == "mcp-server":

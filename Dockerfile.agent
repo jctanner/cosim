@@ -8,19 +8,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN useradd -m -s /bin/bash agent
 
 COPY agent-hooks.json /home/agent/.claude/hooks.json
-RUN mkdir -p /home/agent/.config/gcloud
 
-# Bake in GCP credentials (local dev only — do not push to public registries)
-COPY application_default_credentials.json /home/agent/.config/gcloud/application_default_credentials.json
+# Credentials directory (file mounted at runtime, not baked into image)
+RUN mkdir -p /home/agent/.config/gcloud
 
 RUN chown -R agent:agent /home/agent/.claude /home/agent/.config
 
 ENV AGENT_PERSONA_KEY="" \
     MCP_SERVER_URL="" \
     HOME=/home/agent \
-    CLAUDE_CODE_USE_VERTEX=1 \
-    CLOUD_ML_REGION=us-east5 \
-    ANTHROPIC_VERTEX_PROJECT_ID=YOUR_PROJECT_ID \
     GOOGLE_APPLICATION_CREDENTIALS=/home/agent/.config/gcloud/application_default_credentials.json
 
 USER agent
@@ -30,9 +26,12 @@ WORKDIR /home/agent/scratch
 CMD ["sleep", "infinity"]
 
 # Usage (podman — Flask+MCP run on host):
-#   cp ~/.config/gcloud/application_default_credentials.json .
 #   podman build -f Dockerfile.agent -t agent-image:latest .
 #   podman run -d --name agent-pm \
 #     -e AGENT_PERSONA_KEY=pm \
 #     -e MCP_SERVER_URL=host.containers.internal:5001 \
+#     -e CLAUDE_CODE_USE_VERTEX=1 \
+#     -e CLOUD_ML_REGION=us-east5 \
+#     -e ANTHROPIC_VERTEX_PROJECT_ID=your-project-id \
+#     -v ~/.config/gcloud/application_default_credentials.json:/home/agent/.config/gcloud/application_default_credentials.json:ro \
 #     agent-image:latest

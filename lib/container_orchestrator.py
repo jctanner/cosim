@@ -8,7 +8,9 @@ signal_done events from the MCP server rather than waiting for process exit.
 import asyncio
 import json
 import logging
+import os
 import platform as _platform
+import shutil
 import subprocess
 import threading
 import time as _time
@@ -33,6 +35,55 @@ logger = logging.getLogger("container_orchestrator")
 
 LOG_DIR = Path(__file__).parent.parent / "var" / "logs"
 TMP_DIR = Path(__file__).parent.parent / "var" / "tmp"
+
+# Env vars to forward from the host process to agent containers.
+# These are loaded from .env by main.py's load_dotenv() call.
+_FORWARD_ENV_VARS = [
+    "CLAUDE_CODE_USE_VERTEX",
+    "CLOUD_ML_REGION",
+    "ANTHROPIC_VERTEX_PROJECT_ID",
+    "ANTHROPIC_API_KEY",        # non-Vertex usage
+]
+
+
+def _collect_env_vars() -> list[str]:
+    """Collect env vars from os.environ to forward to containers as -e flags.
+
+    Returns a list like ["-e", "KEY=VAL", "-e", "KEY2=VAL2", ...].
+    """
+    flags: list[str] = []
+    for key in _FORWARD_ENV_VARS:
+        val = os.environ.get(key)
+        if val:
+            flags.extend(["-e", f"{key}={val}"])
+    return flags
+
+
+def _find_and_stage_gcp_credentials() -> str | None:
+    """Find GCP credentials and copy to var/tmp/ for SELinux-safe mounting.
+
+    Checks: GOOGLE_APPLICATION_CREDENTIALS env var, project-local copy,
+    then standard gcloud location. Copies to var/tmp/ so the mount uses
+    the same SELinux context as other already-working volume mounts.
+    """
+    candidates = [
+        os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", ""),
+        str(Path(__file__).parent.parent / "application_default_credentials.json"),
+        str(Path.home() / ".config" / "gcloud" / "application_default_credentials.json"),
+    ]
+    src = None
+    for path in candidates:
+        if path and Path(path).is_file():
+            src = path
+            break
+    if not src:
+        return None
+
+    staged = TMP_DIR / "gcp-credentials.json"
+    TMP_DIR.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(src, staged)
+    return str(staged)
+
 
 # -- DM (Direct Message) queue --
 # recipient_key -> [{from_key, from_name, text, timestamp}]
@@ -223,6 +274,8 @@ class ContainerPool:
         self._allowed_tools_str = ",".join(mcp_tools + agent_builtin)
         self._config_files: dict[str, Path] = {}  # persona_key -> mcp config path
         self._prompt_files: dict[str, Path] = {}  # persona_key -> system prompt path
+        self._env_flags = _collect_env_vars()
+        self._gcp_creds_path = _find_and_stage_gcp_credentials()
 
     async def start(self, build_system_prompt_fn, on_progress=None) -> None:
         """Validate prerequisites, generate configs, and launch long-running containers.
@@ -241,7 +294,13 @@ class ContainerPool:
         self._clear_done_events()
 
         total = len(self._personas)
+        env_names = [f.split("=")[0] for f in self._env_flags if "=" in f and not f.startswith("-")]
         print(f"Launching {total} long-running agent containers...")
+        print(f"  Env vars forwarded: {', '.join(env_names) if env_names else '(none)'}")
+        if self._gcp_creds_path:
+            print(f"  GCP credentials: {self._gcp_creds_path}")
+        else:
+            print(f"  GCP credentials: not found (containers may fail auth)")
 
         for i, (key, persona) in enumerate(self._personas.items(), 1):
             display_name = persona["display_name"]
@@ -315,6 +374,7 @@ class ContainerPool:
             "--dns", "8.8.8.8",
             "-e", f"AGENT_PERSONA_KEY={persona_key}",
             "-e", f"MCP_SERVER_URL={self._mcp_host}:{self._mcp_port}",
+            *self._env_flags,
             "-v", f"{config_path.resolve()}:/home/agent/.mcp-config.json:ro,Z",
             "-v", f"{prompt_path.resolve()}:/home/agent/system-prompt.md:ro,Z",
             self._container_image,
@@ -345,6 +405,25 @@ class ContainerPool:
                 f"Container {container_name} is not running (status: {status}). "
                 f"Check: podman logs {container_name}"
             )
+
+        # Copy GCP credentials into container (avoids volume mount permission/SELinux issues)
+        if self._gcp_creds_path:
+            creds_dest = f"{container_name}:/home/agent/.config/gcloud/application_default_credentials.json"
+            cp_proc = await asyncio.create_subprocess_exec(
+                "podman", "cp", self._gcp_creds_path, creds_dest,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            await cp_proc.communicate()
+            # Fix ownership so the agent user can read it
+            chown_proc = await asyncio.create_subprocess_exec(
+                "podman", "exec", "--user", "root", container_name,
+                "chown", "agent:agent",
+                "/home/agent/.config/gcloud/application_default_credentials.json",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            await chown_proc.communicate()
 
         self._active_containers[persona_key] = container_name
 
