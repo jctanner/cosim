@@ -131,11 +131,23 @@ def update_doc(folder, slug):
     data = request.get_json(force=True)
     content = data.get("content", "")
     author = data.get("author", "unknown")
+    new_title = data.get("title", "").strip()
+    new_slug = data.get("new_slug", "").strip()
+
+    # Normalize new_slug through slugify if provided
+    if new_slug:
+        new_slug = slugify(new_slug)
+        if not new_slug:
+            return jsonify({"error": "invalid new_slug (empty after normalization)"}), 400
 
     with _docs_lock:
         meta = _docs_index.get(slug)
         if meta is None or meta.get("folder") != folder:
             return jsonify({"error": "not found"}), 404
+
+        # Check for slug collision before proceeding
+        if new_slug and new_slug != slug and new_slug in _docs_index:
+            return jsonify({"error": f"slug '{new_slug}' already exists"}), 409
 
         doc_path = DOCS_DIR / folder / f"{slug}.txt"
 
@@ -156,6 +168,19 @@ def update_doc(folder, slug):
         meta["updated_by"] = author
         meta["size"] = len(content.encode("utf-8"))
         meta["preview"] = content[:100]
+
+        # Update title if provided
+        if new_title:
+            meta["title"] = new_title
+
+        # Rename slug if provided and different
+        if new_slug and new_slug != slug:
+            new_path = DOCS_DIR / folder / f"{new_slug}.txt"
+            doc_path.rename(new_path)
+            meta["slug"] = new_slug
+            del _docs_index[slug]
+            _docs_index[new_slug] = meta
+
         _save_index()
 
     _broadcast_doc_event("updated", meta)

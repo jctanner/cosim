@@ -254,15 +254,18 @@ def _register_document_tools(
 
     @server.tool(
         name="update_doc",
-        description="Replace the content of an existing document.",
+        description="Replace the content of an existing document. Optionally rename the title and/or slug.",
     )
-    async def update_doc(folder: str, slug: str, content: str) -> str:
+    async def update_doc(folder: str, slug: str, content: str, title: str = "", new_slug: str = "") -> str:
         if folder not in my_folders:
             return f"Error: you don't have access to folder '{folder}'. Your folders: {sorted(my_folders)}"
         t0 = time.time()
-        result = await _flask("PUT", f"/api/docs/{folder}/{slug}", flask_url, json={
-            "content": content, "author": display_name,
-        })
+        payload: dict[str, str] = {"content": content, "author": display_name}
+        if title:
+            payload["title"] = title
+        if new_slug:
+            payload["new_slug"] = new_slug
+        result = await _flask("PUT", f"/api/docs/{folder}/{slug}", flask_url, json=payload)
         _record_audit(agent_key, "update_doc", {"folder": folder, "slug": slug}, "updated", (time.time() - t0) * 1000)
         return json.dumps(result)
 
