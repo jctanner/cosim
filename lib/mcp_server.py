@@ -1005,6 +1005,12 @@ async def _done_events_endpoint(request: Request) -> JSONResponse:
     return JSONResponse(events)
 
 
+async def _done_events_cursor_endpoint(request: Request) -> JSONResponse:
+    """GET: return the current done-event high-water mark without event data."""
+    with _done_lock:
+        return JSONResponse({"cursor": _done_event_counter})
+
+
 async def _load_scenario_endpoint(request: Request) -> JSONResponse:
     """POST /api/load-scenario — dynamically load (or reload) a scenario.
 
@@ -1099,6 +1105,7 @@ def build_app(scenario_name: str | None, flask_url: str) -> Starlette:
         Route("/api/telemetry", _get_telemetry, methods=["GET"]),
         Route("/api/audit", _get_audit, methods=["GET"]),
         Route("/api/agents/done-events", _done_events_endpoint, methods=["GET", "DELETE"]),
+        Route("/api/agents/done-events/cursor", _done_events_cursor_endpoint, methods=["GET"]),
     ])
 
     app = Starlette(routes=routes, lifespan=lifespan)

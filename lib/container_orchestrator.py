@@ -581,6 +581,19 @@ class ContainerPool:
             logger.debug(f"Failed to poll done events: {e}")
         return []
 
+    def _get_done_event_cursor(self) -> int:
+        """Get the current done-event high-water mark without fetching all events."""
+        try:
+            resp = sync_requests.get(
+                f"{self._mcp_base_url}/api/agents/done-events/cursor",
+                timeout=5,
+            )
+            if resp.status_code == 200:
+                return resp.json().get("cursor", 0)
+        except Exception:
+            pass
+        return 0
+
     def _clear_done_events(self) -> None:
         """Clear all done events on the MCP server."""
         try:
@@ -902,9 +915,10 @@ async def _run_loop(
                     return pk, result
 
             # --- signal_done-aware tier advancement ---
-            # Snapshot done event cursor before launching agents
-            pre_tier_done_events = pool._poll_done_events(since_id=0)
-            done_since_id = max((e["id"] for e in pre_tier_done_events), default=0)
+            # Snapshot done event cursor before launching agents.
+            # Use the MCP server's event count endpoint to get the current
+            # high-water mark without fetching all historical events.
+            done_since_id = pool._get_done_event_cursor()
 
             # Launch all agents as background tasks
             tier_agent_keys = set(tier_agents.keys())
