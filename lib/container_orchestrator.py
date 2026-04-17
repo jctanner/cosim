@@ -871,10 +871,16 @@ async def _run_loop(
                         if pk in ch_members
                     }
 
+                    # Filter trigger messages to only channels this agent belongs to
+                    agent_trigger_msgs = [
+                        m for m in trigger_msgs
+                        if m.get("channel") in all_agent_channels
+                    ] if trigger_msgs else None
+
                     prompt = build_v3_turn_prompt(
                         pk,
-                        trigger_ch_set,
-                        trigger_messages=trigger_msgs[-3:] if trigger_msgs else None,
+                        trigger_ch_set & all_agent_channels,
+                        trigger_messages=agent_trigger_msgs[-3:] if agent_trigger_msgs else None,
                     )
 
                     # Show typing indicators
