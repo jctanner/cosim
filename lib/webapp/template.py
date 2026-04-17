@@ -793,6 +793,7 @@ WEB_UI = """<!DOCTYPE html>
           <button id="doc-back-btn">Back</button>
           <span id="doc-viewer-title"></span>
           <div style="margin-left:auto;display:flex;gap:6px">
+            <button id="doc-download-btn" class="session-btn" style="font-size:11px">Download</button>
             <button id="doc-history-btn" class="session-btn" style="font-size:11px">History</button>
             <button id="doc-edit-btn" class="session-btn" style="font-size:11px">Edit Latest Version</button>
           </div>
@@ -1118,6 +1119,7 @@ WEB_UI = """<!DOCTYPE html>
           <div style="display:flex;gap:4px">
             <button id="blog-publish-btn" style="background:#2ecc71;border:none;color:var(--text-bright);padding:4px 10px;border-radius:4px;font-size:11px;cursor:pointer;display:none" title="Publish">Publish</button>
             <button id="blog-unpublish-btn" style="background:transparent;border:1px solid #f39c12;color:#f39c12;padding:4px 10px;border-radius:4px;font-size:11px;cursor:pointer;display:none" title="Unpublish">Unpublish</button>
+            <button id="blog-download-btn" style="background:transparent;border:1px solid var(--text-dim);color:var(--text-dim);padding:4px 10px;border-radius:4px;font-size:11px;cursor:pointer" title="Download raw content">Download</button>
             <button id="blog-delete-btn" style="background:transparent;border:1px solid var(--accent);color:var(--accent);padding:4px 10px;border-radius:4px;font-size:11px;cursor:pointer" title="Delete post">Delete</button>
           </div>
         </div>
@@ -2155,6 +2157,16 @@ async function loadDocHistory() {
     list.appendChild(item);
   });
 }
+
+document.getElementById('doc-download-btn').addEventListener('click', () => {
+  if (!_currentDoc) return;
+  const blob = new Blob([_currentDoc.content || ''], {type: 'text/plain'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = (_currentDoc.slug || 'document') + '.md';
+  a.click();
+  URL.revokeObjectURL(a.href);
+});
 
 document.getElementById('doc-history-btn').addEventListener('click', () => {
   const panel = document.getElementById('doc-history-panel');
@@ -4174,6 +4186,19 @@ document.getElementById('blog-unpublish-btn').addEventListener('click', async ()
     loadBlogPosts();
     showNotice('Post unpublished');
   }
+});
+
+document.getElementById('blog-download-btn').addEventListener('click', async () => {
+  if (!_currentBlogPost) return;
+  const resp = await fetch('/api/blog/posts/' + _currentBlogPost);
+  if (!resp.ok) return;
+  const post = await resp.json();
+  const blob = new Blob([post.body || ''], {type: 'text/plain'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = (_currentBlogPost || 'blog-post') + '.md';
+  a.click();
+  URL.revokeObjectURL(a.href);
 });
 
 document.getElementById('blog-delete-btn').addEventListener('click', async () => {
