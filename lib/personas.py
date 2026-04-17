@@ -1034,6 +1034,15 @@ def build_v3_turn_prompt(
     team_desc = persona.get("team_description", "")
     role_hint = f" Your expertise is in {team_desc}." if team_desc else ""
 
+    # If triggered by a director channel, hint that it's a private conversation
+    director_channels = {ch for ch in trigger_channels if ch.startswith("#director-")}
+    director_hint = ""
+    if director_channels:
+        director_hint = (
+            "\nThe #director channel is a private channel between you and the Scenario Director. "
+            "Reply there for direct conversation. Use public channels for team-wide communication."
+        )
+
     return f"""There is new activity in {channels_str}.
 {headlines}
 You are {display_name}.{role_hint}
@@ -1041,7 +1050,7 @@ You are {display_name}.{role_hint}
 Use get_messages() to read the recent messages. Respond if appropriate for your role.
 Use any other tools (create_doc, create_ticket, etc.) if the situation calls for it.
 If you have nothing meaningful to add, call signal_done() and exit.
-You may have pending DMs — use get_my_dms() to check."""
+You may have pending DMs — use get_my_dms() to check.{director_hint}"""
 
 
 def get_active_personas(filter_str: str | None = None) -> list[dict]:
