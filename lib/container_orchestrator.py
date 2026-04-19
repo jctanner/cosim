@@ -1317,8 +1317,11 @@ async def run_container_orchestrator(args) -> None:
                                 assignee = t.get("assignee", "unassigned")
                                 lines.append(f"- **{t['id']}**: {t['title']} (priority: {t.get('priority', 'n/a')}, assigned: {assignee}, status: {t.get('status', 'open')})")
                             lines.append("\nPlease review and continue working on your assigned tickets.")
-                            client.post_message("System", "\n".join(lines), channel="#general")
-                            print(f"\nPosted ticket reminder ({len(open_tickets)} open tickets)")
+                            channels = client.get_channels()
+                            ch_names = [c["name"] for c in channels if not c.get("is_external") and not c["name"].startswith("#director-") and c["name"] not in ("#system", "#dms")]
+                            reminder_channel = "#general" if "#general" in ch_names else ch_names[0] if ch_names else "#general"
+                            client.post_message("System", "\n".join(lines), channel=reminder_channel)
+                            print(f"\nPosted ticket reminder ({len(open_tickets)} open tickets) to {reminder_channel}")
                             continue
                     except Exception as e:
                         print(f"Ticket reminder check failed: {e}")
