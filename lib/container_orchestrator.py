@@ -791,6 +791,7 @@ async def _run_loop(
     max_waves: int,
     scenario_name: str = "",
     max_concurrent: int = 4,
+    agent_last_seen: dict[str, int] | None = None,
 ) -> set[str]:
     """Run the event-driven response loop with tiered agent responses.
 
@@ -799,11 +800,12 @@ async def _run_loop(
     - Turn prompt is build_v3_turn_prompt() (~300 bytes) not build_turn_prompt() (~10K+ bytes)
     - Agent launch: pool.run_agent(pk, prompt) not pool.send(pk, prompt)
     - No response parsing — agents already did everything via MCP tools
-    - No command execution — agents use MCP tools directly
     - Activity detection via Flask message polling after each tier
 
     Returns the set of channels that received new agent posts (empty if all quiet).
     """
+    if agent_last_seen is None:
+        agent_last_seen = {}
     persona_map = {p["name"]: p for p in personas}
     wave = 0
     posted_channels: set[str] = set()
@@ -894,6 +896,7 @@ async def _run_loop(
                         pk,
                         trigger_ch_set & all_agent_channels,
                         trigger_messages=agent_trigger_msgs[-3:] if agent_trigger_msgs else None,
+                        last_seen_id=agent_last_seen.get(pk, 0),
                     )
 
                     # Show typing indicators
@@ -991,6 +994,13 @@ async def _run_loop(
             agents_status = _build_agent_status(personas, pool)
             client.send_heartbeat("responding", scenario_name, agents_status,
                                   "Processing messages...", check_commands=False)
+
+            # Update per-agent last_seen to current high-water mark
+            all_latest = client.get_messages()
+            if all_latest:
+                hw = all_latest[-1]["id"]
+                for pk in tier_agents:
+                    agent_last_seen[pk] = hw
 
             # Activity detection: query Flask for new messages since pre-tier snapshot
             latest = client.get_messages(since=pre_tier_last_id)
@@ -1187,6 +1197,7 @@ async def run_container_orchestrator(args) -> None:
             # Send ready heartbeat
             agents = _build_agent_status(personas, pool)
             client.send_heartbeat("ready", scenario_name, agents, "All agents ready", check_commands=False)
+            agent_last_seen: dict[str, int] = {}
         else:
             await asyncio.sleep(poll_interval)
 
@@ -1276,6 +1287,7 @@ async def run_container_orchestrator(args) -> None:
                     continue
 
                 print(f"Restart complete. {len(online_names)} agents online.")
+                agent_last_seen = {}
                 continue
 
             if cmd.get("action") == "shutdown":
@@ -1327,7 +1339,7 @@ async def run_container_orchestrator(args) -> None:
 
             active_channels = await _run_loop(
                 client, pool, personas, trigger_channels, max_waves,
-                scenario_name, max_concurrent,
+                scenario_name, max_concurrent, agent_last_seen,
             )
 
             # Reset all agents to ready and process any pending commands
@@ -1386,7 +1398,7 @@ async def run_container_orchestrator(args) -> None:
 
                 active_channels = await _run_loop(
                     client, pool, personas, active_channels, max_waves,
-                    scenario_name, max_concurrent,
+                    scenario_name, max_concurrent, agent_last_seen,
                 )
 
                 latest = client.get_messages()
