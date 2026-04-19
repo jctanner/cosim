@@ -92,6 +92,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
              "(default: auto-detect based on platform — "
              "host.containers.internal on macOS, host gateway IP on Linux)",
     )
+    chat_parser.add_argument(
+        "--ticket-reminders", action="store_true", default=False,
+        help="When agents go idle, check for open tickets and post a reminder "
+             "to trigger agents to continue working them",
+    )
 
     # ── mcp-server subcommand ─────────────────────────────────────────
     mcp_parser = subparsers.add_parser(

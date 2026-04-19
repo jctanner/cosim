@@ -1032,6 +1032,7 @@ async def run_container_orchestrator(args) -> None:
     max_turns = getattr(args, "max_turns", 50)
     max_concurrent = getattr(args, "max_concurrent", 4)
     done_timeout = getattr(args, "done_timeout", 120)
+    ticket_reminders = getattr(args, "ticket_reminders", False)
     personas = []
 
     mcp_host = getattr(args, "mcp_host", None) or _detect_mcp_host()
@@ -1049,6 +1050,7 @@ async def run_container_orchestrator(args) -> None:
     print(f"  Max turns per container: {max_turns}")
     print(f"  Max concurrent agents: {max_concurrent}")
     print(f"  Done timeout: {done_timeout}s")
+    print(f"  Ticket reminders: {'enabled' if ticket_reminders else 'disabled'}")
 
     # Wait for Flask server to be reachable
     while not client.health_check():
@@ -1288,6 +1290,21 @@ async def run_container_orchestrator(args) -> None:
             human_messages = [m for m in new_messages if not _is_agent_message(m)]
 
             if not human_messages:
+                if ticket_reminders:
+                    try:
+                        tickets = client.list_tickets()
+                        open_tickets = [t for t in tickets if t.get("status", "").lower() not in ("done", "closed", "resolved")]
+                        if open_tickets:
+                            lines = [f"**[Automated Reminder]** There are {len(open_tickets)} open ticket(s) that need attention:\n"]
+                            for t in open_tickets:
+                                assignee = t.get("assignee", "unassigned")
+                                lines.append(f"- **{t['id']}**: {t['title']} (priority: {t.get('priority', 'n/a')}, assigned: {assignee}, status: {t.get('status', 'open')})")
+                            lines.append("\nPlease review and continue working on your assigned tickets.")
+                            client.post_message("System", "\n".join(lines), channel="#general")
+                            print(f"\nPosted ticket reminder ({len(open_tickets)} open tickets)")
+                            continue
+                    except Exception as e:
+                        print(f"Ticket reminder check failed: {e}")
                 await asyncio.sleep(poll_interval)
                 continue
 
