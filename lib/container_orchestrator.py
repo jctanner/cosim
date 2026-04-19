@@ -1155,6 +1155,12 @@ async def run_container_orchestrator(args) -> None:
                 done_timeout=done_timeout,
             )
 
+            # Capture message baseline before startup so messages sent
+            # while agents come online aren't silently skipped.
+            existing = client.get_messages()
+            last_seen_id = existing[-1]["id"] if existing else 0
+            print(f"Skipping {len(existing)} existing messages (last_seen_id={last_seen_id})")
+
             online_names = []
 
             def on_progress(i, tot, key, display_name, state):
@@ -1181,10 +1187,6 @@ async def run_container_orchestrator(args) -> None:
             # Send ready heartbeat
             agents = _build_agent_status(personas, pool)
             client.send_heartbeat("ready", scenario_name, agents, "All agents ready", check_commands=False)
-
-            existing = client.get_messages()
-            last_seen_id = existing[-1]["id"] if existing else 0
-            print(f"Skipping {len(existing)} existing messages (last_seen_id={last_seen_id})")
         else:
             await asyncio.sleep(poll_interval)
 
@@ -1241,6 +1243,12 @@ async def run_container_orchestrator(args) -> None:
                     done_timeout=done_timeout,
                 )
 
+                # Capture message baseline before restart so messages sent
+                # while agents come online aren't silently skipped.
+                existing = client.get_messages()
+                last_seen_id = existing[-1]["id"] if existing else 0
+                print(f"Restart: baseline set at message {last_seen_id}")
+
                 online_names = []
 
                 def on_progress_restart(i, tot, key, display_name, state):
@@ -1267,10 +1275,7 @@ async def run_container_orchestrator(args) -> None:
                     _requeue_restart(client.base_url, scenario_name)
                     continue
 
-                # Reset message tracking
-                existing = client.get_messages()
-                last_seen_id = existing[-1]["id"] if existing else 0
-                print(f"Restart complete. Skipping {len(existing)} existing messages.")
+                print(f"Restart complete. {len(online_names)} agents online.")
                 continue
 
             if cmd.get("action") == "shutdown":
