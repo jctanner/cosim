@@ -186,7 +186,7 @@ python main.py chat [--scenario tech-startup]
                     [--model sonnet|opus|haiku]
                     [--personas pm,senior,architect]
                     [--max-rounds 5]
-                    [--max-auto-rounds 3]
+                    [--max-auto-rounds 0]
                     [--poll-interval 5.0]
                     [--server-url http://127.0.0.1:5000]
                     [--mcp-port 5001]
@@ -203,7 +203,7 @@ python main.py chat [--scenario tech-startup]
 | `--model` | `sonnet` | Claude model: `sonnet`, `opus`, or `haiku` |
 | `--personas` | all | Comma-separated subset of personas to run |
 | `--max-rounds` | 5 | Max ripple waves per response cycle |
-| `--max-auto-rounds` | 3 | Max autonomous continuation rounds (0=unlimited) |
+| `--max-auto-rounds` | 0 | Max autonomous continuation rounds (0=disabled) |
 | `--max-concurrent` | 4 | Max agents running concurrently within a tier |
 | `--container-timeout` | 300 | Seconds before killing an agent turn |
 | `--done-timeout` | 120 | Seconds to wait for `signal_done` before advancing tier |
@@ -234,6 +234,7 @@ Scenarios define the entire simulation: personas, channels, events, and configur
 | `dotcom-2000` | Y2K startup scenario |
 | `dnd-campaign` | Dungeons & Dragons campaign |
 | `company-simulator-team` | Internal team scenario |
+| `research-lab` | Research team scenario |
 
 ### Creating a New Scenario
 
@@ -253,7 +254,26 @@ agent-hooks.json                # Telemetry hooks for agent containers
 scripts/build-agent-image.sh    # Image build script
 .env                            # Vertex AI credentials (not committed)
 lib/
-  webapp.py                     # Flask server, REST API, SSE, web UI
+  webapp/                       # Flask server, REST API, SSE, web UI
+    __init__.py                 # App factory + blueprint registration
+    state.py                    # Shared in-memory state management
+    helpers.py                  # Initialization + SSE broadcast helpers
+    template.py                 # Jinja2 web UI template
+    routes/                     # REST API endpoint blueprints
+      messages.py               # Messaging API + SSE stream
+      channels.py               # Channel management
+      documents.py              # Document CRUD + search
+      gitlab.py                 # Repository operations
+      tickets.py                # Ticket management
+      memos.py                  # Memo threads
+      blog.py                   # Blog posts + replies
+      emails.py                 # Email broadcast
+      npcs.py                   # Agent management (toggle, hire, fire)
+      events.py                 # Event pool + triggers
+      sessions.py               # Session save/load/new
+      orchestrator.py           # Orchestrator status + commands
+      recaps.py                 # Recap generation
+      misc.py                   # Roles, templates, personas, usage
   container_orchestrator.py     # Container-based orchestrator + ContainerPool
   mcp_server.py                 # MCP tool server (Starlette + FastMCP)
   agent_runner.py               # Model utilities, one-shot agent runner
