@@ -267,7 +267,7 @@ def hire_npc():
             "director_persona": key,
             "created_at": time.time(),
         }
-        _channel_members[ch_name] = set()
+        _channel_members[ch_name] = {key}
 
     # Signal orchestrator to add this agent's session
     with _command_lock:

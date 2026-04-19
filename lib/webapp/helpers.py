@@ -152,7 +152,7 @@ def _init_channels():
                 "director_persona": pk,
                 "created_at": now,
             }
-            _channel_members[ch_name] = set()
+            _channel_members[ch_name] = {pk}
 
         for persona_key, ch_set in DEFAULT_MEMBERSHIPS.items():
             # Auto-add all agents to #announcements
