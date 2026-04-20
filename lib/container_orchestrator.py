@@ -1191,7 +1191,14 @@ async def run_container_orchestrator(args) -> None:
                 await pool.start(build_v3_system_prompt, on_progress=on_progress)
             except Exception as e:
                 print(f"Agent setup failed: {e}")
+                try:
+                    await pool.close()
+                except Exception:
+                    pass
                 pool = None
+                client.send_heartbeat("waiting", scenario_name, {},
+                                      f"Agent startup failed: {e}", check_commands=False)
+                _requeue_restart(client.base_url, scenario_name)
                 continue
 
             # Send ready heartbeat
@@ -1199,7 +1206,9 @@ async def run_container_orchestrator(args) -> None:
             client.send_heartbeat("ready", scenario_name, agents, "All agents ready", check_commands=False)
             agent_last_seen: dict[str, int] = {}
         else:
-            await asyncio.sleep(poll_interval)
+            # Poll frequently while waiting for session start, regardless
+            # of the configured poll_interval (which may be very long).
+            await asyncio.sleep(min(poll_interval, 5.0))
 
     try:
         while True:
