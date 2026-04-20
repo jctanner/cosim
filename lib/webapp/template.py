@@ -3623,6 +3623,7 @@ async function _smLoad(instance) {
     });
     if (resp.ok) {
       await reloadAllState();
+      pollStatus();
       showNotice('Session loaded.');
     } else {
       const err = await resp.json();
@@ -4814,7 +4815,10 @@ document.getElementById('load-session-confirm').addEventListener('click', async 
       body: JSON.stringify({instance: _lmSelected}),
     });
     if (resp.ok) {
+      const meta = await resp.json();
       await reloadAllState();
+      pollStatus();
+      showNotice('Session loaded: ' + (meta.name || _lmSelected));
     } else {
       const err = await resp.json();
       hideLoading();
@@ -4823,6 +4827,8 @@ document.getElementById('load-session-confirm').addEventListener('click', async 
       status.style.color = 'var(--accent)';
       return;
     }
+  } catch (e) {
+    showNotice('Session load error: ' + e.message);
   } finally {
     hideLoading();
     document.getElementById('load-session-confirm').disabled = false;
