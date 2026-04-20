@@ -21,9 +21,10 @@ def get_status():
     )
     with _orchestrator_lock:
         orch = dict(_orchestrator_status)
-        # Mark as disconnected if no heartbeat in 15 seconds
+        # Mark as disconnected if no heartbeat in 30 seconds
         if orch["last_heartbeat"] == 0 or time.time() - orch["last_heartbeat"] > 30:
             orch["state"] = "disconnected"
+            orch["message"] = ""
     return jsonify({
         "server": "running",
         "scenario": get_current_session().get("scenario"),
