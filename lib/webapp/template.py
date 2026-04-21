@@ -556,6 +556,18 @@ WEB_UI = """<!DOCTYPE html>
                        display: flex; gap: 6px; }
   #gitlab-content { flex: 1; overflow-y: auto; padding: 16px 20px; }
   #gitlab-empty { color: var(--text-dimmer); font-size: 14px; text-align: center; padding: 40px 20px; }
+  #gitlab-landing { padding: 0; }
+  #gitlab-landing-filter { width: 100%; background: var(--input-bg); color: var(--text); border: 1px solid var(--border-dark);
+             padding: 8px 12px; border-radius: 6px; font-size: 13px; box-sizing: border-box; margin-bottom: 12px; }
+  .gl-landing-card { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px;
+             border: 1px solid var(--border-dark); border-radius: 6px; margin-bottom: 6px; cursor: pointer; }
+  .gl-landing-card:hover { background: var(--border-mid); border-color: var(--accent); }
+  .gl-landing-name { font-size: 14px; font-weight: 600; color: var(--highlight); }
+  .gl-landing-desc { font-size: 12px; color: var(--text-dim); margin-top: 2px; }
+  .gl-landing-meta { font-size: 11px; color: var(--text-dimmer); white-space: nowrap; margin-left: 16px; }
+  .gl-download-btn { background: transparent; border: 1px solid var(--border-dark); color: var(--text-dim); padding: 4px 10px;
+             border-radius: 4px; cursor: pointer; font-size: 11px; white-space: nowrap; }
+  .gl-download-btn:hover { border-color: var(--accent); color: var(--accent); }
   .gitlab-breadcrumbs { font-size: 13px; color: var(--text-dim); margin-bottom: 12px; }
   .gitlab-breadcrumbs a { color: var(--highlight); cursor: pointer; text-decoration: none; }
   .gitlab-breadcrumbs a:hover { text-decoration: underline; }
@@ -823,7 +835,7 @@ WEB_UI = """<!DOCTYPE html>
   <!-- GitLab tab -->
   <div id="gitlab-pane" class="tab-pane">
     <div id="gitlab-sidebar">
-      <div class="gitlab-sidebar-section">Repositories</div>
+      <div class="gitlab-sidebar-section" style="cursor:pointer" onclick="glCurrentRepo=null;glCurrentPath='';renderRepoSidebar();renderRepoLanding()">Repositories</div>
       <div id="gitlab-repo-list"></div>
       <div style="padding:8px 10px">
         <button id="gl-new-repo-btn" class="session-btn" style="width:100%;font-size:11px">+ New Repo</button>
@@ -840,9 +852,12 @@ WEB_UI = """<!DOCTYPE html>
       </div>
     </div>
     <div id="gitlab-main">
-      <div id="gitlab-header">
-        <span id="gitlab-repo-title">Select a repository</span>
-        <span id="gitlab-repo-desc"></span>
+      <div id="gitlab-header" style="display:flex;align-items:center;justify-content:space-between">
+        <div>
+          <span id="gitlab-repo-title">Select a repository</span>
+          <span id="gitlab-repo-desc"></span>
+        </div>
+        <button id="gl-repo-download-btn" class="gl-download-btn" style="display:none" onclick="glDownloadRepo(glCurrentRepo)">Download .tar.gz</button>
       </div>
       <div id="gitlab-toggle-bar">
         <button class="gitlab-toggle-btn active" data-view="tree" id="gl-toggle-tree">Files</button>
@@ -2263,11 +2278,52 @@ async function loadRepos() {
     if (glCurrentView === 'tree') loadTree(glCurrentRepo, glCurrentPath);
     else loadCommits(glCurrentRepo);
   } else {
-    document.getElementById('gitlab-content').innerHTML =
-      '<div id="gitlab-empty">No repositories yet.</div>';
-    document.getElementById('gitlab-repo-title').textContent = 'Select a repository';
-    document.getElementById('gitlab-repo-desc').textContent = '';
+    renderRepoLanding();
   }
+}
+
+function renderRepoLanding(filter) {
+  document.getElementById('gitlab-repo-title').textContent = 'Repositories';
+  document.getElementById('gitlab-repo-desc').textContent = glRepos.length + ' repositories';
+  document.getElementById('gl-repo-download-btn').style.display = 'none';
+  document.getElementById('gitlab-toggle-bar').style.display = 'none';
+  const content = document.getElementById('gitlab-content');
+  if (glRepos.length === 0) {
+    content.innerHTML = '<div id="gitlab-empty">No repositories yet.</div>';
+    return;
+  }
+  const filterVal = (filter || '').toLowerCase();
+  const filtered = filterVal
+    ? glRepos.filter(r => r.name.toLowerCase().includes(filterVal) || (r.description || '').toLowerCase().includes(filterVal))
+    : glRepos;
+  let html = '<div id="gitlab-landing">';
+  html += '<input id="gitlab-landing-filter" type="text" placeholder="Filter repositories..." autocomplete="off"'
+    + (filterVal ? ' value="' + escapeHtml(filter) + '"' : '') + ' />';
+  if (filtered.length === 0) {
+    html += '<div id="gitlab-empty">No matching repositories.</div>';
+  }
+  filtered.forEach(r => {
+    const desc = r.description ? '<div class="gl-landing-desc">' + escapeHtml(r.description) + '</div>' : '';
+    const created = r.created_at ? new Date(r.created_at * 1000).toLocaleDateString() : '';
+    html += '<div class="gl-landing-card" data-repo="' + escapeHtml(r.name) + '">'
+      + '<div><div class="gl-landing-name">' + escapeHtml(r.name) + '</div>' + desc + '</div>'
+      + '<div style="display:flex;align-items:center;gap:8px">'
+      + '<span class="gl-landing-meta">' + escapeHtml(created) + '</span>'
+      + '<button class="gl-download-btn" data-repo="' + escapeHtml(r.name) + '" title="Download as .tar.gz" onclick="event.stopPropagation();glDownloadRepo(this.dataset.repo)">Download</button>'
+      + '</div></div>';
+  });
+  html += '</div>';
+  content.innerHTML = html;
+  const filterInput = document.getElementById('gitlab-landing-filter');
+  filterInput.addEventListener('input', () => renderRepoLanding(filterInput.value));
+  if (filterVal) { filterInput.focus(); filterInput.selectionStart = filterInput.selectionEnd = filterVal.length; }
+  content.querySelectorAll('.gl-landing-card').forEach(card => {
+    card.addEventListener('click', () => switchRepo(card.dataset.repo));
+  });
+}
+
+function glDownloadRepo(name) {
+  window.open('/api/gitlab/repos/' + encodeURIComponent(name) + '/download', '_blank');
 }
 
 function renderRepoSidebar() {
@@ -2288,6 +2344,8 @@ function switchRepo(name) {
   glCurrentView = 'tree';
   renderRepoSidebar();
   updateGlToggles();
+  document.getElementById('gitlab-toggle-bar').style.display = '';
+  document.getElementById('gl-repo-download-btn').style.display = '';
   const repo = glRepos.find(r => r.name === name);
   document.getElementById('gitlab-repo-title').textContent = name;
   document.getElementById('gitlab-repo-desc').textContent = repo ? (repo.description || '') : '';

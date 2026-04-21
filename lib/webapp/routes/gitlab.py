@@ -1,9 +1,11 @@
 """GitLab API routes."""
 
+import io
 import json
+import tarfile
 import time
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, send_file
 
 from lib.gitlab import GITLAB_DIR, save_repos_index, generate_commit_id
 from lib.webapp.state import _gitlab_repos, _gitlab_commits, _gitlab_lock
@@ -144,6 +146,31 @@ def gitlab_commit(project):
 
     _broadcast_gitlab_event("committed", {"project": project, "commit": commit})
     return jsonify(commit), 201
+
+
+@bp.route("/api/gitlab/repos/<project>/download", methods=["GET"])
+def gitlab_download(project):
+    with _gitlab_lock:
+        if project not in _gitlab_repos:
+            return jsonify({"error": "repo not found"}), 404
+
+    files_dir = GITLAB_DIR / project / "files"
+    if not files_dir.exists():
+        return jsonify({"error": "repo has no files"}), 404
+
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+        for fpath in sorted(files_dir.rglob("*")):
+            if fpath.is_file():
+                arcname = f"{project}/{fpath.relative_to(files_dir)}"
+                tar.add(str(fpath), arcname=arcname)
+    buf.seek(0)
+    return send_file(
+        buf,
+        mimetype="application/gzip",
+        as_attachment=True,
+        download_name=f"{project}.tar.gz",
+    )
 
 
 @bp.route("/api/gitlab/repos/<project>/log", methods=["GET"])
