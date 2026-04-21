@@ -171,22 +171,22 @@ MCP_TOOL_NAMES = [
 def _detect_mcp_host() -> str:
     """Detect the hostname containers use to reach services on the host.
 
-    - macOS/Docker Desktop: host.containers.internal (always works)
-    - Linux rootless podman: try host.containers.internal first,
-      fall back to default gateway IP from podman network inspect
+    Prefers host.containers.internal (works on macOS and modern Linux
+    podman with pasta/slirp4netns). Falls back to the podman network
+    gateway IP if the DNS name isn't resolvable from inside a container.
     """
     if _platform.system() == "Darwin":
         return "host.containers.internal"
 
-    # Linux: check if podman supports host.containers.internal
-    # by inspecting the default network gateway
+    # Linux: test host.containers.internal from inside a throwaway container
     try:
-        subprocess.run(
-            ["podman", "info", "--format", "{{.Host.NetworkBackend}}"],
-            capture_output=True, text=True, timeout=5,
+        proc = subprocess.run(
+            ["podman", "run", "--rm", "agent-image:latest",
+             "getent", "hosts", "host.containers.internal"],
+            capture_output=True, text=True, timeout=10,
         )
-        # For pasta/slirp4netns backends, host.containers.internal usually works
-        # in Podman 4.x+ on Fedora. Try it.
+        if proc.returncode == 0 and proc.stdout.strip():
+            return "host.containers.internal"
     except Exception:
         pass
 
