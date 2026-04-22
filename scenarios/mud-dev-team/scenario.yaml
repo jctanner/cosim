@@ -1,0 +1,293 @@
+name: "Realm of the Forgotten Crown — MUD Dev Team"
+description: "A 5-person indie team building and running a classic text-based MUD. Players can join the external channels to chat, get help, and report bugs."
+
+characters:
+  headwiz:
+    display_name: "Tyraziel (Head Wizard)"
+    character_file: "characters/tyraziel-headwiz.CS.md"
+    team_description: "lead developer, game architecture, final design authority, the Open Sourcerer"
+  advisor:
+    display_name: "Codex (Advisor)"
+    character_file: "characters/codex-advisor.CS.md"
+    team_description: "legendary MUD architect, wrote the book on MUD programming, consults on design and architecture"
+  builder:
+    display_name: "Pixel (Builder)"
+    character_file: "characters/pixel-builder.CS.md"
+    team_description: "world-building, room descriptions, quests, NPC dialogue"
+  coder:
+    display_name: "Hex (Coder)"
+    character_file: "characters/hex-coder.CS.md"
+    team_description: "game mechanics, combat system, spells, economy, balance"
+  moderator:
+    display_name: "Sage (Moderator)"
+    character_file: "characters/sage-moderator.CS.md"
+    team_description: "community management, player disputes, rules enforcement"
+  tester:
+    display_name: "Glitch (Tester)"
+    character_file: "characters/glitch-tester.CS.md"
+    team_description: "QA, bug hunting, new player experience, balance testing"
+
+channels:
+  "#dev":
+    description: "Code discussion, architecture, deploys"
+    is_external: false
+  "#building":
+    description: "Room/world creation, content review, quest design"
+    is_external: false
+  "#moderation":
+    description: "Player disputes, bans, rule enforcement (private)"
+    is_external: false
+  "#ops":
+    description: "Server uptime, performance, backups"
+    is_external: false
+  "#mud-chat":
+    description: "General player hangout and community discussion"
+    is_external: true
+  "#mud-help":
+    description: "Player support — how to play, game mechanics questions"
+    is_external: true
+  "#bug-reports":
+    description: "Player-submitted bug reports"
+    is_external: true
+  "#announcements":
+    description: "Patch notes, server events, downtime notices"
+    is_external: true
+
+memberships:
+  headwiz: ["#dev", "#building", "#moderation", "#ops", "#mud-chat", "#mud-help", "#bug-reports", "#announcements"]
+  advisor: ["#dev", "#building"]
+  builder: ["#dev", "#building", "#mud-chat", "#mud-help", "#announcements"]
+  coder: ["#dev", "#building", "#ops", "#bug-reports", "#announcements"]
+  moderator: ["#dev", "#moderation", "#mud-chat", "#mud-help", "#bug-reports", "#announcements"]
+  tester: ["#dev", "#building", "#bug-reports", "#mud-chat", "#mud-help"]
+
+response_tiers:
+  1: ["builder", "coder", "moderator", "tester"]
+  2: ["headwiz", "advisor"]
+
+folders:
+  shared:
+    type: "shared"
+    description: "Team-wide documents and planning"
+  public:
+    type: "public"
+    description: "Player-facing docs — help files, rules, announcements"
+  game-design:
+    type: "department"
+    description: "Design documents, balance spreadsheets, feature specs"
+  world-almanac:
+    type: "department"
+    description: "Lore, geography, NPC backgrounds, quest arcs"
+  server-ops:
+    type: "department"
+    description: "Deployment guides, monitoring, server configuration"
+  tyraziel:
+    type: "personal"
+    description: "Tyraziel's personal notes"
+  codex:
+    type: "personal"
+    description: "Ron's personal notes"
+  pixel:
+    type: "personal"
+    description: "Pixel's personal notes"
+  hex:
+    type: "personal"
+    description: "Hex's personal notes"
+  sage:
+    type: "personal"
+    description: "Sage's personal notes"
+  glitch:
+    type: "personal"
+    description: "Glitch's personal notes"
+
+folder_access:
+  shared: ["headwiz", "advisor", "builder", "coder", "moderator", "tester"]
+  public: ["headwiz", "advisor", "builder", "coder", "moderator", "tester"]
+  game-design: ["headwiz", "advisor", "builder", "coder", "tester"]
+  world-almanac: ["headwiz", "advisor", "builder", "coder", "tester"]
+  server-ops: ["headwiz", "coder"]
+  tyraziel: ["headwiz"]
+  codex: ["advisor"]
+  pixel: ["builder"]
+  hex: ["coder"]
+  sage: ["moderator"]
+  glitch: ["tester"]
+
+events:
+  - name: "Server Crash"
+    severity: "critical"
+    actions:
+      - type: "message"
+        channel: "#ops"
+        sender: "Monitoring (System)"
+        content: "ALERT: Game server process died. Last heartbeat 45 seconds ago. No players can connect. Core dump available at /var/crash/mud-20260413.core. Player count at crash: 187."
+      - type: "message"
+        channel: "#announcements"
+        sender: "Server (System)"
+        content: "The Realm of the Forgotten Crown is currently experiencing an outage. Our team is investigating. We apologize for the interruption and will update you as soon as we have more information."
+        is_event: true
+      - type: "message"
+        channel: "#mud-chat"
+        sender: "xXDarkSlayer99Xx (Player)"
+        content: "DID THE SERVER JUST DIE?? I was in the middle of the Tomb of Echoes boss fight! If my loot is gone I'm going to lose it. This is the third crash this week."
+        is_event: true
+      - type: "ticket"
+        title: "Server crash — core dump analysis needed"
+        description: "Game server crashed at 2026-04-13 15:23 UTC. 187 players affected. Core dump at /var/crash/mud-20260413.core. Need root cause analysis. Previous crashes were memory-related (mob spawner leak?)."
+        priority: "critical"
+        author: "Monitoring (System)"
+
+  - name: "Gold Duplication Exploit"
+    severity: "high"
+    actions:
+      - type: "message"
+        channel: "#moderation"
+        sender: "AutoMod (System)"
+        content: "EXPLOIT ALERT: Player 'GoldKing420' has accumulated 2,847,000 gold in the last 30 minutes. Normal rate is ~500/hour. Transaction log shows rapid buy/sell cycling at the Thornwick merchant with 'Enchanted Copper Ring' item. Possible item duplication or merchant pricing exploit."
+      - type: "message"
+        channel: "#dev"
+        sender: "Sage (Moderator)"
+        content: "We have a live exploit. Someone's generating millions of gold through the Thornwick merchant. I've temporarily frozen GoldKing420's account but we need to find and fix the bug before more people figure it out."
+        is_event: true
+      - type: "ticket"
+        title: "Gold duplication exploit via merchant buy/sell cycling"
+        description: "Player found exploit: buy Enchanted Copper Ring for 10g, sell for 15g, repeat. Merchant isn't tracking inventory depletion correctly — infinite stock bug. Need to fix merchant economy and decide whether to roll back affected accounts.\n\nAffected: at least 1 player confirmed, possibly more.\nImpact: ~3M gold injected into economy.\nWorkaround: Account frozen pending fix."
+        priority: "high"
+        author: "Sage (Moderator)"
+
+  - name: "PvP Guild Drama"
+    severity: "medium"
+    actions:
+      - type: "message"
+        channel: "#mud-chat"
+        sender: "BloodRaven_GM (Player)"
+        content: "The Shadow Wolves are exploiting the PvP zone boundary bug AGAIN. They attack people right at the safe zone edge where the flag doesn't register properly, then run back inside before you can retaliate. This isn't PvP, it's griefing. Fix your game or we're leaving."
+        is_event: true
+      - type: "message"
+        channel: "#mud-chat"
+        sender: "WolfAlpha (Player)"
+        content: "Imagine crying about losing a PvP fight. The zone boundary is part of the terrain. Learn to position better. Maybe if BloodRaven spent less time complaining and more time leveling they wouldn't get ganked."
+        is_event: true
+      - type: "message"
+        channel: "#moderation"
+        sender: "AutoMod (System)"
+        content: "PVP DISPUTE: Guild 'Blood Ravens' has filed 4 complaints against guild 'Shadow Wolves' in the last 2 hours. Reports allege zone boundary exploitation. Chat toxicity in #mud-chat elevated. 12 players involved in the argument."
+
+  - name: "New Zone Complete"
+    severity: "low"
+    actions:
+      - type: "message"
+        channel: "#building"
+        sender: "Pixel (Builder)"
+        content: "The Sunken Crypts zone is DONE! 47 rooms, 3 boss encounters, 2 puzzle rooms, 15 unique item drops, and a secret passage that leads to the old Dwarven Forge zone. Room descriptions are polished, NPC dialogue is written, quest hooks are in place. Ready for code review and testing."
+        is_event: true
+      - type: "ticket"
+        title: "Review and test: Sunken Crypts zone (47 rooms)"
+        description: "New zone ready for review:\n- 47 rooms with full descriptions\n- 3 boss encounters (Drowned King, Crypt Warden, The Hollow)\n- 2 puzzle rooms (lever sequence, riddle door)\n- 15 unique item drops\n- Secret passage to Dwarven Forge\n- Quest: 'The Crown Beneath' (level 15-20)\n\nNeeds: code integration, balance review, QA playthrough, mob spawn tuning."
+        priority: "medium"
+        author: "Pixel (Builder)"
+
+  - name: "Class Balance Complaint"
+    severity: "medium"
+    actions:
+      - type: "message"
+        channel: "#mud-help"
+        sender: "TankMaster (Player)"
+        content: "Serious question: is there any reason to play Warrior right now? Mages can solo the Tomb of Echoes in 20 minutes. It takes me 45 minutes and 3 healing potions. My DPS is literally half of what a same-level Mage does. Warriors need a buff or Mages need a nerf. This has been a problem since the spell rework."
+        is_event: true
+      - type: "message"
+        channel: "#mud-help"
+        sender: "ArcaneStorm (Player)"
+        content: "Warriors are fine, you just need better gear. I ran Tomb with a Warrior last week and they tanked everything while I DPS'd. Different roles, different strengths. Not everything needs to be solo-able."
+        is_event: true
+      - type: "message"
+        channel: "#dev"
+        sender: "Glitch (Tester)"
+        content: "The balance complaints about Warriors vs Mages are getting louder. I ran the numbers: Mage DPS at level 20 with common gear is 47/tick. Warrior DPS at level 20 with common gear is 23/tick. That's a 2x gap. Warriors do get more HP and armor but in PvE the time-to-kill difference is significant. We should look at this."
+        is_event: true
+
+  - name: "DDoS Attack"
+    severity: "critical"
+    actions:
+      - type: "message"
+        channel: "#ops"
+        sender: "Firewall (System)"
+        content: "DDoS ALERT: Inbound traffic spike to 15 Gbps. Source: distributed, 2000+ unique IPs. Game port (4000) saturated. Web portal (8080) also affected. CloudFlare mitigation rules triggered but game port is not proxied. Player connections dropping."
+      - type: "message"
+        channel: "#announcements"
+        sender: "Server (System)"
+        content: "We are currently experiencing a network attack that is affecting game connectivity. Our team is actively working to mitigate the issue. We appreciate your patience."
+        is_event: true
+      - type: "message"
+        channel: "#mud-chat"
+        sender: "LaggingOut (Player)"
+        content: "Is anyone else getting disconnected every 30 seconds? I can't stay connected for more than a minute. This has been going on for 20 minutes now."
+        is_event: true
+
+  - name: "Community Milestone: 200 Players"
+    severity: "low"
+    actions:
+      - type: "blog"
+        title: "We Hit 200 Active Players! A Look Back at 6 Months of the Realm"
+        sender: "Sage (Moderator)"
+        is_external: true
+        tags: ["community", "milestone", "celebration"]
+        body: "When we launched Realm of the Forgotten Crown six months ago, we had 12 players on opening night. Twelve. And half of them were us testing.\n\nToday, we hit 200 active players. Not accounts — active players who logged in this week.\n\nSome highlights from our journey:\n- 847 rooms across 14 zones\n- 312 unique items\n- 89 quests completed a combined 4,200 times\n- 1 legendary item found (congratulations, DarkPaladin, on the Crown Shard)\n- 0 times we've regretted building a text-based game in 2026\n\nTo our players: you are the reason this game exists. Your bug reports make us better. Your feature requests keep us ambitious. Your guild drama keeps us entertained.\n\nTo celebrate, we're running a double XP weekend starting Friday. And Pixel has been working on something special in the Sunken Crypts...\n\nThank you for believing in text.\n\n— The Realm Dev Team"
+      - type: "message"
+        channel: "#mud-chat"
+        sender: "Sage (Moderator)"
+        content: "We just published a blog post celebrating 200 active players! Double XP weekend starts Friday. Check the blog for the full writeup — and thank you all for being part of this community."
+        is_event: true
+      - type: "email"
+        sender: "Sage (Moderator)"
+        subject: "Milestone: 200 Active Players — Double XP Weekend Incoming"
+        body: "Team,\n\nWe did it. 200 active players this week. Blog post is live on the external blog.\n\nDouble XP weekend starts Friday — Hex, can you make sure the XP multiplier code is ready? Last time we forgot to disable it and it ran for 9 days.\n\nAlso: great work everyone. Six months in and we're still growing. That's rare for a MUD in 2026.\n\n— Sage"
+
+  - name: "Feature Request Flood"
+    severity: "medium"
+    actions:
+      - type: "message"
+        channel: "#mud-chat"
+        sender: "CraftMaster (Player)"
+        content: "When is the crafting system coming?? You've been talking about it for months. I have 500 ore in my inventory doing nothing. Also we NEED player housing. And mounts. Every other MUD has mounts."
+        is_event: true
+      - type: "message"
+        channel: "#mud-chat"
+        sender: "NomadKnight (Player)"
+        content: "Honestly I'd rather they fix the bugs first. The zone transition lag is awful and my quest log still shows completed quests. New features are cool but not if the base game is broken."
+        is_event: true
+      - type: "message"
+        channel: "#dev"
+        sender: "Glitch (Tester)"
+        content: "Players are getting loud about crafting, housing, and mounts again. Before we scope any of that, can we please fix the quest log persistence bug? It's been open for 3 weeks and it makes us look bad when players see completed quests still showing as active."
+        is_event: true
+      - type: "ticket"
+        title: "Feature request triage: crafting, housing, mounts"
+        description: "Community is requesting three major features:\n1. Crafting system (ore, smithing, enchanting) — most requested\n2. Player housing (personal rooms, storage) — second most requested\n3. Mounts (travel speed, cosmetic) — third\n\nNeed to scope, estimate, and prioritize. Current open bug count: 14. Should we feature or fix first?"
+        priority: "medium"
+        author: "Glitch (Tester)"
+
+settings:
+  enable_memos: true
+  enable_blog: true
+  human_roles:
+    - "Scenario Director"
+    - "Player"
+    - "New Player"
+    - "Veteran Player"
+    - "Guild Leader"
+    - "Bug Reporter"
+    - "Troll"
+    - "Admin (Undercover)"
+  job_titles:
+    - "Warrior"
+    - "Mage"
+    - "Thief"
+    - "Cleric"
+    - "Ranger"
+    - "Bard"
+    - "Necromancer"
+    - "Merchant"
+    - "Blacksmith"
+    - "Player"
+    - "Newbie"

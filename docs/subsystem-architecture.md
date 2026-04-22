@@ -2,19 +2,30 @@
 
 How to build a new subsystem for the Company Simulator. Every subsystem (docs, tickets, email, memos, blog) follows the same structural pattern. This document codifies those patterns so new subsystems are consistent, complete, and don't break existing ones.
 
+## Architecture Overview (v3)
+
+The simulator runs as three processes:
+
+1. **Flask Server** (`lib/webapp/`) — REST API, SSE broadcast, web UI, in-memory state
+2. **MCP Server** (`lib/mcp_server.py`) — FastMCP tool server, one endpoint per agent
+3. **Container Orchestrator** (`lib/container_orchestrator.py`) — manages podman containers, tier-based execution
+
+Agents interact with the simulation exclusively via **MCP tools** served by the MCP server. The MCP server proxies tool calls to the Flask server's REST API. There is no JSON command parsing layer — agents call tools directly.
+
 ## The Pattern
 
 A subsystem is a self-contained feature that agents and humans can interact with. Each subsystem has exactly these layers:
 
 ```
-lib/<module>.py          State management (the source of truth)
-lib/response_schema.py   Command parsing (agent JSON -> flat dicts)
-lib/personas.py          Prompt injection (agents learn about the subsystem)
-lib/chat_client.py       HTTP client (orchestrator -> server)
-lib/orchestrator.py      Command execution (process agent commands)
-lib/webapp.py            REST API + UI tab + event action type
-lib/session.py           Persistence (save/load/clear)
-scenario.yaml            Feature flag + sample events
+lib/<module>.py              State management (the source of truth)
+lib/mcp_server.py            MCP tools (agent-callable functions)
+lib/personas.py              Prompt context (agents see subsystem state)
+lib/chat_client.py           HTTP client (orchestrator -> server)
+lib/webapp/routes/<name>.py  REST API (Flask Blueprint)
+lib/webapp/template.py       UI tab (HTML/CSS/JS)
+lib/webapp/helpers.py        Initialization (_reinitialize)
+lib/session.py               Persistence (save/load/clear)
+scenario.yaml                Feature flag + sample events
 ```
 
 Every layer is required. Skip one and the subsystem is incomplete.
@@ -74,64 +85,47 @@ If the subsystem has sub-items (replies, comments):
 - Sequential items: `len(_items) + 1`
 - Always include a timestamp in the item dict
 
-## Layer 2: Command Parsing (`lib/response_schema.py`)
+## Layer 2: MCP Tools (`lib/mcp_server.py`)
 
-Agents issue commands via JSON. The parser splits them by type.
+Agents interact with subsystems via MCP tools. Each tool is a function registered on the per-agent FastMCP instance.
 
-### What to change
+### Adding tools
 
-1. **Return tuple** — add your type to the end. The tuple grows by one.
-2. **New list** — `your_cmds = []`
-3. **New elif** — `elif cmd_type == "your_type": your_cmds.append(flat)`
-4. **Empty return** — add one more `[]` to the empty return
-
-The flat dict merges `action` + `params`:
-```python
-{"type": "blog", "action": "CREATE", "params": {"title": "..."}}
-# becomes:
-{"action": "CREATE", "title": "..."}
-```
-
-### Critical: update ALL callers
-
-The return tuple is unpacked in `orchestrator.py:_process_json_response()`. When you add an element, you MUST update the unpack there or everything breaks with a `ValueError: not enough values to unpack`.
-
-## Layer 3: Prompt Injection (`lib/personas.py`)
-
-Agents only know about subsystems that appear in their prompts. Two integration points:
-
-### Initial prompt (command docs)
+In `lib/mcp_server.py`, add tool functions inside the agent MCP builder. Each tool gets the agent's identity baked in via closure:
 
 ```python
-def _build_your_command_docs() -> str:
-    """Return command docs if feature is enabled."""
-    from lib.scenario_loader import get_settings
-    if not get_settings().get("enable_your_feature", False):
-        return ""
-    return """
-**Your commands** (`type: "your_type"`):
-
-| action | params |
-|--------|--------|
-| `CREATE` | ... |
-| `READ` | ... |
-| `LIST` | ... |
-"""
-
-def _build_your_command_example() -> str:
-    """Return example if feature is enabled."""
-    from lib.scenario_loader import get_settings
-    if not get_settings().get("enable_your_feature", False):
-        return ""
-    return """,
-    {{"type": "your_type", "action": "CREATE", "params": {{...}}}}"""
+@mcp.tool()
+async def create_your_item(title: str, body: str) -> str:
+    """Create a new item in the your-subsystem."""
+    resp = await client.post(f"{flask_url}/api/your/items",
+        json={"title": title, "body": body, "author": display_name})
+    data = resp.json()
+    return f"Created: {data.get('title')} (id: {data.get('id')})"
 ```
 
-Wire into `build_initial_prompt()`:
-- Add `{_build_your_command_docs()}` after the last command docs block
-- Add `{_build_your_command_example()}` at the end of the example JSON
+### Register tool names
 
-### Turn prompt (state section)
+Add tool names to `MCP_TOOL_NAMES` list in `lib/container_orchestrator.py`:
+
+```python
+MCP_TOOL_NAMES = [
+    # ... existing tools ...
+    # Your subsystem
+    "create_your_item", "list_your_items", "read_your_item",
+]
+```
+
+### Tool naming conventions
+
+- Use snake_case: `create_blog_post`, `list_memos`, `reply_to_memo`
+- Prefix with action: `create_`, `list_`, `get_`, `read_`, `update_`, `delete_`
+- Return human-readable strings, not JSON — the agent reads the output directly
+
+## Layer 3: Prompt Context (`lib/personas.py`)
+
+Agents see subsystem state in their turn prompts. This is how they discover what exists and decide whether to interact.
+
+### Turn prompt section
 
 ```python
 def _build_your_section(items: list[dict] | None) -> str:
@@ -142,21 +136,18 @@ def _build_your_section(items: list[dict] | None) -> str:
     # ... build section with item summaries
 ```
 
-Add a parameter to `build_turn_prompt()` and insert the section into `parts`.
+Add a parameter to `build_v3_turn_prompt()` and insert the section into `parts`.
 
 ### Prompt size discipline
 
 The turn prompt grows with every subsystem. Rules:
 - Cap items shown (10-20 max)
 - Cap text previews (200 chars)
-- READ/LIST results are SILENT (no system messages). Agents see data in the turn prompt section.
-- Only CREATE/UPDATE actions broadcast short notifications to chat.
-
-This is critical. The memo-list READ bug taught us: dumping full content into permanent chat messages causes "prompt too long" errors because every agent re-ingests the entire chat history every turn.
+- Agents discover details by calling MCP tools (read, list) — don't dump everything in the prompt
 
 ## Layer 4: HTTP Client (`lib/chat_client.py`)
 
-Thin wrappers around REST calls. The orchestrator uses these to talk to the server.
+Thin wrappers around REST calls. The container orchestrator uses these to fetch state for turn prompts.
 
 ### Pattern
 
@@ -171,57 +162,45 @@ def get_items(self, include_sub: bool = False) -> list[dict]:
         return resp.json()
     except Exception:
         return []
-
-def create_item(self, ...) -> dict:
-    resp = requests.post(
-        f"{self.base_url}/api/your/items",
-        json={...},
-        timeout=10,
-    )
-    resp.raise_for_status()
-    return resp.json()
 ```
 
 - GET methods that feed the turn prompt should have a `try/except` returning empty on failure (graceful degradation)
-- POST/PUT methods should let exceptions propagate (the orchestrator catches them)
 
-## Layer 5: Command Execution (`lib/orchestrator.py`)
+## Layer 5: REST API (`lib/webapp/routes/<name>.py`)
 
-Two functions per subsystem:
+Each subsystem gets its own Flask Blueprint in the routes directory.
 
-### `_execute_*_commands(client, commands, author) -> list[dict]`
-
-Iterates commands, calls ChatClient methods, returns result dicts with `{"action": ..., "ok": True/False, ...}`.
-
-### `_log_*_results(client, persona, results)`
-
-Decides what to broadcast and what to keep silent:
-- **CREATE/UPDATE/POST** — broadcast a short `[Subsystem] Person did X` notification via `_post_system()`
-- **READ/LIST** — silent (just `print()` for server logs)
-
-### Integration in `_process_json_response()`
+### Blueprint pattern
 
 ```python
-if your_cmds:
-    if on_activity:
-        on_activity("doing your thing")
-    results = _execute_your_commands(client, your_cmds, author)
-    _log_your_results(client, persona, results)
+"""Your subsystem API routes."""
+from flask import Blueprint, request, jsonify
+
+bp = Blueprint("your_subsystem", __name__)
+
+@bp.route("/api/your/items", methods=["GET"])
+def list_items():
+    from lib.your_module import get_items
+    return jsonify(get_items())
+
+@bp.route("/api/your/items", methods=["POST"])
+def create_item():
+    from lib.your_module import create_item
+    data = request.get_json(force=True)
+    # ... validate and create
+    return jsonify(entry), 201
 ```
 
-### Integration in `_run_autonomous_round()`
+### Register the blueprint
 
-Fetch subsystem data for turn prompts:
+In `lib/webapp/__init__.py`:
 ```python
-your_data = client.get_items(include_sub=True)
-# ... pass to build_turn_prompt(your_items=your_data)
+from lib.webapp.routes.your_subsystem import bp as your_bp
+app.register_blueprint(your_bp)
 ```
 
-## Layer 6: REST API + UI (`lib/webapp.py`)
+### Standard CRUD endpoints
 
-### API endpoints
-
-Standard CRUD pattern:
 ```
 GET    /api/your/items              — list
 POST   /api/your/items              — create
@@ -232,19 +211,23 @@ GET    /api/your/items/<id>/subs    — list sub-items
 POST   /api/your/items/<id>/subs    — create sub-item
 ```
 
-### `_reinitialize()`
+### Initialization (`lib/webapp/helpers.py`)
 
-Add `clear_*()` call. This is called on "Clear Everything" and session operations.
+Add `clear_*()` call to `_reinitialize()`. This is called on "Clear Everything" and session operations.
 
 ### Event action type
 
-In `trigger_event()`, add an `elif action_type == "your_type":` block that creates items from event data.
+In the events route (`lib/webapp/routes/events.py`), add an `elif action_type == "your_type":` block in `trigger_event()` that creates items from event data.
 
-### UI tab
+## Layer 6: UI Tab (`lib/webapp/template.py`)
 
-**Tab button placement**: in the header, ordered logically by information type.
+### Tab button
 
-**Tab pane placement**: MUST be inside `#main-layout` div before its closing `</div>` which comes right before `<!-- Advanced tab -->`. Getting this wrong causes bottom-alignment bugs.
+Add to the header tab bar, ordered logically by information type.
+
+### Tab pane
+
+MUST be inside `#main-layout` div before `<!-- Advanced tab -->`. Getting this wrong causes bottom-alignment bugs.
 
 **Layout**: sidebar + main (same pattern as Email, Memos, Blog):
 ```html
@@ -261,12 +244,6 @@ In `trigger_event()`, add an `elif action_type == "your_type":` block that creat
 **Identity fields**: if humans can author content, include Name + Role dropdowns (same pattern as email compose, memo reply). Add role dropdown to `populateAllRoleDropdowns()`.
 
 **Modals**: use `openModal()`/`closeModal()` with the `.modal-overlay` pattern. Never use browser `prompt()`.
-
-### Tab click handler
-
-```javascript
-if (target === 'your') loadYourItems();
-```
 
 ## Layer 7: Session Persistence (`lib/session.py`)
 
@@ -314,8 +291,8 @@ settings:
 ```
 
 Accessed via `get_settings().get("enable_your_feature", False)` in personas.py. When disabled:
-- Command docs don't appear in agent prompts
 - Turn prompt section doesn't appear
+- MCP tools still registered (agents just won't know to use them)
 - UI tab still renders (shows empty state) — simpler than conditional tab rendering
 - API endpoints still work (allows manual testing)
 
@@ -328,23 +305,26 @@ Every scenario that enables the feature should have 1-2 sample events that exerc
 When building a new subsystem, complete every item:
 
 - [ ] `lib/<module>.py` — state module with CRUD, clear, snapshot, restore
-- [ ] `lib/response_schema.py` — new command type in `normalize_commands()`, tuple grows by 1
-- [ ] `lib/personas.py` — command docs (gated), command example, turn prompt section, `build_turn_prompt()` parameter
-- [ ] `lib/chat_client.py` — HTTP client methods (GET with graceful fallback, POST/PUT propagate errors)
-- [ ] `lib/orchestrator.py` — execute + log functions, unpack new tuple element, fetch data for turn prompt
-- [ ] `lib/webapp.py` — API endpoints, `_reinitialize()`, event action type, UI tab (CSS + HTML + JS), modal, role dropdowns
+- [ ] `lib/mcp_server.py` — MCP tools for agent interaction
+- [ ] `lib/container_orchestrator.py` — add tool names to `MCP_TOOL_NAMES`
+- [ ] `lib/personas.py` — turn prompt section (gated by feature flag)
+- [ ] `lib/chat_client.py` — HTTP client methods for orchestrator
+- [ ] `lib/webapp/routes/<name>.py` — Flask Blueprint with CRUD endpoints
+- [ ] `lib/webapp/__init__.py` — register the blueprint
+- [ ] `lib/webapp/helpers.py` — add `clear_*()` to `_reinitialize()`
+- [ ] `lib/webapp/template.py` — UI tab (CSS + HTML + JS), modal, role dropdowns
+- [ ] `lib/webapp/routes/events.py` — event action type
 - [ ] `lib/session.py` — save, load, new_session clear
 - [ ] Scenario YAMLs — feature flag + sample events per scenario
 - [ ] Seeded gitlab — copy updated files + add commit entry (for company-simulator-team)
-- [ ] Syntax check — `python -c "import ast; ast.parse(open('lib/<file>.py').read())"` on all modified files
 
 ## Common Pitfalls
 
 1. **Tab pane outside `#main-layout`** — causes bottom-alignment. Always inside, before `<!-- Advanced tab -->`.
-2. **`\n` in JS strings inside Python** — use space or `\\n`, not `\n`, or the JS breaks. Validate with `node --check`.
-3. **Tuple unpack mismatch** — adding to `normalize_commands()` return without updating `_process_json_response()` unpack.
-4. **READ dumping to chat** — never post full content as system messages. It persists in chat history and bloats every agent's turn prompt.
+2. **Missing `MCP_TOOL_NAMES` entry** — tool exists in MCP server but agent containers can't access it.
+3. **`_reinitialize()` ordering** — blog save bug: `_reinitialize()` cleared state before session restore re-applied it. Ensure restore happens AFTER reinitialize.
+4. **Prompt bloat** — don't dump full content in turn prompts. Show summaries, let agents use MCP tools for details.
 5. **`prompt()` for user input** — use modals. Browser popups are bad UX.
-6. **Missing `_reinitialize()` call** — "Clear Everything" won't clear your subsystem's state.
-7. **Missing `new_session()` clear** — old data leaks across scenario switches.
-8. **Hardcoded colors in new CSS** — use `var(--bg)`, `var(--text)`, etc. Only semantic colors stay hardcoded.
+6. **Missing `new_session()` clear** — old data leaks across scenario switches.
+7. **Hardcoded colors in new CSS** — use `var(--bg)`, `var(--text)`, etc. Only semantic colors stay hardcoded.
+8. **Old command references in character files** — character prompts should reference MCP tool names (`list_repo_tree`, `read_file`), not old JSON actions (`TREE`, `FILE_READ`).

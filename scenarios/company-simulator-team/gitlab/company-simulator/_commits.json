@@ -162,5 +162,33 @@
       "scenarios/dotcom-2000/scenario.yaml",
       "docs/subsystem-architecture.md"
     ]
+  },
+  {
+    "id": "5b8fa301",
+    "message": "v3 architecture: MCP tools, container orchestrator, webapp package refactor",
+    "author": "T4NN3R (Maintainer)",
+    "timestamp": 1775952000.0,
+    "files": [
+      "lib/container_orchestrator.py",
+      "lib/mcp_server.py",
+      "lib/webapp/__init__.py",
+      "lib/webapp/state.py",
+      "lib/webapp/helpers.py",
+      "lib/webapp/template.py",
+      "lib/webapp/routes/*.py",
+      "lib/personas.py",
+      "lib/session.py",
+      "docs/subsystem-architecture.md"
+    ]
+  },
+  {
+    "id": "e7f296e1",
+    "message": "Fix character files: replace old JSON command refs with MCP tool names",
+    "author": "1.z3r0 (Collaborator)",
+    "timestamp": 1775955600.0,
+    "files": [
+      "scenarios/tech-startup/characters/*.CS.md",
+      "docs/subsystem-architecture.md"
+    ]
   }
 ]

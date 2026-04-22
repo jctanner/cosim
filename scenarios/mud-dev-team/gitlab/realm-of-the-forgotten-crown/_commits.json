@@ -1,0 +1,58 @@
+[
+  {
+    "id": "a1b2c3d4",
+    "message": "Initial commit — basic asyncio server loop and telnet handler",
+    "author": "Tyraziel (Head Wizard)",
+    "timestamp": 1742428800.0,
+    "files": ["server.py", "README.md"]
+  },
+  {
+    "id": "e5f6a7b8",
+    "message": "Add Thornwick Village starting zone (8 rooms)",
+    "author": "Pixel (Builder)",
+    "timestamp": 1742515200.0,
+    "files": ["world/rooms.py"]
+  },
+  {
+    "id": "c9d0e1f2",
+    "message": "Add basic item definitions and NPC framework",
+    "author": "Pixel (Builder)",
+    "timestamp": 1742601600.0,
+    "files": ["world/items.py", "world/npcs.py"]
+  },
+  {
+    "id": "33a4b5c6",
+    "message": "Implement turn-based combat engine with XP and gold rewards",
+    "author": "Hex (Coder)",
+    "timestamp": 1742688000.0,
+    "files": ["combat/engine.py"]
+  },
+  {
+    "id": "d7e8f9a0",
+    "message": "Add spell system — damage, healing, buffs for Mage, Cleric, Warrior",
+    "author": "Hex (Coder)",
+    "timestamp": 1742774400.0,
+    "files": ["combat/spells.py"]
+  },
+  {
+    "id": "b1c2d3e4",
+    "message": "Add NPC dialogue trees and merchant system for Thornwick Village",
+    "author": "Pixel (Builder)",
+    "timestamp": 1742860800.0,
+    "files": ["world/npcs.py"]
+  },
+  {
+    "id": "f5a6b7c8",
+    "message": "Add crossroads and three zone stubs (woods, mountains, plains)",
+    "author": "Pixel (Builder)",
+    "timestamp": 1742947200.0,
+    "files": ["world/rooms.py"]
+  },
+  {
+    "id": "09d0e1f2",
+    "message": "Add The Advisor's Sanctum — hidden room with legendary NPC and quest",
+    "author": "Tyraziel (Head Wizard)",
+    "timestamp": 1743033600.0,
+    "files": ["world/rooms.py", "world/npcs.py", "world/items.py"]
+  }
+]
