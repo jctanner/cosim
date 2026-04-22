@@ -230,7 +230,7 @@ async def _preflight_checks(container_image: str) -> None:
         raise RuntimeError(
             f"Container image '{container_image}' not found.\n"
             f"  Build it first:  ./scripts/build-agent-image.sh\n"
-            f"  Or manually:     podman build -t {container_image} -f Dockerfile.agent ."
+            f"  Or manually:     podman build -t {container_image} -f container/Dockerfile.agent container/"
         )
     print(f"  image: {container_image}")
 

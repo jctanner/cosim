@@ -12,13 +12,11 @@ if ! command -v podman &>/dev/null; then
     exit 1
 fi
 
-if [ ! -f agent-hooks.json ]; then
-    echo "Error: agent-hooks.json not found in project root." >&2
+if [ ! -f container/agent-hooks.json ]; then
+    echo "Error: container/agent-hooks.json not found." >&2
     exit 1
 fi
 
-# No credential copy needed — credentials are mounted at runtime
-
 echo "Prerequisites OK. Building image..."
-podman build -f Dockerfile.agent -t "$IMAGE" .
+podman build -f container/Dockerfile.agent -t "$IMAGE" container/
 echo "Done: $IMAGE"

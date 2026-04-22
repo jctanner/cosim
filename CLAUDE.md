@@ -77,6 +77,9 @@ Additionally, the system provides:
 ```
 main.py                     # Entry point (server / chat subcommands)
 pyproject.toml              # Dependencies and metadata
+container/
+  Dockerfile.agent          # Agent container image definition
+  agent-hooks.json          # Claude Code hooks for containerized agents
 .env                        # Vertex AI credentials (not committed)
 lib/
   webapp.py                 # Flask server, REST API, SSE, web UI

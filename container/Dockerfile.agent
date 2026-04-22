@@ -26,7 +26,7 @@ WORKDIR /home/agent/scratch
 CMD ["sleep", "infinity"]
 
 # Usage (podman — Flask+MCP run on host):
-#   podman build -f Dockerfile.agent -t agent-image:latest .
+#   podman build -f container/Dockerfile.agent -t agent-image:latest container/
 #   podman run -d --name agent-pm \
 #     -e AGENT_PERSONA_KEY=pm \
 #     -e MCP_SERVER_URL=host.containers.internal:5001 \
