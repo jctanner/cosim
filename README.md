@@ -38,19 +38,18 @@ gcloud auth application-default login
 
 ### 3. Build the agent container image
 
-The agent image contains Claude Code CLI, GCP credentials, and telemetry hooks. The build script copies your local GCP credentials into the image.
+The agent image contains Claude Code CLI and telemetry hooks. GCP credentials are mounted at runtime.
 
 ```bash
 ./scripts/build-agent-image.sh
 ```
 
-This runs `podman build -f Dockerfile.agent -t agent-image:latest .` after verifying prerequisites (`podman`, `agent-hooks.json`, and GCP credentials).
+This runs `podman build -f container/Dockerfile.agent -t agent-image:latest container/` after verifying prerequisites.
 
 **What goes into the image:**
 - Python 3.13-slim base
 - Claude Code CLI (`@anthropic-ai/claude-code` via npm)
-- Your GCP credentials (baked in for local dev — do not push to public registries)
-- Telemetry hooks (`agent-hooks.json`) for forwarding model/tool events to the MCP server
+- Telemetry hooks (`container/agent-hooks.json`) for forwarding model/tool events to the MCP server
 - Runs as non-root `agent` user with `sleep infinity` as entrypoint
 
 ### 4. Start the three processes
@@ -221,8 +220,7 @@ python main.py chat [--scenario tech-startup]
 
 **Prerequisites checked by the script:**
 - `podman` installed
-- `agent-hooks.json` exists in project root
-- GCP credentials available (copies from `~/.config/gcloud/application_default_credentials.json` if not already present)
+- `container/agent-hooks.json` exists
 
 ## Scenarios
 
@@ -249,8 +247,9 @@ See `scenarios/tech-startup/scenario.yaml` for a complete example.
 ```
 main.py                         # Entry point (server / mcp-server / chat)
 pyproject.toml                  # Dependencies
-Dockerfile.agent                # Agent container image
-agent-hooks.json                # Telemetry hooks for agent containers
+container/
+  Dockerfile.agent              # Agent container image
+  agent-hooks.json              # Telemetry hooks for agent containers
 scripts/build-agent-image.sh    # Image build script
 .env                            # Vertex AI credentials (not committed)
 lib/
