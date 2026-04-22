@@ -371,7 +371,6 @@ class ContainerPool:
         cmd = [
             "podman", "run", "-d",
             "--name", container_name,
-            "--dns", "8.8.8.8",
             "-e", f"AGENT_PERSONA_KEY={persona_key}",
             "-e", f"MCP_SERVER_URL={self._mcp_host}:{self._mcp_port}",
             *self._env_flags,
