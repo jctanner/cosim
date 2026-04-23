@@ -1,3 +1,6 @@
+<img width="1254" height="1254" alt="image" src="https://github.com/user-attachments/assets/effccadf-db73-4adc-9fd5-f75bf699b761" />
+
+
 # Multi-Agent Organization
 
 A simulated software company where AI personas collaborate through a Slack-like chat system. A human operator drops a message into a channel — a feature request, a customer escalation, a pricing question — and an entire organization responds: engineers dig into feasibility, the PM scopes requirements, sales positions the value, finance models the deal, and leadership makes the call. All in real time, all visible in a web UI.
