@@ -1,6 +1,9 @@
 """Tests for container orchestrator helper functions."""
 
-from lib.container_orchestrator import _filter_trigger_messages_for_agent
+from lib.container_orchestrator import (
+    _filter_trigger_messages_for_agent,
+    _resolve_agent_trigger_channels,
+)
 
 
 class TestFilterTriggerMessagesForAgent:
@@ -74,3 +77,47 @@ class TestFilterTriggerMessagesForAgent:
         ]
         result = _filter_trigger_messages_for_agent(msgs, {"#general"}, last_seen_id=0)
         assert len(result) == 2
+
+
+class TestResolveAgentTriggerChannels:
+    """Tests for _resolve_agent_trigger_channels."""
+
+    def test_normal_channel_intersection(self):
+        result = _resolve_agent_trigger_channels(
+            trigger_ch_set={"#general", "#engineering"},
+            agent_channels={"#general", "#support"},
+        )
+        assert result == {"#general"}
+
+    def test_director_channel_preserved_even_without_membership(self):
+        """Director channels are dynamically created and won't appear in
+        the agent's membership list. They must not be dropped by the
+        intersection, or the agent's turn prompt will have an empty
+        channel set (the 'activity in .' bug).
+        """
+        result = _resolve_agent_trigger_channels(
+            trigger_ch_set={"#director-director"},
+            agent_channels={"#briefing", "#research", "#synthesis"},
+        )
+        assert "#director-director" in result
+
+    def test_director_channel_with_regular_channels(self):
+        result = _resolve_agent_trigger_channels(
+            trigger_ch_set={"#director-director", "#briefing"},
+            agent_channels={"#briefing", "#research"},
+        )
+        assert result == {"#director-director", "#briefing"}
+
+    def test_empty_trigger_set(self):
+        result = _resolve_agent_trigger_channels(
+            trigger_ch_set=set(),
+            agent_channels={"#general"},
+        )
+        assert result == set()
+
+    def test_no_overlap_no_director(self):
+        result = _resolve_agent_trigger_channels(
+            trigger_ch_set={"#sales"},
+            agent_channels={"#engineering"},
+        )
+        assert result == set()

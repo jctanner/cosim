@@ -126,6 +126,19 @@ def _filter_trigger_messages_for_agent(
     return [m for m in trigger_msgs if m.get("channel") in agent_channels and m.get("id", 0) > last_seen_id]
 
 
+def _resolve_agent_trigger_channels(
+    trigger_ch_set: set[str],
+    agent_channels: set[str],
+) -> set[str]:
+    """Resolve the effective trigger channels for an agent.
+
+    Director channels (#director-<key>) are always included if they're in the
+    trigger set, even if they don't appear in the agent's membership list
+    (since they're created dynamically, not defined in scenario yaml).
+    """
+    return (trigger_ch_set & agent_channels) | {ch for ch in trigger_ch_set if ch.startswith("#director-")}
+
+
 def _get_channel_memberships(client: ChatClient) -> dict[str, set[str]]:
     """Fetch current channel memberships from the server.
 
@@ -973,7 +986,7 @@ async def _run_loop(
 
                     prompt = build_v3_turn_prompt(
                         pk,
-                        trigger_ch_set & all_agent_channels,
+                        _resolve_agent_trigger_channels(trigger_ch_set, all_agent_channels),
                         trigger_messages=agent_trigger_msgs[-3:] if agent_trigger_msgs else None,
                         last_seen_id=agent_last_seen.get(pk, 0),
                     )
