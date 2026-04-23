@@ -115,6 +115,17 @@ def _is_agent_message(msg: dict) -> bool:
     return msg["sender"] in _get_agent_display_names()
 
 
+def _filter_trigger_messages_for_agent(
+    trigger_msgs: list[dict],
+    agent_channels: set[str],
+    last_seen_id: int = 0,
+) -> list[dict] | None:
+    """Filter trigger messages to only those relevant to a specific agent."""
+    if not trigger_msgs:
+        return None
+    return [m for m in trigger_msgs if m.get("channel") in agent_channels and m.get("id", 0) > last_seen_id]
+
+
 def _get_channel_memberships(client: ChatClient) -> dict[str, set[str]]:
     """Fetch current channel memberships from the server.
 
@@ -956,8 +967,8 @@ async def _run_loop(
                     all_agent_channels = {ch_name for ch_name, ch_members in memberships.items() if pk in ch_members}
 
                     # Filter trigger messages to only channels this agent belongs to
-                    agent_trigger_msgs = (
-                        [m for m in trigger_msgs if m.get("channel") in all_agent_channels] if trigger_msgs else None
+                    agent_trigger_msgs = _filter_trigger_messages_for_agent(
+                        trigger_msgs, all_agent_channels, agent_last_seen.get(pk, 0)
                     )
 
                     prompt = build_v3_turn_prompt(
