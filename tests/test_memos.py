@@ -49,7 +49,7 @@ class TestGetThreads:
         assert memos.get_threads() == []
 
     def test_sorted_by_last_post(self):
-        t1 = memos.create_thread("Old", "alice")
+        memos.create_thread("Old", "alice")
         t2 = memos.create_thread("New", "bob")
         threads = memos.get_threads()
         assert threads[0]["id"] == t2["id"]

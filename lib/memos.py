@@ -1,12 +1,11 @@
 """Memo-list — threaded async discussion board (Google Groups / mailing list style)."""
 
 import re
-import time
 import threading
+import time
 
-
-_memo_threads: dict[str, dict] = {}   # thread_id -> thread metadata
-_memo_posts: list[dict] = []          # all posts across all threads
+_memo_threads: dict[str, dict] = {}  # thread_id -> thread metadata
+_memo_posts: list[dict] = []  # all posts across all threads
 _memos_lock = threading.Lock()
 
 

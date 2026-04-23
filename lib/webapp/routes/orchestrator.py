@@ -4,11 +4,13 @@ import time
 
 from flask import Blueprint, jsonify, request
 
-from lib.webapp.state import (
-    _orchestrator_status, _orchestrator_lock,
-    _orchestrator_commands, _command_lock,
-)
 from lib.webapp.helpers import _broadcast
+from lib.webapp.state import (
+    _command_lock,
+    _orchestrator_commands,
+    _orchestrator_lock,
+    _orchestrator_status,
+)
 
 bp = Blueprint("orchestrator", __name__)
 
@@ -17,24 +19,31 @@ bp = Blueprint("orchestrator", __name__)
 def get_status():
     from lib.session import get_current_session
     from lib.webapp.state import (
-        _messages, _docs_index, _gitlab_repos, _tickets, _channels,
+        _channels,
+        _docs_index,
+        _gitlab_repos,
+        _messages,
+        _tickets,
     )
+
     with _orchestrator_lock:
         orch = dict(_orchestrator_status)
         # Mark as disconnected if no heartbeat in 30 seconds
         if orch["last_heartbeat"] == 0 or time.time() - orch["last_heartbeat"] > 30:
             orch["state"] = "disconnected"
             orch["message"] = ""
-    return jsonify({
-        "server": "running",
-        "scenario": get_current_session().get("scenario"),
-        "messages": len(_messages),
-        "documents": len(_docs_index),
-        "repos": len(_gitlab_repos),
-        "tickets": len(_tickets),
-        "channels": len(_channels),
-        "orchestrator": orch,
-    })
+    return jsonify(
+        {
+            "server": "running",
+            "scenario": get_current_session().get("scenario"),
+            "messages": len(_messages),
+            "documents": len(_docs_index),
+            "repos": len(_gitlab_repos),
+            "tickets": len(_tickets),
+            "channels": len(_channels),
+            "orchestrator": orch,
+        }
+    )
 
 
 @bp.route("/api/orchestrator/heartbeat", methods=["POST"])
@@ -51,7 +60,9 @@ def orchestrator_heartbeat():
         with _command_lock:
             if _orchestrator_commands:
                 cmd = _orchestrator_commands.pop(0)
-                print(f"[cmd queue] consumed: {cmd.get('action')} key={cmd.get('key','')} (remaining: {len(_orchestrator_commands)})")
+                print(
+                    f"[cmd queue] consumed: {cmd.get('action')} key={cmd.get('key', '')} (remaining: {len(_orchestrator_commands)})"
+                )
             else:
                 cmd = {"action": None}
             return jsonify(cmd)

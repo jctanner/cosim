@@ -1,16 +1,16 @@
 """Background task executor — spawns autonomous worker sessions with tool access."""
 
+import asyncio
 import hashlib
 import json
 import re
 import threading
 import time
-import asyncio
 from pathlib import Path
 
-from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions
-from lib.agent_runner import get_model_id, _extract_response_text
+from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
 
+from lib.agent_runner import _extract_response_text, get_model_id
 
 _executor: "TaskExecutor | None" = None
 
@@ -22,8 +22,7 @@ def get_executor() -> "TaskExecutor | None":
 _DEFAULT_ALLOWED_TOOLS = ["Bash", "Read", "Write", "Edit"]
 
 
-def init_executor(client, model, log_dir, max_concurrent=3, task_timeout=600,
-                  allowed_tools=None) -> "TaskExecutor":
+def init_executor(client, model, log_dir, max_concurrent=3, task_timeout=600, allowed_tools=None) -> "TaskExecutor":
     global _executor
     _executor = TaskExecutor(client, model, log_dir, max_concurrent, task_timeout, allowed_tools)
     return _executor
@@ -32,8 +31,15 @@ def init_executor(client, model, log_dir, max_concurrent=3, task_timeout=600,
 class TaskExecutor:
     """Manages background worker tasks with full tool access."""
 
-    def __init__(self, client, model: str, log_dir: Path, max_concurrent: int,
-                 task_timeout: int, allowed_tools: list[str] | None = None):
+    def __init__(
+        self,
+        client,
+        model: str,
+        log_dir: Path,
+        max_concurrent: int,
+        task_timeout: int,
+        allowed_tools: list[str] | None = None,
+    ):
         self._client = client
         self._model = model
         self._model_id = get_model_id(model)
@@ -52,9 +58,7 @@ class TaskExecutor:
             if self._active_count >= self._max_concurrent:
                 return None
 
-            task_id = "BG-" + hashlib.sha256(
-                f"{goal}:{agent_key}:{time.time()}".encode()
-            ).hexdigest()[:6]
+            task_id = "BG-" + hashlib.sha256(f"{goal}:{agent_key}:{time.time()}".encode()).hexdigest()[:6]
 
             now = time.time()
             record = {
@@ -180,7 +184,7 @@ class TaskExecutor:
 
         scratch_file = record.get("_scratch_file", "/tmp/worker_scratch.md")
         tools_str = ", ".join(self._allowed_tools)
-        return f"""You are a background worker executing a task for {record['agent_name']}.
+        return f"""You are a background worker executing a task for {record["agent_name"]}.
 
 ## FIRST STEP — Read your scratch file
 Before doing anything else, use the Read tool to read this file:
@@ -188,7 +192,7 @@ Before doing anything else, use the Read tool to read this file:
 This is your scratch file. You may use it for notes or drafts during your work.
 
 ## Your Task
-**Goal:** {record['goal']}
+**Goal:** {record["goal"]}
 {context_section}
 ## Instructions
 1. Use your available tools ({tools_str}) to complete your task.
@@ -237,7 +241,7 @@ When finished, output a JSON block with this structure:
         """Extract structured JSON from worker response."""
         # Try to find a JSON block with a "summary" key
         # First check for code-fenced JSON
-        fence_match = re.search(r'```(?:json)?\s*\n(.*?)\n\s*```', text, re.DOTALL)
+        fence_match = re.search(r"```(?:json)?\s*\n(.*?)\n\s*```", text, re.DOTALL)
         if fence_match:
             try:
                 data = json.loads(fence_match.group(1))
@@ -250,7 +254,7 @@ When finished, output a JSON block with this structure:
         first_brace = text.find("{")
         last_brace = text.rfind("}")
         if first_brace >= 0 and last_brace > first_brace:
-            candidate = text[first_brace:last_brace + 1]
+            candidate = text[first_brace : last_brace + 1]
             try:
                 data = json.loads(candidate)
                 if isinstance(data, dict) and "summary" in data:

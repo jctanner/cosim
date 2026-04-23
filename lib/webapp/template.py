@@ -1,6 +1,5 @@
 """Single-page HTML/CSS/JS template for the web UI."""
 
-
 WEB_UI = """<!DOCTYPE html>
 <html lang="en">
 <head>

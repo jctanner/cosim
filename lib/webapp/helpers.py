@@ -3,25 +3,43 @@
 import json
 import time
 
-from lib.docs import slugify, DEFAULT_FOLDERS, DEFAULT_FOLDER_ACCESS
+from lib.docs import DEFAULT_FOLDER_ACCESS, DEFAULT_FOLDERS
+from lib.gitlab import GITLAB_DIR, init_gitlab_storage, load_repos_index
 from lib.personas import DEFAULT_CHANNELS, DEFAULT_MEMBERSHIPS, PERSONAS
-from lib.gitlab import GITLAB_DIR, init_gitlab_storage, load_repos_index, save_repos_index
 from lib.tickets import init_tickets_storage, load_tickets_index
-
 from lib.webapp.state import (
-    CHAT_LOG, DOCS_DIR, LOGS_DIR,
-    _RESULT_MSG_RE, _RESULT_JSON_RE,
-    _INPUT_TOKENS_RE, _OUTPUT_TOKENS_RE, _CACHE_CREATE_RE, _CACHE_READ_RE,
-    _messages, _lock, _subscribers, _sub_lock,
-    _channels, _channel_members, _channel_lock,
-    _docs_index, _docs_lock,
-    _folders, _folder_access, _folder_lock,
-    _gitlab_repos, _gitlab_commits, _gitlab_lock,
-    _tickets, _tickets_lock,
+    _CACHE_CREATE_RE,
+    _CACHE_READ_RE,
+    _INPUT_TOKENS_RE,
+    _OUTPUT_TOKENS_RE,
+    _RESULT_JSON_RE,
+    _RESULT_MSG_RE,
+    CHAT_LOG,
+    DOCS_DIR,
+    LOGS_DIR,
+    _agent_last_activity,
+    _agent_online,
+    _agent_online_lock,
+    _agent_thoughts,
+    _agent_thoughts_lock,
+    _channel_lock,
+    _channel_members,
+    _channels,
+    _docs_index,
+    _docs_lock,
+    _folder_access,
+    _folder_lock,
+    _folders,
+    _gitlab_commits,
+    _gitlab_lock,
+    _gitlab_repos,
+    _lock,
+    _messages,
     _recaps,
-    _agent_online, _agent_last_activity, _agent_online_lock,
-    _agent_thoughts, _agent_thoughts_lock,
-    _agent_verbosity,
+    _sub_lock,
+    _subscribers,
+    _tickets,
+    _tickets_lock,
 )
 
 
@@ -33,9 +51,7 @@ def _parse_usage_from_logs() -> dict:
     agents: dict[str, dict] = {}
 
     if not LOGS_DIR.is_dir():
-        return {"totals": {"input_tokens": 0, "output_tokens": 0,
-                           "total_cost_usd": 0.0, "api_calls": 0},
-                "agents": []}
+        return {"totals": {"input_tokens": 0, "output_tokens": 0, "total_cost_usd": 0.0, "api_calls": 0}, "agents": []}
 
     for log_path in sorted(LOGS_DIR.glob("*.log")):
         # Derive agent name from log filename (reverse of agent_runner's naming)
@@ -171,6 +187,7 @@ def _persist_message(msg: dict):
 def _broadcast(msg: dict):
     """Send message to all SSE subscribers."""
     import queue as _queue
+
     data = json.dumps(msg)
     with _sub_lock:
         dead = []
@@ -186,11 +203,14 @@ def _broadcast(msg: dict):
 def _broadcast_channel_update(channel_name: str, members: list[str]):
     """Notify SSE subscribers that a channel's membership changed."""
     import queue as _queue
-    data = json.dumps({
-        "type": "channel_update",
-        "channel": channel_name,
-        "members": members,
-    })
+
+    data = json.dumps(
+        {
+            "type": "channel_update",
+            "channel": channel_name,
+            "members": members,
+        }
+    )
     with _sub_lock:
         dead = []
         for q in _subscribers:
@@ -203,6 +223,7 @@ def _broadcast_channel_update(channel_name: str, members: list[str]):
 
 
 # -- Document storage helpers --
+
 
 def _init_folders():
     """Initialize folder registry from defaults."""
@@ -282,6 +303,7 @@ def _save_index():
 def _broadcast_doc_event(action: str, doc_meta: dict):
     """Send a doc_event through the existing SSE subscribers."""
     import queue as _queue
+
     payload = {"type": "doc_event", "action": action}
     payload.update(doc_meta)
     data = json.dumps(payload)
@@ -299,6 +321,7 @@ def _broadcast_doc_event(action: str, doc_meta: dict):
 def _broadcast_gitlab_event(action: str, data: dict):
     """Send a gitlab_event through the existing SSE subscribers."""
     import queue as _queue
+
     payload = {"type": "gitlab_event", "action": action}
     payload.update(data)
     raw = json.dumps(payload)
@@ -381,10 +404,13 @@ def _reinitialize():
     _load_chat_log()
     # Clear emails and recaps (restored separately by session load if needed)
     from lib.email import clear_inbox
+
     clear_inbox()
     from lib.memos import clear_memos
+
     clear_memos()
     from lib.blog import clear_blog
+
     clear_blog()
     _recaps.clear()
 
@@ -397,6 +423,7 @@ def _restore_session_extras(instance_name: str):
     memos, emails, blog, and recaps. This function re-applies the saved data.
     """
     import json as _json
+
     from lib.session import INSTANCES_DIR
 
     instance_dir = INSTANCES_DIR / instance_name
@@ -406,6 +433,7 @@ def _restore_session_extras(instance_name: str):
     if memos_path.exists():
         try:
             from lib.memos import restore_memos
+
             memo_data = _json.loads(memos_path.read_text())
             restore_memos(memo_data.get("threads", {}), memo_data.get("posts", []))
         except Exception:
@@ -417,6 +445,7 @@ def _restore_session_extras(instance_name: str):
     if pool_path.exists():
         try:
             from lib.events import restore_events
+
             pool = _json.loads(pool_path.read_text())
             log = _json.loads(log_path.read_text()) if log_path.exists() else []
             restore_events(pool, log)
@@ -428,6 +457,7 @@ def _restore_session_extras(instance_name: str):
     if emails_path.exists():
         try:
             from lib.email import restore_inbox
+
             restore_inbox(_json.loads(emails_path.read_text()))
         except Exception:
             pass
@@ -437,6 +467,7 @@ def _restore_session_extras(instance_name: str):
     if blog_path.exists():
         try:
             from lib.blog import restore_blog
+
             blog_data = _json.loads(blog_path.read_text())
             restore_blog(blog_data.get("posts", {}), blog_data.get("replies", []))
         except Exception:
@@ -467,6 +498,7 @@ def _restore_session_extras(instance_name: str):
 def _broadcast_tickets_event(action: str, data: dict):
     """Send a tickets_event through the existing SSE subscribers."""
     import queue as _queue
+
     payload = {"type": "tickets_event", "action": action}
     payload.update(data)
     raw = json.dumps(payload)

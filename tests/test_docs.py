@@ -1,4 +1,4 @@
-from lib.docs import slugify, get_accessible_folders, DEFAULT_FOLDER_ACCESS
+from lib.docs import DEFAULT_FOLDER_ACCESS, get_accessible_folders, slugify
 
 
 class TestSlugify:

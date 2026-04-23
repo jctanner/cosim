@@ -1,6 +1,6 @@
 import re
 
-from lib.gitlab import generate_commit_id, get_accessible_repos, DEFAULT_REPO_ACCESS
+from lib.gitlab import DEFAULT_REPO_ACCESS, generate_commit_id, get_accessible_repos
 
 
 class TestGenerateCommitId:

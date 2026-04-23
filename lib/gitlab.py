@@ -4,7 +4,6 @@ import hashlib
 import json
 from pathlib import Path
 
-
 GITLAB_DIR = Path(__file__).parent.parent / "var" / "gitlab"
 
 # Repo access: repo_name -> set of persona keys allowed (empty = all have access)
@@ -19,7 +18,8 @@ def get_accessible_repos(persona_key: str, all_repos: list[dict]) -> list[dict]:
     if not DEFAULT_REPO_ACCESS:
         return all_repos
     return [
-        r for r in all_repos
+        r
+        for r in all_repos
         if r.get("name", "") not in DEFAULT_REPO_ACCESS
         or persona_key in DEFAULT_REPO_ACCESS.get(r.get("name", ""), set())
     ]

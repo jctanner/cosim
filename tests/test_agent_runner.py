@@ -1,4 +1,4 @@
-from lib.agent_runner import get_model_display_name, get_model_id, format_duration
+from lib.agent_runner import format_duration, get_model_display_name, get_model_id
 
 
 class TestGetModelDisplayName:

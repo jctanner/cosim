@@ -1,6 +1,6 @@
 import pytest
 
-from lib import email, events, memos, blog, docs, gitlab
+from lib import blog, docs, email, events, gitlab, memos
 
 
 @pytest.fixture(autouse=True)

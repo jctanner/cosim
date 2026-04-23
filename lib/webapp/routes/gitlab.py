@@ -7,9 +7,9 @@ import time
 
 from flask import Blueprint, jsonify, request, send_file
 
-from lib.gitlab import GITLAB_DIR, save_repos_index, generate_commit_id
-from lib.webapp.state import _gitlab_repos, _gitlab_commits, _gitlab_lock
+from lib.gitlab import GITLAB_DIR, generate_commit_id, save_repos_index
 from lib.webapp.helpers import _broadcast_gitlab_event
+from lib.webapp.state import _gitlab_commits, _gitlab_lock, _gitlab_repos
 
 bp = Blueprint("gitlab", __name__)
 

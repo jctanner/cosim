@@ -6,7 +6,6 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-
 BASE_DIR = Path(__file__).parent.parent
 VAR_DIR = BASE_DIR / "var"
 INSTANCES_DIR = VAR_DIR / "instances"
@@ -79,7 +78,8 @@ def _clear_runtime_dirs() -> None:
 
 def _get_channel_memberships() -> dict[str, list[str]]:
     """Get current channel memberships from webapp (import at call time to avoid circular)."""
-    from lib.webapp import _channel_members, _channel_lock
+    from lib.webapp import _channel_lock, _channel_members
+
     with _channel_lock:
         return {ch: sorted(members) for ch, members in _channel_members.items()}
 
@@ -87,16 +87,18 @@ def _get_channel_memberships() -> dict[str, list[str]]:
 def _get_agent_thoughts() -> dict[str, dict]:
     """Get current agent thoughts from webapp."""
     from lib.webapp import _agent_thoughts, _agent_thoughts_lock
+
     with _agent_thoughts_lock:
         return dict(_agent_thoughts)
 
 
 def _get_roster() -> dict:
     """Get current roster state — all personas with their config."""
-    from lib.personas import PERSONAS, DEFAULT_MEMBERSHIPS, PERSONA_TIER
     from lib.docs import DEFAULT_FOLDER_ACCESS
     from lib.gitlab import DEFAULT_REPO_ACCESS
-    from lib.webapp import _agent_verbosity, _agent_online_lock
+    from lib.personas import DEFAULT_MEMBERSHIPS, PERSONA_TIER, PERSONAS
+    from lib.webapp import _agent_online_lock, _agent_verbosity
+
     roster = {}
     for key, p in PERSONAS.items():
         folders = [f for f, members in DEFAULT_FOLDER_ACCESS.items() if key in members]
@@ -155,6 +157,7 @@ def save_session(name: str | None = None) -> dict:
     # Save DM queue
     try:
         from lib.container_orchestrator import get_dm_queue
+
         dm_data = get_dm_queue()
         if dm_data:
             (instance_dir / "dm_queue.json").write_text(json.dumps(dm_data, indent=2))
@@ -163,7 +166,8 @@ def save_session(name: str | None = None) -> dict:
 
     # Save events (pool + log)
     try:
-        from lib.events import get_pool_snapshot, get_log_snapshot
+        from lib.events import get_log_snapshot, get_pool_snapshot
+
         pool = get_pool_snapshot()
         log = get_log_snapshot()
         if pool:
@@ -176,6 +180,7 @@ def save_session(name: str | None = None) -> dict:
     # Save background tasks
     try:
         from lib.task_executor import get_executor
+
         executor = get_executor()
         if executor:
             task_data = executor.get_all_tasks()
@@ -187,6 +192,7 @@ def save_session(name: str | None = None) -> dict:
     # Save emails
     try:
         from lib.email import get_inbox_snapshot
+
         emails = get_inbox_snapshot()
         if emails:
             (instance_dir / "emails.json").write_text(json.dumps(emails, indent=2))
@@ -196,6 +202,7 @@ def save_session(name: str | None = None) -> dict:
     # Save memos
     try:
         from lib.memos import get_memo_snapshot
+
         memo_data = get_memo_snapshot()
         if memo_data.get("threads") or memo_data.get("posts"):
             (instance_dir / "memos.json").write_text(json.dumps(memo_data, indent=2))
@@ -205,6 +212,7 @@ def save_session(name: str | None = None) -> dict:
     # Save blog
     try:
         from lib.blog import get_blog_snapshot
+
         blog_data = get_blog_snapshot()
         if blog_data.get("posts") or blog_data.get("replies"):
             (instance_dir / "blog.json").write_text(json.dumps(blog_data, indent=2))
@@ -214,6 +222,7 @@ def save_session(name: str | None = None) -> dict:
     # Save recaps
     try:
         from lib.webapp import _recaps
+
         if _recaps:
             (instance_dir / "recaps.json").write_text(json.dumps(_recaps, indent=2))
     except Exception:
@@ -265,6 +274,7 @@ def load_session(instance_name: str) -> dict:
     if thoughts_path.exists():
         try:
             from lib.webapp import _agent_thoughts, _agent_thoughts_lock
+
             thoughts = json.loads(thoughts_path.read_text())
             with _agent_thoughts_lock:
                 _agent_thoughts.clear()
@@ -276,9 +286,10 @@ def load_session(instance_name: str) -> dict:
     roster_path = instance_dir / "roster.json"
     if roster_path.exists():
         try:
-            from lib.personas import PERSONAS, DEFAULT_MEMBERSHIPS, PERSONA_TIER, RESPONSE_TIERS
             from lib.docs import DEFAULT_FOLDER_ACCESS
             from lib.gitlab import DEFAULT_REPO_ACCESS
+            from lib.personas import DEFAULT_MEMBERSHIPS, PERSONA_TIER, PERSONAS, RESPONSE_TIERS
+
             roster = json.loads(roster_path.read_text())
 
             # Rebuild PERSONAS from roster
@@ -302,7 +313,8 @@ def load_session(instance_name: str) -> dict:
                     RESPONSE_TIERS[tier].append(key)
 
             # Restore verbosity
-            from lib.webapp import _agent_verbosity, _agent_online_lock
+            from lib.webapp import _agent_online_lock, _agent_verbosity
+
             with _agent_online_lock:
                 _agent_verbosity.clear()
                 for key, data in roster.items():
@@ -330,13 +342,15 @@ def load_session(instance_name: str) -> dict:
     if dm_path.exists():
         try:
             from lib.container_orchestrator import set_dm_queue
+
             set_dm_queue(json.loads(dm_path.read_text()))
         except Exception:
             pass
 
     # Restore events (pool + log)
     try:
-        from lib.events import restore_events, init_event_pool
+        from lib.events import init_event_pool, restore_events
+
         pool_path = instance_dir / "event_pool.json"
         log_path = instance_dir / "event_log.json"
         pool = json.loads(pool_path.read_text()) if pool_path.exists() else None
@@ -353,6 +367,7 @@ def load_session(instance_name: str) -> dict:
     if bg_path.exists():
         try:
             from lib.task_executor import get_executor
+
             executor = get_executor()
             if executor:
                 executor.restore_tasks(json.loads(bg_path.read_text()))
@@ -364,6 +379,7 @@ def load_session(instance_name: str) -> dict:
     if emails_path.exists():
         try:
             from lib.email import restore_inbox
+
             restore_inbox(json.loads(emails_path.read_text()))
         except Exception:
             pass
@@ -373,6 +389,7 @@ def load_session(instance_name: str) -> dict:
     if memos_path.exists():
         try:
             from lib.memos import restore_memos
+
             memo_data = json.loads(memos_path.read_text())
             restore_memos(memo_data.get("threads", {}), memo_data.get("posts", []))
         except Exception:
@@ -383,6 +400,7 @@ def load_session(instance_name: str) -> dict:
     if blog_path.exists():
         try:
             from lib.blog import restore_blog
+
             blog_data = json.loads(blog_path.read_text())
             restore_blog(blog_data.get("posts", {}), blog_data.get("replies", []))
         except Exception:
@@ -393,6 +411,7 @@ def load_session(instance_name: str) -> dict:
     if recaps_path.exists():
         try:
             from lib.webapp import _recaps
+
             data = json.loads(recaps_path.read_text())
             _recaps.clear()
             _recaps.extend(data)
@@ -416,6 +435,7 @@ def new_session(scenario_name: str | None = None) -> dict:
 
     # Always reload scenario config on new session (ensures clean state)
     from lib.scenario_loader import load_scenario
+
     load_scenario(scenario)
 
     # Clear all runtime files
@@ -424,27 +444,32 @@ def new_session(scenario_name: str | None = None) -> dict:
     # Clear all in-memory state
     try:
         from lib.events import clear_events, init_event_pool
+
         clear_events()
         init_event_pool()
     except Exception:
         pass
     try:
         from lib.email import clear_inbox
+
         clear_inbox()
     except Exception:
         pass
     try:
         from lib.memos import clear_memos
+
         clear_memos()
     except Exception:
         pass
     try:
         from lib.blog import clear_blog
+
         clear_blog()
     except Exception:
         pass
     try:
-        from lib.webapp import _recaps, _agent_thoughts, _agent_online_lock
+        from lib.webapp import _agent_online_lock, _agent_thoughts, _recaps
+
         _recaps.clear()
         with _agent_online_lock:
             _agent_thoughts.clear()
@@ -453,6 +478,7 @@ def new_session(scenario_name: str | None = None) -> dict:
 
     # Copy scenario seed data (docs, gitlab, tickets) if present
     from lib.scenario_loader import SCENARIOS_DIR
+
     scenario_dir = SCENARIOS_DIR / scenario
     for dirname in ["docs", "gitlab", "tickets"]:
         seed_dir = scenario_dir / dirname

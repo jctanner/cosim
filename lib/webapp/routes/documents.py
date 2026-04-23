@@ -1,17 +1,19 @@
 """Document and folder API routes."""
 
-import json
 import time
 
 from flask import Blueprint, jsonify, request
 
 from lib.docs import slugify
+from lib.webapp.helpers import _broadcast_doc_event, _extract_snippet, _save_index
 from lib.webapp.state import (
     DOCS_DIR,
-    _docs_index, _docs_lock,
-    _folders, _folder_access, _folder_lock,
+    _docs_index,
+    _docs_lock,
+    _folder_access,
+    _folder_lock,
+    _folders,
 )
-from lib.webapp.helpers import _save_index, _broadcast_doc_event, _extract_snippet
 
 bp = Blueprint("documents", __name__)
 
@@ -23,12 +25,14 @@ def list_folders():
         for name in sorted(_folders.keys()):
             info = _folders[name]
             access = sorted(_folder_access.get(name, set()))
-            result.append({
-                "name": name,
-                "type": info["type"],
-                "description": info["description"],
-                "access": access,
-            })
+            result.append(
+                {
+                    "name": name,
+                    "type": info["type"],
+                    "description": info["description"],
+                    "access": access,
+                }
+            )
     return jsonify(result)
 
 
@@ -106,10 +110,12 @@ def search_docs():
                 continue
             content = doc_path.read_text(encoding="utf-8", errors="replace")
             if query in meta.get("title", "").lower() or query in content.lower():
-                results.append({
-                    **meta,
-                    "snippet": _extract_snippet(content, query),
-                })
+                results.append(
+                    {
+                        **meta,
+                        "snippet": _extract_snippet(content, query),
+                    }
+                )
     return jsonify(results)
 
 
@@ -157,11 +163,13 @@ def update_doc(folder, slug):
             old_content = doc_path.read_text(encoding="utf-8", errors="replace")
         if "history" not in meta:
             meta["history"] = []
-        meta["history"].append({
-            "content": old_content,
-            "updated_by": meta.get("updated_by", meta.get("created_by", "unknown")),
-            "updated_at": meta.get("updated_at", meta.get("created_at", 0)),
-        })
+        meta["history"].append(
+            {
+                "content": old_content,
+                "updated_by": meta.get("updated_by", meta.get("created_by", "unknown")),
+                "updated_at": meta.get("updated_at", meta.get("created_at", 0)),
+            }
+        )
 
         doc_path.write_text(content, encoding="utf-8")
         meta["updated_at"] = time.time()
@@ -225,11 +233,13 @@ def append_doc(folder, slug):
         # Save current content as a version before appending
         if "history" not in meta:
             meta["history"] = []
-        meta["history"].append({
-            "content": existing,
-            "updated_by": meta.get("updated_by", meta.get("created_by", "unknown")),
-            "updated_at": meta.get("updated_at", meta.get("created_at", 0)),
-        })
+        meta["history"].append(
+            {
+                "content": existing,
+                "updated_by": meta.get("updated_by", meta.get("created_by", "unknown")),
+                "updated_at": meta.get("updated_at", meta.get("created_at", 0)),
+            }
+        )
 
         new_content = existing + "\n" + content
         doc_path.write_text(new_content, encoding="utf-8")
@@ -261,6 +271,7 @@ def delete_doc(folder, slug):
 
 
 # -- Backward-compatible flat doc routes (redirect to shared) --
+
 
 @bp.route("/api/docs/<slug>", methods=["GET"])
 def get_doc_flat(slug):

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Multi-agent organization chat system — AI personas collaborating via shared chat."""
 
-import sys
 import asyncio
+import sys
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -36,21 +36,25 @@ if __name__ == "__main__":
     try:
         if args.command == "server":
             from lib.webapp import create_app
+
             if args.scenario:
                 # Auto-start a session with the specified scenario
                 from lib.scenario_loader import load_scenario
-                from lib.session import set_scenario, new_session
+                from lib.session import set_scenario
+
                 load_scenario(args.scenario)
                 set_scenario(args.scenario)
             app = create_app()
             if args.scenario:
                 # Queue a restart command so the orchestrator auto-starts agents
                 from lib.webapp import _command_lock, _orchestrator_commands
+
                 with _command_lock:
                     _orchestrator_commands.append({"action": "restart", "scenario": args.scenario})
             app.run(host=args.host, port=args.port, debug=False)
         elif args.command == "chat":
             from lib.container_orchestrator import run_container_orchestrator
+
             while True:
                 try:
                     asyncio.run(run_container_orchestrator(args))
@@ -59,21 +63,30 @@ if __name__ == "__main__":
                     if isinstance(e, KeyboardInterrupt):
                         raise
                     import traceback
+
                     print(f"\nOrchestrator crashed ({type(e).__name__}): {e}")
                     traceback.print_exc()
                     # Don't restart for setup/config errors — they'll just fail again
                     msg = str(e)
-                    if isinstance(e, RuntimeError) and any(hint in msg for hint in [
-                        "not found", "not reachable", "Build it first",
-                    ]):
+                    if isinstance(e, RuntimeError) and any(
+                        hint in msg
+                        for hint in [
+                            "not found",
+                            "not reachable",
+                            "Build it first",
+                        ]
+                    ):
                         print("\nThis is a setup error — fix it before restarting.")
                         raise SystemExit(1)
                     print("Restarting in 3 seconds...")
                     import time
+
                     time.sleep(3)
         elif args.command == "mcp-server":
             import uvicorn
+
             from lib.mcp_server import build_app
+
             app = build_app(scenario_name=args.scenario, flask_url=args.flask_url)
             uvicorn.run(app, host=args.host, port=args.port)
         else:

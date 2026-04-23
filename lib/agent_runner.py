@@ -4,7 +4,7 @@ import json
 import time
 from pathlib import Path
 
-from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions
+from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
 
 
 def get_model_display_name(model_shorthand: str) -> str:
@@ -41,8 +41,7 @@ def format_duration(seconds: float) -> str:
     return " ".join(parts)
 
 
-def _extract_response_text(msg, response_parts: list[str],
-                           thinking_parts: list[str] | None = None) -> None:
+def _extract_response_text(msg, response_parts: list[str], thinking_parts: list[str] | None = None) -> None:
     """Extract text from an SDK message into response_parts list."""
     type_name = type(msg).__name__
     if type_name == "AssistantMessage":

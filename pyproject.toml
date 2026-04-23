@@ -19,10 +19,24 @@ test = [
     "pytest>=8.0",
     "pytest-asyncio>=0.24",
 ]
+lint = [
+    "ruff>=0.11",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 120
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+"lib/webapp/__init__.py" = ["F401"]
 
 [tool.setuptools.packages.find]
 include = ["lib*"]

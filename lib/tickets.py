@@ -4,7 +4,6 @@ import hashlib
 import json
 from pathlib import Path
 
-
 TICKETS_DIR = Path(__file__).parent.parent / "var" / "tickets"
 
 

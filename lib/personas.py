@@ -5,8 +5,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from lib.docs import get_accessible_folders, DEFAULT_FOLDERS
-
+from lib.docs import DEFAULT_FOLDERS, get_accessible_folders
 
 # All config dicts below are populated at startup by
 # lib.scenario_loader.load_scenario(). They start empty.
@@ -41,9 +40,7 @@ def load_persona_instructions(persona_key: str) -> str:
     text = re.sub(r"^---\n.*?---\n", "", text, count=1, flags=re.DOTALL).strip()
 
     # Look for ## Prompt section (everything from ## Prompt to the next ## header or end of file)
-    prompt_match = re.search(
-        r"^## Prompt\s*\n(.*?)(?=\n## (?!#)|\Z)", text, re.DOTALL | re.MULTILINE
-    )
+    prompt_match = re.search(r"^## Prompt\s*\n(.*?)(?=\n## (?!#)|\Z)", text, re.DOTALL | re.MULTILINE)
 
     if not prompt_match:
         # Legacy format — entire body is the prompt
@@ -134,7 +131,9 @@ def build_docs_index(docs: list[dict], persona_key: str | None = None) -> str:
         return ""
 
     lines = ["## Team Documents", ""]
-    lines.append("The following documents exist. Use a doc SEARCH command in your JSON response to read their contents.")
+    lines.append(
+        "The following documents exist. Use a doc SEARCH command in your JSON response to read their contents."
+    )
     lines.append("")
 
     for folder in sorted(by_folder.keys()):
@@ -158,12 +157,15 @@ def build_gitlab_index(repos: list[dict], persona_key: str | None = None) -> str
     """
     if persona_key:
         from lib.gitlab import get_accessible_repos
+
         repos = get_accessible_repos(persona_key, repos)
     if not repos:
         return ""
 
     lines = ["## GitLab Repositories", ""]
-    lines.append("The following git repositories exist. Use gitlab TREE or LOG commands in your JSON response to browse them.")
+    lines.append(
+        "The following git repositories exist. Use gitlab TREE or LOG commands in your JSON response to browse them."
+    )
     lines.append("")
     for repo in repos:
         name = repo.get("name", "?")
@@ -211,9 +213,11 @@ def build_tickets_index(tickets: list[dict], persona_display_name: str) -> str:
             # Check if blocked
             if blocked_by:
                 # Check which blockers are still unresolved
-                unresolved = [b for b in blocked_by
-                              if any(tk.get("id") == b and tk.get("status") not in ("resolved", "closed")
-                                     for tk in tickets)]
+                unresolved = [
+                    b
+                    for b in blocked_by
+                    if any(tk.get("id") == b and tk.get("status") not in ("resolved", "closed") for tk in tickets)
+                ]
                 if unresolved:
                     block_str = f" **BLOCKED by {', '.join(unresolved)}**"
                 else:
@@ -241,6 +245,7 @@ def build_tickets_index(tickets: list[dict], persona_display_name: str) -> str:
 def _build_task_command_docs() -> str:
     """Return task command documentation if background tasks are enabled."""
     from lib.task_executor import get_executor
+
     executor = get_executor()
     if executor is None:
         return ""
@@ -260,6 +265,7 @@ Background tasks spawn a worker with full tool access ({tools_str}). The worker 
 def _build_task_command_example() -> str:
     """Return task command example if background tasks are enabled."""
     from lib.task_executor import get_executor
+
     if get_executor() is None:
         return ""
     return """,
@@ -269,6 +275,7 @@ def _build_task_command_example() -> str:
 def _build_memo_command_docs() -> str:
     """Return memo-list command documentation if memos are enabled."""
     from lib.scenario_loader import get_settings
+
     if not get_settings().get("enable_memos", False):
         return ""
     return """
@@ -289,6 +296,7 @@ Use memo-list for proposals, RFCs, and async discussions that deserve threaded r
 def _build_memo_command_example() -> str:
     """Return memo command example if memos are enabled."""
     from lib.scenario_loader import get_settings
+
     if not get_settings().get("enable_memos", False):
         return ""
     return """,
@@ -298,6 +306,7 @@ def _build_memo_command_example() -> str:
 def _build_blog_command_docs() -> str:
     """Return blog command documentation if blog is enabled."""
     from lib.scenario_loader import get_settings
+
     if not get_settings().get("enable_blog", False):
         return ""
     return """
@@ -319,6 +328,7 @@ Use blog for authored long-form content — dev logs, shipping announcements, th
 def _build_blog_command_example() -> str:
     """Return blog command example if blog is enabled."""
     from lib.scenario_loader import get_settings
+
     if not get_settings().get("enable_blog", False):
         return ""
     return """,
@@ -328,6 +338,7 @@ def _build_blog_command_example() -> str:
 def _build_blog_section(blog_posts: list[dict] | None) -> str:
     """Build a section showing recent blog posts with latest reply for agents."""
     from lib.scenario_loader import get_settings
+
     if not get_settings().get("enable_blog", False):
         return ""
     if not blog_posts:
@@ -375,14 +386,14 @@ def _build_blog_section(blog_posts: list[dict] | None) -> str:
 def build_active_tasks_section(persona_key: str) -> str:
     """Build a section showing the agent's active background tasks."""
     from lib.task_executor import get_executor
+
     executor = get_executor()
     if not executor:
         return ""
     tasks = executor.get_active_tasks(agent_key=persona_key)
     if not tasks:
         return ""
-    lines = ["## Your Active Background Tasks", "",
-             "Do NOT spawn duplicate tasks for work already listed here.", ""]
+    lines = ["## Your Active Background Tasks", "", "Do NOT spawn duplicate tasks for work already listed here.", ""]
     for t in tasks:
         elapsed = time.time() - t["started_at"] if t["started_at"] else 0
         lines.append(f"- **{t['task_id']}** [{t['status']}] {t['goal'][:100]} ({int(elapsed)}s)")
@@ -455,7 +466,7 @@ def build_initial_prompt(persona_key: str, channels: dict[str, dict] | None = No
 
 ---
 
-You are {persona['display_name']}. You are a member of an engineering organization that communicates through a Slack-like multi-channel system.
+You are {persona["display_name"]}. You are a member of an engineering organization that communicates through a Slack-like multi-channel system.
 
 ## Channels
 
@@ -626,10 +637,12 @@ def _build_channel_membership_section(visible_channels: set[str]) -> str:
         for ch in ch_set:
             channel_members.setdefault(ch, []).append(display)
 
-    lines = ["## Channel Membership",
-             "",
-             "Only people listed below can see messages in that channel. Do NOT address someone in a channel they are not in.",
-             ""]
+    lines = [
+        "## Channel Membership",
+        "",
+        "Only people listed below can see messages in that channel. Do NOT address someone in a channel they are not in.",
+        "",
+    ]
     for ch in sorted(visible_channels):
         members = sorted(channel_members.get(ch, []))
         lines.append(f"- **{ch}**: {', '.join(members)}")
@@ -655,6 +668,7 @@ def _build_memos_section(memos: list[dict] | None) -> str:
     READ for full content if needed.
     """
     from lib.scenario_loader import get_settings
+
     if not get_settings().get("enable_memos", False):
         return ""
     if not memos:
@@ -733,7 +747,7 @@ def build_turn_prompt(
     if is_external:
         action = f"""## New Activity in {trigger_channel} (customer-facing)
 
-You are {persona['display_name']}. There is new activity in **{trigger_channel}**, which is a customer-facing channel.
+You are {persona["display_name"]}. There is new activity in **{trigger_channel}**, which is a customer-facing channel.
 
 Respond to the customer directly and professionally. Your response will be visible to the customer.
 
@@ -754,7 +768,7 @@ Reply with a single JSON object. Format: {{"action": "respond", "messages": [...
     else:
         action = f"""## New Activity in {trigger_channel} (internal)
 
-You are {persona['display_name']}. There is new activity in **{trigger_channel}**, an internal team channel.
+You are {persona["display_name"]}. There is new activity in **{trigger_channel}**, an internal team channel.
 
 The customer CANNOT see this channel. Discuss freely — raise concerns, suggest approaches, coordinate with teammates.
 
@@ -786,8 +800,7 @@ Reply with a single JSON object. Format: {{"action": "respond", "messages": [...
             "The following messages are from the Scenario Director — a private back-channel "
             "only you can see. Other agents cannot see these messages. "
             "Follow any instructions given here. You may respond in this channel "
-            f"by posting to `{director_ch}`.\n\n"
-            + "\n\n".join(lines)
+            f"by posting to `{director_ch}`.\n\n" + "\n\n".join(lines)
         )
 
     # Build offline notice
@@ -913,7 +926,7 @@ def build_v3_system_prompt(persona_key: str, channels: dict[str, dict] | None = 
 
 ---
 
-You are {persona['display_name']}. You are a member of an engineering organization that communicates through a Slack-like multi-channel system.
+You are {persona["display_name"]}. You are a member of an engineering organization that communicates through a Slack-like multi-channel system.
 
 ## Channels
 

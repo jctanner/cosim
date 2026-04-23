@@ -1,10 +1,9 @@
 """Shared in-memory state for the webapp package."""
 
-import re
 import queue
+import re
 import threading
 from pathlib import Path
-
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
@@ -75,7 +74,7 @@ _agent_thoughts_lock = threading.Lock()
 _orchestrator_status: dict = {
     "state": "disconnected",  # disconnected, starting, ready, responding, restarting
     "scenario": None,
-    "agents": {},             # persona_key -> {state, display_name}
+    "agents": {},  # persona_key -> {state, display_name}
     "last_heartbeat": 0,
     "message": "",
 }
