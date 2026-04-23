@@ -1,0 +1,216 @@
+name: "Six Thinking Hats"
+description: "A structured parallel-thinking team using Edward de Bono's Six Thinking Hats method. Six personas each embody one thinking mode — facts, optimism, caution, intuition, creativity, and process — to systematically explore decisions, problems, and opportunities."
+
+characters:
+  white:
+    display_name: "Iris (White Hat)"
+    character_file: "characters/iris-white.md"
+    team_description: "facts, data, information gaps, what we know and what we need to find out"
+    avatar: "white.svg"
+    max_words: 200
+  yellow:
+    display_name: "Sol (Yellow Hat)"
+    character_file: "characters/sol-yellow.md"
+    team_description: "benefits, value, optimistic assessment, why it could work"
+    avatar: "yellow.svg"
+    max_words: 180
+  black:
+    display_name: "Nyx (Black Hat)"
+    character_file: "characters/nyx-black.md"
+    team_description: "risks, difficulties, problems, what could go wrong"
+    avatar: "black.svg"
+    max_words: 180
+  red:
+    display_name: "Ember (Red Hat)"
+    character_file: "characters/ember-red.md"
+    team_description: "feelings, hunches, intuition, gut reactions"
+    avatar: "red.svg"
+    max_words: 120
+  green:
+    display_name: "Sage (Green Hat)"
+    character_file: "characters/sage-green.md"
+    team_description: "creative alternatives, new ideas, lateral thinking, possibilities"
+    avatar: "green.svg"
+    max_words: 200
+  blue:
+    display_name: "Aria (Blue Hat)"
+    character_file: "characters/aria-blue.md"
+    team_description: "process management, synthesis, defining focus, summarizing conclusions"
+    avatar: "blue.svg"
+    max_words: 200
+
+channels:
+  "#thinking-room":
+    description: "Main parallel-thinking discussion room where all hats contribute"
+    is_external: false
+  "#facts-board":
+    description: "Data, evidence, and information sharing"
+    is_external: false
+  "#ideas-lab":
+    description: "Creative proposals, alternatives, and brainstorming"
+    is_external: false
+  "#risk-register":
+    description: "Identified risks, difficulties, and cautions"
+    is_external: false
+  "#decision-log":
+    description: "Process notes, focus definitions, and synthesized conclusions"
+    is_external: false
+  "#open-forum":
+    description: "Unstructured discussion and follow-ups"
+    is_external: false
+
+memberships:
+  white: ["#thinking-room", "#facts-board", "#open-forum"]
+  yellow: ["#thinking-room", "#open-forum"]
+  black: ["#thinking-room", "#risk-register", "#open-forum"]
+  red: ["#thinking-room", "#open-forum"]
+  green: ["#thinking-room", "#ideas-lab", "#open-forum"]
+  blue: ["#thinking-room", "#facts-board", "#ideas-lab", "#risk-register", "#decision-log", "#open-forum"]
+
+response_tiers:
+  1: ["white", "red"]
+  2: ["yellow", "black", "green"]
+  3: ["blue"]
+
+folders:
+  shared:
+    type: "shared"
+    description: "Shared reference materials and briefings"
+  facts:
+    type: "department"
+    description: "Data, research, and evidence collected by White Hat"
+  ideas:
+    type: "department"
+    description: "Creative proposals and alternatives from Green Hat"
+  risks:
+    type: "department"
+    description: "Risk assessments and caution logs from Black Hat"
+  decisions:
+    type: "department"
+    description: "Process records and decision summaries from Blue Hat"
+  iris:
+    type: "personal"
+    description: "Iris's private notes"
+  sol:
+    type: "personal"
+    description: "Sol's private notes"
+  nyx:
+    type: "personal"
+    description: "Nyx's private notes"
+  ember:
+    type: "personal"
+    description: "Ember's private notes"
+  sage:
+    type: "personal"
+    description: "Sage's private notes"
+  aria:
+    type: "personal"
+    description: "Aria's private notes"
+
+folder_access:
+  shared: ["white", "yellow", "black", "red", "green", "blue"]
+  facts: ["white", "blue"]
+  ideas: ["green", "blue"]
+  risks: ["black", "blue"]
+  decisions: ["blue"]
+  iris: ["white"]
+  sol: ["yellow"]
+  nyx: ["black"]
+  ember: ["red"]
+  sage: ["green"]
+  aria: ["blue"]
+
+events:
+  - name: "New Product Decision"
+    severity: "high"
+    actions:
+      - type: "message"
+        channel: "#thinking-room"
+        sender: "Facilitator (System)"
+        content: "THINKING SESSION: The company is considering launching a subscription-based AI assistant product. The market is crowded but growing 40% year-over-year. Development would take 6 months and require hiring 3 engineers. Current runway is 18 months. Should we proceed?"
+      - type: "document"
+        title: "AI Assistant Product Brief"
+        folder: "shared"
+        content: "# AI Assistant Product — Decision Brief\n\n## Opportunity\nSubscription AI assistant for mid-market businesses.\n\n## Market Data\n- TAM: $12B by 2027\n- Growth: 40% YoY\n- 47 competitors, 5 with >10% market share\n- Customer interviews: 8/10 prospects expressed interest\n\n## Requirements\n- 6-month development timeline\n- 3 additional engineers ($450K/year)\n- Infrastructure costs: $80K/month at scale\n\n## Current State\n- 18 months runway\n- 15-person team\n- Core product growing 25% QoQ"
+        author: "Facilitator (System)"
+
+  - name: "Market Expansion Opportunity"
+    severity: "medium"
+    actions:
+      - type: "message"
+        channel: "#thinking-room"
+        sender: "Facilitator (System)"
+        content: "THINKING SESSION: A partner in Japan wants to white-label our product for the APAC market. They'll handle sales and support. We'd get 30% revenue share but must localize the product and provide API-level SLA guarantees. They want an answer in 2 weeks."
+      - type: "document"
+        title: "APAC Partnership Proposal"
+        folder: "shared"
+        content: "# APAC Market Partnership Proposal\n\n## Partner Profile\n- Established tech distributor in Japan\n- 500+ enterprise clients across APAC\n- Annual revenue: $200M\n- Requesting white-label rights\n\n## Terms\n- 30% revenue share to us\n- Partner handles all sales, marketing, and L1 support\n- We provide: localized product, API SLA (99.9%), L2/L3 support\n- 3-year exclusive agreement for Japan market\n- Decision deadline: 2 weeks\n\n## Localization Scope\n- Japanese language UI\n- APAC data residency (Tokyo region)\n- Local payment processing\n- Compliance with Japan's APPI (data protection)"
+        author: "Facilitator (System)"
+
+  - name: "Acquisition Offer"
+    severity: "critical"
+    actions:
+      - type: "message"
+        channel: "#thinking-room"
+        sender: "Facilitator (System)"
+        content: "THINKING SESSION: A Fortune 500 company has made an acquisition offer at 8x annual revenue. The offer is 60% cash, 40% stock with a 2-year lock-up. All employees would receive retention packages. The board wants a recommendation by Friday."
+      - type: "email"
+        sender: "Facilitator (System)"
+        subject: "Confidential: Acquisition Offer — Structured Thinking Required"
+        body: "Team,\n\nWe've received an acquisition offer that requires careful, structured analysis. All six perspectives are needed.\n\nKey details:\n- Offer: 8x annual revenue\n- Structure: 60% cash / 40% stock (2-year lock-up)\n- All employees get retention packages\n- Acquirer is a Fortune 500 with strong market position\n- Board wants recommendation by Friday\n\nPlease apply your thinking mode systematically. This is exactly the kind of decision the Six Hats method was designed for.\n\n— Facilitator"
+
+  - name: "Team Restructuring"
+    severity: "medium"
+    actions:
+      - type: "message"
+        channel: "#thinking-room"
+        sender: "Facilitator (System)"
+        content: "THINKING SESSION: Engineering velocity has dropped 30% over the past quarter. The team has grown from 8 to 20 people but output hasn't scaled proportionally. Should we restructure into smaller, autonomous squads? What are the trade-offs?"
+      - type: "ticket"
+        title: "Evaluate team restructuring — squad model vs. current structure"
+        description: "Engineering velocity has declined 30% despite headcount growth from 8 to 20. Need structured analysis of whether a squad-based model would improve throughput. Consider: communication overhead, knowledge silos, autonomy vs. alignment, hiring implications."
+        priority: "high"
+        author: "Facilitator (System)"
+
+  - name: "Pricing Strategy Change"
+    severity: "medium"
+    actions:
+      - type: "message"
+        channel: "#thinking-room"
+        sender: "Facilitator (System)"
+        content: "THINKING SESSION: Our competitor just cut prices by 40%. Customer churn has ticked up from 3% to 5% monthly. Sales is pushing for a price match. Product wants to differentiate on features instead. What's the right move?"
+
+  - name: "Remote vs. Office Decision"
+    severity: "low"
+    actions:
+      - type: "message"
+        channel: "#thinking-room"
+        sender: "Facilitator (System)"
+        content: "THINKING SESSION: The lease on our office expires in 3 months. We can renew for 2 years at $15K/month, downsize to a co-working space at $5K/month, or go fully remote. 60% of the team prefers remote, 25% wants hybrid, 15% wants in-office. How should we decide?"
+
+  - name: "Technical Debt Reckoning"
+    severity: "high"
+    actions:
+      - type: "message"
+        channel: "#thinking-room"
+        sender: "Facilitator (System)"
+        content: "THINKING SESSION: The engineering team estimates 40% of development time is spent working around technical debt. A full rewrite of the core platform would take 4 months with a feature freeze. Customers are waiting for 3 major features. Do we rewrite, refactor incrementally, or push through and ship features?"
+      - type: "document"
+        title: "Technical Debt Assessment"
+        folder: "shared"
+        content: "# Technical Debt Assessment\n\n## Current Impact\n- 40% of dev time spent on workarounds\n- 3 production incidents last month traced to legacy code\n- New feature development takes 2-3x longer than estimated\n- Onboarding new engineers takes 6 weeks instead of 2\n\n## Options\n1. **Full Rewrite** — 4 months, feature freeze, clean slate\n2. **Incremental Refactor** — 20% time allocation, 12+ months, no freeze\n3. **Push Through** — Ship features now, accept the tax\n\n## Waiting Features\n- Enterprise SSO (3 customers blocked)\n- Real-time analytics dashboard\n- Webhook system (promised in Q2)"
+        author: "Facilitator (System)"
+
+settings:
+  enable_background_tasks: false
+  max_concurrent_tasks: 2
+  task_timeout: 300
+  enable_memos: true
+  enable_blog: false
+  task_allowed_tools:
+    - Bash
+    - Read
+    - Write
+    - Edit
+    - WebFetch
+    - WebSearch
