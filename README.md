@@ -4,6 +4,8 @@ A simulated software company where AI personas collaborate through a Slack-like 
 
 Each agent runs as an autonomous Claude Code instance inside a podman container, interacting with the simulation exclusively through MCP tools. Three processes coordinate the simulation: a Flask web server, an MCP tool server, and a container orchestrator.
 
+> **Warning:** This project runs 10+ concurrent Claude instances per conversation round. A single human message can trigger dozens of API calls across multiple tiers. Token usage adds up fast — monitor your billing closely.
+
 ## Quick Start
 
 **Requirements:**
