@@ -1,11 +1,13 @@
 """Document and folder API routes."""
 
+import io
+import tarfile
 import time
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, send_file
 
-from lib.docs import slugify
-from lib.webapp.helpers import _broadcast_doc_event, _extract_snippet, _save_index
+from lib.docs import DEFAULT_FOLDER_ACCESS, DEFAULT_FOLDERS, slugify
+from lib.webapp.helpers import _broadcast_doc_event, _broadcast_folder_event, _extract_snippet, _save_index
 from lib.webapp.state import (
     DOCS_DIR,
     _docs_index,
@@ -33,6 +35,82 @@ def list_folders():
                     "access": access,
                 }
             )
+    return jsonify(result)
+
+
+@bp.route("/api/folders", methods=["POST"])
+def create_folder():
+    data = request.get_json(force=True)
+    name = data.get("name", "").strip().strip("/")
+    folder_type = data.get("type", "project")
+    description = data.get("description", "")
+    created_by = data.get("created_by", "unknown")
+    access = data.get("access", [])
+
+    if not name:
+        return jsonify({"error": "name required"}), 400
+
+    # Validate folder name: allow alphanumeric, hyphens, underscores, and /
+    if not all(c.isalnum() or c in "-_/" for c in name):
+        return jsonify({"error": "folder name may only contain alphanumeric, hyphens, underscores, and /"}), 400
+
+    with _folder_lock:
+        if name in _folders:
+            return jsonify({"error": f"folder '{name}' already exists"}), 409
+
+        _folders[name] = {"type": folder_type, "description": description}
+        DEFAULT_FOLDERS[name] = {"type": folder_type, "description": description}
+        _folder_access[name] = set(access)
+        DEFAULT_FOLDER_ACCESS[name] = set(access)
+
+    folder_dir = DOCS_DIR / name
+    folder_dir.mkdir(parents=True, exist_ok=True)
+
+    result = {
+        "name": name,
+        "type": folder_type,
+        "description": description,
+        "access": sorted(access),
+        "created_by": created_by,
+    }
+    _broadcast_folder_event("created", result)
+    return jsonify(result), 201
+
+
+@bp.route("/api/folders/<path:folder_path>/download", methods=["GET"])
+def download_folder(folder_path):
+    folder_path = folder_path.strip("/")
+    folder_dir = DOCS_DIR / folder_path
+    if not folder_dir.is_dir():
+        return jsonify({"error": f"folder '{folder_path}' not found"}), 404
+
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+        for txt in sorted(folder_dir.rglob("*.txt")):
+            arcname = str(txt.relative_to(DOCS_DIR))
+            tar.add(str(txt), arcname=arcname)
+    buf.seek(0)
+    download_name = folder_path.replace("/", "-") + ".tar.gz"
+    return send_file(buf, mimetype="application/gzip", as_attachment=True, download_name=download_name)
+
+
+@bp.route("/api/folders/<path:folder_path>/access", methods=["PUT"])
+def update_folder_access(folder_path):
+    folder_path = folder_path.strip("/")
+    data = request.get_json(force=True)
+    access = data.get("access", [])
+
+    with _folder_lock:
+        if folder_path not in _folders:
+            return jsonify({"error": f"folder '{folder_path}' not found"}), 404
+        _folder_access[folder_path] = set(access)
+        DEFAULT_FOLDER_ACCESS[folder_path] = set(access)
+
+    result = {
+        "name": folder_path,
+        "access": sorted(access),
+    }
+    _broadcast_folder_event("access_updated", result)
     return jsonify(result)
 
 
@@ -119,7 +197,7 @@ def search_docs():
     return jsonify(results)
 
 
-@bp.route("/api/docs/<folder>/<slug>", methods=["GET"])
+@bp.route("/api/docs/<path:folder>/<slug>", methods=["GET"])
 def get_doc(folder, slug):
     with _docs_lock:
         meta = _docs_index.get(slug)
@@ -132,7 +210,7 @@ def get_doc(folder, slug):
     return jsonify({**meta, "content": content})
 
 
-@bp.route("/api/docs/<folder>/<slug>", methods=["PUT"])
+@bp.route("/api/docs/<path:folder>/<slug>", methods=["PUT"])
 def update_doc(folder, slug):
     data = request.get_json(force=True)
     content = data.get("content", "")
@@ -195,7 +273,7 @@ def update_doc(folder, slug):
     return jsonify(meta)
 
 
-@bp.route("/api/docs/<folder>/<slug>/history", methods=["GET"])
+@bp.route("/api/docs/<path:folder>/<slug>/history", methods=["GET"])
 def get_doc_history(folder, slug):
     with _docs_lock:
         meta = _docs_index.get(slug)
@@ -216,7 +294,7 @@ def get_doc_history(folder, slug):
     return jsonify([current] + list(reversed(history)))
 
 
-@bp.route("/api/docs/<folder>/<slug>/append", methods=["POST"])
+@bp.route("/api/docs/<path:folder>/<slug>/append", methods=["POST"])
 def append_doc(folder, slug):
     data = request.get_json(force=True)
     content = data.get("content", "")
@@ -253,7 +331,7 @@ def append_doc(folder, slug):
     return jsonify(meta)
 
 
-@bp.route("/api/docs/<folder>/<slug>", methods=["DELETE"])
+@bp.route("/api/docs/<path:folder>/<slug>", methods=["DELETE"])
 def delete_doc(folder, slug):
     with _docs_lock:
         meta = _docs_index.get(slug)

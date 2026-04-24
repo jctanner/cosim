@@ -154,6 +154,17 @@ def save_session(name: str | None = None) -> dict:
     roster = _get_roster()
     (instance_dir / "roster.json").write_text(json.dumps(roster, indent=2))
 
+    # Save folder registry (includes dynamically created folders)
+    try:
+        from lib.webapp.state import _folder_lock, _folders
+
+        with _folder_lock:
+            folders_snapshot = dict(_folders)
+        if folders_snapshot:
+            (instance_dir / "folders.json").write_text(json.dumps(folders_snapshot, indent=2))
+    except Exception:
+        pass
+
     # Save DM queue
     try:
         from lib.container_orchestrator import get_dm_queue

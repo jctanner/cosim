@@ -14,7 +14,7 @@ from lib.session import (
     save_session,
     set_scenario,
 )
-from lib.webapp.helpers import _reinitialize, _restore_session_extras
+from lib.webapp.helpers import _reinitialize, _restore_saved_folders, _restore_session_extras
 from lib.webapp.state import (
     _channel_lock,
     _channel_members,
@@ -66,6 +66,8 @@ def session_load():
 
             _load_scenario(scenario)
             set_scenario(scenario)
+        # Merge saved folder registry into DEFAULT_FOLDERS before _reinitialize
+        _restore_saved_folders(instance_name)
         _reinitialize()
         # Re-restore memos, events, emails, and recaps that were
         # cleared by _load_scenario / _reinitialize

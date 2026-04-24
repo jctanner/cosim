@@ -239,9 +239,9 @@ def _init_docs():
     """Create docs/ dir with folder subdirs and load or migrate index."""
     DOCS_DIR.mkdir(parents=True, exist_ok=True)
 
-    # Create subdirectories for each folder
+    # Create subdirectories for each folder (parents=True for nested paths)
     for folder_name in DEFAULT_FOLDERS:
-        (DOCS_DIR / folder_name).mkdir(exist_ok=True)
+        (DOCS_DIR / folder_name).mkdir(parents=True, exist_ok=True)
 
     index_path = DOCS_DIR / "_index.json"
     with _docs_lock:
@@ -306,6 +306,24 @@ def _broadcast_doc_event(action: str, doc_meta: dict):
 
     payload = {"type": "doc_event", "action": action}
     payload.update(doc_meta)
+    data = json.dumps(payload)
+    with _sub_lock:
+        dead = []
+        for q in _subscribers:
+            try:
+                q.put_nowait(data)
+            except _queue.Full:
+                dead.append(q)
+        for q in dead:
+            _subscribers.remove(q)
+
+
+def _broadcast_folder_event(action: str, folder_meta: dict):
+    """Send a folder_event through the existing SSE subscribers."""
+    import queue as _queue
+
+    payload = {"type": "folder_event", "action": action}
+    payload.update(folder_meta)
     data = json.dumps(payload)
     with _sub_lock:
         dead = []
@@ -413,6 +431,38 @@ def _reinitialize():
 
     clear_blog()
     _recaps.clear()
+
+
+def _restore_saved_folders(instance_name: str):
+    """Merge dynamically-created folders from a saved session into DEFAULT_FOLDERS.
+
+    Must be called AFTER _load_scenario() (which resets DEFAULT_FOLDERS to
+    scenario defaults) and BEFORE _reinitialize() (which copies DEFAULT_FOLDERS
+    into _folders).
+    """
+    import json as _json
+
+    from lib.docs import DEFAULT_FOLDER_ACCESS, DEFAULT_FOLDERS
+    from lib.session import INSTANCES_DIR
+
+    instance_dir = INSTANCES_DIR / instance_name
+    folders_path = instance_dir / "folders.json"
+    if not folders_path.exists():
+        return
+    try:
+        saved_folders = _json.loads(folders_path.read_text())
+        for name, info in saved_folders.items():
+            if name not in DEFAULT_FOLDERS:
+                DEFAULT_FOLDERS[name] = info
+        # Also ensure folder_access entries exist for restored folders
+        roster_path = instance_dir / "roster.json"
+        if roster_path.exists():
+            roster = _json.loads(roster_path.read_text())
+            for key, data in roster.items():
+                for folder in data.get("folders", []):
+                    DEFAULT_FOLDER_ACCESS.setdefault(folder, set()).add(key)
+    except Exception:
+        pass
 
 
 def _restore_session_extras(instance_name: str):

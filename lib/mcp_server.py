@@ -268,16 +268,37 @@ def _register_document_tools(
     flask_url: str,
     config: dict,
 ):
-    """Register 7 document tools with folder access control."""
+    """Register 9 document tools with folder access control."""
     my_folders = {folder for folder, members in config.get("folder_access", {}).items() if agent_key in members}
+
+    async def _refresh_my_folders():
+        """Refresh folder access from the server (picks up dynamically created folders)."""
+        try:
+            folders = await _flask("GET", "/api/folders", flask_url)
+            my_folders.clear()
+            for f in folders:
+                if agent_key in f.get("access", []):
+                    my_folders.add(f["name"])
+        except Exception:
+            pass
+
+    async def _check_folder_access(folder: str) -> str | None:
+        """Check folder access, refreshing from server on miss. Returns error string or None."""
+        if folder in my_folders:
+            return None
+        await _refresh_my_folders()
+        if folder in my_folders:
+            return None
+        return f"Error: you don't have access to folder '{folder}'. Your folders: {sorted(my_folders)}"
 
     @server.tool(
         name="create_doc",
         description="Create a new document in a folder you have access to.",
     )
     async def create_doc(title: str, folder: str, content: str) -> str:
-        if folder not in my_folders:
-            return f"Error: you don't have access to folder '{folder}'. Your folders: {sorted(my_folders)}"
+        err = await _check_folder_access(folder)
+        if err:
+            return err
         t0 = time.time()
         result = await _flask(
             "POST",
@@ -304,8 +325,9 @@ def _register_document_tools(
         description="Replace the content of an existing document. Optionally rename the title and/or slug.",
     )
     async def update_doc(folder: str, slug: str, content: str, title: str = "", new_slug: str = "") -> str:
-        if folder not in my_folders:
-            return f"Error: you don't have access to folder '{folder}'. Your folders: {sorted(my_folders)}"
+        err = await _check_folder_access(folder)
+        if err:
+            return err
         t0 = time.time()
         payload: dict[str, str] = {"content": content, "author": display_name}
         if title:
@@ -321,8 +343,9 @@ def _register_document_tools(
         description="Read a document's full content by folder and slug.",
     )
     async def read_doc(folder: str, slug: str) -> str:
-        if folder not in my_folders:
-            return f"Error: you don't have access to folder '{folder}'. Your folders: {sorted(my_folders)}"
+        err = await _check_folder_access(folder)
+        if err:
+            return err
         t0 = time.time()
         result = await _flask("GET", f"/api/docs/{folder}/{slug}", flask_url)
         _record_audit(agent_key, "read_doc", {"folder": folder, "slug": slug}, "read", (time.time() - t0) * 1000)
@@ -333,6 +356,7 @@ def _register_document_tools(
         description="Search documents by query string. Only searches folders you have access to.",
     )
     async def search_docs(query: str) -> str:
+        await _refresh_my_folders()
         t0 = time.time()
         params: dict[str, str] = {"q": query}
         if my_folders:
@@ -346,14 +370,17 @@ def _register_document_tools(
         description="List documents, optionally filtered by folder.",
     )
     async def list_docs(folder: str | None = None) -> str:
-        if folder and folder not in my_folders:
-            return f"Error: you don't have access to folder '{folder}'. Your folders: {sorted(my_folders)}"
+        if folder:
+            err = await _check_folder_access(folder)
+            if err:
+                return err
+        else:
+            await _refresh_my_folders()
         t0 = time.time()
         params: dict[str, str] = {}
         if folder:
             params["folder"] = folder
         result = await _flask("GET", "/api/docs", flask_url, params=params)
-        # Filter to accessible folders
         if not folder:
             result = [d for d in result if d.get("folder", "") in my_folders]
         _record_audit(agent_key, "list_docs", {"folder": folder}, f"{len(result)} docs", (time.time() - t0) * 1000)
@@ -364,8 +391,9 @@ def _register_document_tools(
         description="Delete a document by folder and slug. Only works in folders you have access to.",
     )
     async def delete_doc(folder: str, slug: str) -> str:
-        if folder not in my_folders:
-            return f"Error: you don't have access to folder '{folder}'. Your folders: {sorted(my_folders)}"
+        err = await _check_folder_access(folder)
+        if err:
+            return err
         t0 = time.time()
         result = await _flask("DELETE", f"/api/docs/{folder}/{slug}", flask_url)
         _record_audit(agent_key, "delete_doc", {"folder": folder, "slug": slug}, "deleted", (time.time() - t0) * 1000)
@@ -376,8 +404,9 @@ def _register_document_tools(
         description="Append content to an existing document without replacing it. Only works in folders you have access to.",
     )
     async def append_doc(folder: str, slug: str, content: str) -> str:
-        if folder not in my_folders:
-            return f"Error: you don't have access to folder '{folder}'. Your folders: {sorted(my_folders)}"
+        err = await _check_folder_access(folder)
+        if err:
+            return err
         t0 = time.time()
         result = await _flask(
             "POST",
@@ -389,6 +418,73 @@ def _register_document_tools(
             },
         )
         _record_audit(agent_key, "append_doc", {"folder": folder, "slug": slug}, "appended", (time.time() - t0) * 1000)
+        return json.dumps(result)
+
+    all_persona_keys = sorted(config.get("characters", {}).keys())
+
+    @server.tool(
+        name="create_folder",
+        description=(
+            'Create a new folder (or nested folder like "projects/my-project"). '
+            'You automatically get access. Pass access=["all"] to grant access to '
+            "all team members, or a list of persona keys."
+        ),
+    )
+    async def create_folder(name: str, description: str = "", access: list[str] | None = None) -> str:
+        t0 = time.time()
+        access_list = list(access) if access else []
+        if "all" in access_list:
+            access_list = list(all_persona_keys)
+        if agent_key not in access_list:
+            access_list.append(agent_key)
+        result = await _flask(
+            "POST",
+            "/api/folders",
+            flask_url,
+            json={
+                "name": name,
+                "description": description,
+                "type": "project",
+                "created_by": display_name,
+                "access": access_list,
+            },
+        )
+        if "error" not in result:
+            my_folders.add(name)
+        _record_audit(agent_key, "create_folder", {"name": name}, result.get("name", ""), (time.time() - t0) * 1000)
+        return json.dumps(result)
+
+    @server.tool(
+        name="update_folder_access",
+        description=(
+            'Update who can access a folder. Pass access=["all"] to grant access '
+            "to all team members, or a list of persona keys. You must already have "
+            "access to the folder."
+        ),
+    )
+    async def update_folder_access(folder: str, access: list[str]) -> str:
+        err = await _check_folder_access(folder)
+        if err:
+            return err
+        t0 = time.time()
+        access_list = list(access)
+        if "all" in access_list:
+            access_list = list(all_persona_keys)
+        if agent_key not in access_list:
+            access_list.append(agent_key)
+        result = await _flask(
+            "PUT",
+            f"/api/folders/{folder}/access",
+            flask_url,
+            json={"access": access_list},
+        )
+        _record_audit(
+            agent_key,
+            "update_folder_access",
+            {"folder": folder},
+            f"{len(access_list)} members",
+            (time.time() - t0) * 1000,
+        )
         return json.dumps(result)
 
 
