@@ -1,0 +1,38 @@
+FROM python:3.13-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        curl nodejs npm git \
+    && npm install -g @anthropic-ai/claude-code \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+RUN useradd -m -s /bin/bash agent
+
+COPY agent-hooks.json /home/agent/.claude/hooks.json
+
+# Credentials directory (file mounted at runtime, not baked into image)
+RUN mkdir -p /home/agent/.config/gcloud
+
+RUN chown -R agent:agent /home/agent/.claude /home/agent/.config
+
+ENV AGENT_PERSONA_KEY="" \
+    MCP_SERVER_URL="" \
+    HOME=/home/agent \
+    GOOGLE_APPLICATION_CREDENTIALS=/home/agent/.config/gcloud/application_default_credentials.json \
+    GCE_METADATA_HOST=127.0.0.1
+
+USER agent
+WORKDIR /home/agent/scratch
+
+# Long-running container: stays alive for podman exec per turn
+CMD ["sleep", "infinity"]
+
+# Usage (podman — Flask+MCP run on host):
+#   podman build -f container/Dockerfile.agent -t agent-image:latest container/
+#   podman run -d --name agent-pm \
+#     -e AGENT_PERSONA_KEY=pm \
+#     -e MCP_SERVER_URL=host.containers.internal:5001 \
+#     -e CLAUDE_CODE_USE_VERTEX=1 \
+#     -e CLOUD_ML_REGION=us-east5 \
+#     -e ANTHROPIC_VERTEX_PROJECT_ID=your-project-id \
+#     -v ~/.config/gcloud/application_default_credentials.json:/home/agent/.config/gcloud/application_default_credentials.json:ro \
+#     agent-image:latest
