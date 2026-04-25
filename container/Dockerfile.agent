@@ -17,7 +17,8 @@ RUN chown -R agent:agent /home/agent/.claude /home/agent/.config
 ENV AGENT_PERSONA_KEY="" \
     MCP_SERVER_URL="" \
     HOME=/home/agent \
-    GOOGLE_APPLICATION_CREDENTIALS=/home/agent/.config/gcloud/application_default_credentials.json
+    GOOGLE_APPLICATION_CREDENTIALS=/home/agent/.config/gcloud/application_default_credentials.json \
+    GCE_METADATA_HOST=127.0.0.1
 
 USER agent
 WORKDIR /home/agent/scratch

@@ -444,6 +444,8 @@ class ContainerPool:
             f"AGENT_PERSONA_KEY={persona_key}",
             "-e",
             f"MCP_SERVER_URL={self._mcp_host}:{self._mcp_port}",
+            "-e",
+            "GCE_METADATA_HOST=127.0.0.1",
             *self._env_flags,
             "-v",
             f"{config_path.resolve()}:/home/agent/.mcp-config.json:ro,Z",
