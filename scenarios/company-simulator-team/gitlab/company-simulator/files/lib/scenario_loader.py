@@ -1,8 +1,8 @@
 """Scenario loader — reads scenario.yaml and populates module-level config."""
 
-import yaml
 from pathlib import Path
 
+import yaml
 
 SCENARIOS_DIR = Path(__file__).parent.parent / "scenarios"
 
@@ -10,6 +10,7 @@ SCENARIOS_DIR = Path(__file__).parent.parent / "scenarios"
 def _parse_frontmatter(text: str) -> dict:
     """Extract YAML frontmatter from a markdown file. Returns empty dict if none."""
     import re
+
     match = re.match(r"^---\n(.*?)---\n", text, re.DOTALL)
     if not match:
         return {}
@@ -17,6 +18,7 @@ def _parse_frontmatter(text: str) -> dict:
         return yaml.safe_load(match.group(1)) or {}
     except Exception:
         return {}
+
 
 SCENARIO_SETTINGS: dict = {}
 
@@ -31,8 +33,8 @@ def load_scenario(scenario_name: str) -> None:
     Must be called before any code accesses PERSONAS, DEFAULT_CHANNELS, etc.
     Mutates dicts in place so all existing references stay valid.
     """
-    import lib.personas as personas_mod
     import lib.docs as docs_mod
+    import lib.personas as personas_mod
 
     scenario_dir = SCENARIOS_DIR / scenario_name
     config_path = scenario_dir / "scenario.yaml"
@@ -95,12 +97,14 @@ def load_scenario(scenario_name: str) -> None:
 
     # --- Populate gitlab.DEFAULT_REPO_ACCESS (optional) ---
     import lib.gitlab as gitlab_mod
+
     gitlab_mod.DEFAULT_REPO_ACCESS.clear()
     for repo_name, access_list in config.get("repo_access", {}).items():
         gitlab_mod.DEFAULT_REPO_ACCESS[repo_name] = set(access_list)
 
     # --- Populate events.SCENARIO_EVENTS (optional) ---
     import lib.events as events_mod
+
     events_mod.SCENARIO_EVENTS.clear()
     events_mod.SCENARIO_EVENTS.extend(config.get("events", []))
     events_mod.init_event_pool()
@@ -128,12 +132,14 @@ def list_scenarios() -> list[dict]:
             try:
                 with open(config_path) as f:
                     config = yaml.safe_load(f)
-                scenarios.append({
-                    "key": d.name,
-                    "name": config.get("name", d.name),
-                    "description": config.get("description", ""),
-                    "characters": len(config.get("characters", {})),
-                })
+                scenarios.append(
+                    {
+                        "key": d.name,
+                        "name": config.get("name", d.name),
+                        "description": config.get("description", ""),
+                        "characters": len(config.get("characters", {})),
+                    }
+                )
             except Exception:
                 pass
     return scenarios

@@ -2,17 +2,25 @@
 
 from flask import Blueprint, jsonify, request
 
-from lib.session import (
-    save_session, load_session, new_session, list_sessions,
-    get_current_session, set_scenario, get_memberships_from_instance,
-    delete_session, rename_session,
-)
 from lib.scenario_loader import list_scenarios
-from lib.webapp.state import (
-    _channel_members, _channel_lock,
-    _orchestrator_commands, _command_lock,
+from lib.session import (
+    delete_session,
+    get_current_session,
+    get_memberships_from_instance,
+    list_sessions,
+    load_session,
+    new_session,
+    rename_session,
+    save_session,
+    set_scenario,
 )
-from lib.webapp.helpers import _reinitialize, _restore_session_extras
+from lib.webapp.helpers import _reinitialize, _restore_saved_folders, _restore_session_extras
+from lib.webapp.state import (
+    _channel_lock,
+    _channel_members,
+    _command_lock,
+    _orchestrator_commands,
+)
 
 bp = Blueprint("sessions", __name__)
 
@@ -55,8 +63,11 @@ def session_load():
         scenario = meta.get("scenario")
         if scenario:
             from lib.scenario_loader import load_scenario as _load_scenario
+
             _load_scenario(scenario)
             set_scenario(scenario)
+        # Merge saved folder registry into DEFAULT_FOLDERS before _reinitialize
+        _restore_saved_folders(instance_name)
         _reinitialize()
         # Re-restore memos, events, emails, and recaps that were
         # cleared by _load_scenario / _reinitialize
@@ -87,7 +98,9 @@ def session_new():
         _reinitialize()
         # Signal orchestrator to restart with the new scenario
         with _command_lock:
-            _orchestrator_commands.append({"action": "restart", "scenario": scenario or get_current_session().get("scenario")})
+            _orchestrator_commands.append(
+                {"action": "restart", "scenario": scenario or get_current_session().get("scenario")}
+            )
         meta["restarting_agents"] = True
         return jsonify(meta)
     except Exception as e:

@@ -6,31 +6,41 @@ from pathlib import Path
 
 from flask import Blueprint, jsonify, request
 
+from lib.webapp.helpers import _broadcast, _persist_message
 from lib.webapp.state import (
-    _messages, _lock,
-    _channels, _channel_members, _channel_lock,
-    _gitlab_repos, _gitlab_lock,
-    _agent_online, _agent_firing, _agent_verbosity,
-    _agent_last_activity, _agent_online_lock,
-    _agent_thoughts, _agent_thoughts_lock,
-    _orchestrator_status, _orchestrator_lock,
-    _orchestrator_commands, _command_lock,
+    _agent_firing,
+    _agent_last_activity,
+    _agent_online,
+    _agent_online_lock,
+    _agent_thoughts,
+    _agent_thoughts_lock,
+    _agent_verbosity,
+    _channel_lock,
+    _channel_members,
+    _channels,
+    _command_lock,
+    _gitlab_lock,
+    _gitlab_repos,
+    _lock,
+    _messages,
+    _orchestrator_commands,
+    _orchestrator_lock,
+    _orchestrator_status,
 )
-from lib.webapp.helpers import _persist_message, _broadcast
 
 bp = Blueprint("npcs", __name__)
 
 
 @bp.route("/api/npcs", methods=["GET"])
 def list_npcs():
-    from lib.personas import PERSONAS, RESPONSE_TIERS, PERSONA_TIER, DEFAULT_MEMBERSHIPS
     from lib.docs import get_accessible_folders
     from lib.gitlab import DEFAULT_REPO_ACCESS
+    from lib.personas import DEFAULT_MEMBERSHIPS, PERSONA_TIER, PERSONAS
+
     all_repo_names = sorted(_gitlab_repos.keys())
     result = []
     with _orchestrator_lock:
         agent_states = _orchestrator_status.get("agents", {})
-        orch_state = _orchestrator_status.get("state", "disconnected")
         last_hb = _orchestrator_status.get("last_heartbeat", 0)
     orch_connected = last_hb > 0 and (time.time() - last_hb < 30)
     with _agent_online_lock:
@@ -39,8 +49,11 @@ def list_npcs():
             folders = sorted(get_accessible_folders(key))
             # Repos: if no access control, all repos; otherwise filter
             if DEFAULT_REPO_ACCESS:
-                repos = sorted(r for r in all_repo_names
-                               if r not in DEFAULT_REPO_ACCESS or key in DEFAULT_REPO_ACCESS.get(r, set()))
+                repos = sorted(
+                    r
+                    for r in all_repo_names
+                    if r not in DEFAULT_REPO_ACCESS or key in DEFAULT_REPO_ACCESS.get(r, set())
+                )
             else:
                 repos = all_repo_names
             toggled_online = _agent_online.get(key, True)
@@ -64,26 +77,29 @@ def list_npcs():
                 live_state = "offline"
             else:
                 live_state = agent_info.get("state", "unknown")
-            result.append({
-                "key": key,
-                "display_name": p["display_name"],
-                "team_description": p.get("team_description", ""),
-                "character_file": p.get("character_file", ""),
-                "avatar": p.get("avatar"),
-                "tier": PERSONA_TIER.get(key, 0),
-                "channels": channels,
-                "folders": folders,
-                "repos": repos,
-                "online": toggled_online,
-                "verbosity": _agent_verbosity.get(key, "normal"),
-                "live_state": live_state,
-            })
+            result.append(
+                {
+                    "key": key,
+                    "display_name": p["display_name"],
+                    "team_description": p.get("team_description", ""),
+                    "character_file": p.get("character_file", ""),
+                    "avatar": p.get("avatar"),
+                    "tier": PERSONA_TIER.get(key, 0),
+                    "channels": channels,
+                    "folders": folders,
+                    "repos": repos,
+                    "online": toggled_online,
+                    "verbosity": _agent_verbosity.get(key, "normal"),
+                    "live_state": live_state,
+                }
+            )
     return jsonify(result)
 
 
 @bp.route("/api/npcs/<key>/toggle", methods=["POST"])
 def toggle_npc(key):
     from lib.personas import PERSONAS
+
     if key not in PERSONAS:
         return jsonify({"error": f"unknown agent: {key}"}), 404
     display_name = PERSONAS[key]["display_name"]
@@ -126,6 +142,7 @@ def npc_activity(key):
 @bp.route("/api/npcs/<key>/fire", methods=["POST"])
 def fire_npc(key):
     from lib.personas import PERSONAS
+
     if key not in PERSONAS:
         return jsonify({"error": f"unknown agent: {key}"}), 404
 
@@ -161,9 +178,10 @@ def fire_npc(key):
 @bp.route("/api/npcs/<key>/finalize-fire", methods=["POST"])
 def finalize_fire(key):
     """Called by orchestrator after closing the agent's session."""
-    from lib.personas import PERSONAS, DEFAULT_MEMBERSHIPS, PERSONA_TIER, RESPONSE_TIERS
     from lib.docs import DEFAULT_FOLDER_ACCESS
     from lib.gitlab import DEFAULT_REPO_ACCESS
+    from lib.personas import DEFAULT_MEMBERSHIPS, PERSONA_TIER, PERSONAS, RESPONSE_TIERS
+
     if key not in PERSONAS:
         return jsonify({"ok": True})  # already removed
 
@@ -191,8 +209,8 @@ def finalize_fire(key):
 
 @bp.route("/api/npcs/hire", methods=["POST"])
 def hire_npc():
-    from lib.personas import PERSONAS, DEFAULT_MEMBERSHIPS, PERSONA_TIER, RESPONSE_TIERS
-    from lib.docs import DEFAULT_FOLDERS, DEFAULT_FOLDER_ACCESS
+    from lib.docs import DEFAULT_FOLDER_ACCESS, DEFAULT_FOLDERS
+    from lib.personas import DEFAULT_MEMBERSHIPS, PERSONA_TIER, PERSONAS, RESPONSE_TIERS
 
     data = request.get_json(force=True)
     display_name = data.get("display_name", "").strip()
@@ -209,8 +227,8 @@ def hire_npc():
         return jsonify({"error": f"agent key '{key}' already exists"}), 409
 
     # Save character file to instance runtime directory (not the scenario template)
-    from lib.session import VAR_DIR, get_current_session
-    scenario = get_current_session().get("scenario", "tech-startup")
+    from lib.session import VAR_DIR
+
     char_dir = VAR_DIR / "characters"
     char_dir.mkdir(parents=True, exist_ok=True)
     char_file = char_dir / f"{key}.md"
@@ -267,7 +285,7 @@ def hire_npc():
             "director_persona": key,
             "created_at": time.time(),
         }
-        _channel_members[ch_name] = set()
+        _channel_members[ch_name] = {key}
 
     # Signal orchestrator to add this agent's session
     with _command_lock:
@@ -292,9 +310,10 @@ def hire_npc():
 
 @bp.route("/api/npcs/<key>/config", methods=["PUT"])
 def update_npc_config(key):
-    from lib.personas import PERSONAS, DEFAULT_MEMBERSHIPS, PERSONA_TIER, RESPONSE_TIERS
     from lib.docs import DEFAULT_FOLDER_ACCESS
     from lib.gitlab import DEFAULT_REPO_ACCESS
+    from lib.personas import DEFAULT_MEMBERSHIPS, PERSONA_TIER, PERSONAS, RESPONSE_TIERS
+
     if key not in PERSONAS:
         return jsonify({"error": f"unknown agent: {key}"}), 404
 
@@ -384,6 +403,7 @@ def get_agent_character_sheet(key):
     """Return the parsed NRSP character sheet for this agent."""
     from lib.personas import PERSONAS
     from lib.scenario_loader import _parse_frontmatter
+
     if key not in PERSONAS:
         return jsonify({"error": "unknown agent"}), 404
     try:
@@ -417,6 +437,7 @@ def get_agent_character_sheet(key):
 def get_agent_prompt(key):
     """Return the character file content for this agent, split into context and prompt."""
     from lib.personas import PERSONAS
+
     if key not in PERSONAS:
         return jsonify({"error": "unknown agent"}), 404
     try:
@@ -426,11 +447,9 @@ def get_agent_prompt(key):
         text = Path(char_path).read_text()
         text = re.sub(r"^---\n.*?---\n", "", text, count=1, flags=re.DOTALL).strip()
         # Split on ## Prompt
-        prompt_match = re.search(
-            r"^## Prompt\s*\n(.*?)(?=\n## (?!#)|\Z)", text, re.DOTALL | re.MULTILINE
-        )
+        prompt_match = re.search(r"^## Prompt\s*\n(.*?)(?=\n## (?!#)|\Z)", text, re.DOTALL | re.MULTILINE)
         if prompt_match:
-            context = text[:prompt_match.start()].strip()
+            context = text[: prompt_match.start()].strip()
             prompt = prompt_match.group(1).strip()
         else:
             context = ""

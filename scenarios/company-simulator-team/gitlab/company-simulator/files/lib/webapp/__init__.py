@@ -8,52 +8,76 @@ from flask import Flask
 
 from lib.gitlab import GITLAB_DIR
 from lib.tickets import TICKETS_DIR
-from lib.webapp.state import (
-    # Path constants
-    CHAT_LOG, DOCS_DIR, LOGS_DIR,
-    # Messages
-    _messages, _lock, _subscribers, _sub_lock,
-    # Channels
-    _channels, _channel_members, _channel_lock,
-    # Documents
-    _docs_index, _docs_lock,
-    # Folders
-    _folders, _folder_access, _folder_lock,
-    # GitLab
-    _gitlab_repos, _gitlab_commits, _gitlab_lock,
-    # Tickets
-    _tickets, _tickets_lock,
-    # Recaps
-    _recaps,
-    # Agent state
-    _agent_online, _agent_firing, _agent_verbosity,
-    _agent_last_activity, _agent_online_lock,
-    _agent_thoughts, _agent_thoughts_lock,
-    # Orchestrator
-    _orchestrator_status, _orchestrator_lock,
-    _orchestrator_commands, _command_lock,
-)
 from lib.webapp.helpers import (
-    _init_channels, _init_folders, _init_docs, _init_gitlab,
-    _init_tickets, _init_agent_online, _load_chat_log,
+    _init_agent_online,
+    _init_channels,
+    _init_docs,
+    _init_folders,
+    _init_gitlab,
+    _init_tickets,
+    _load_chat_log,
 )
+from lib.webapp.routes.blog import bp as blog_bp
+from lib.webapp.routes.channels import bp as channels_bp
+from lib.webapp.routes.documents import bp as documents_bp
+from lib.webapp.routes.emails import bp as emails_bp
+from lib.webapp.routes.events import bp as events_bp
+from lib.webapp.routes.gitlab import bp as gitlab_bp
 
 # Route blueprints
 from lib.webapp.routes.index import bp as index_bp
-from lib.webapp.routes.channels import bp as channels_bp
-from lib.webapp.routes.messages import bp as messages_bp
-from lib.webapp.routes.documents import bp as documents_bp
-from lib.webapp.routes.gitlab import bp as gitlab_bp
-from lib.webapp.routes.tickets import bp as tickets_bp
-from lib.webapp.routes.orchestrator import bp as orchestrator_bp
-from lib.webapp.routes.npcs import bp as npcs_bp
-from lib.webapp.routes.events import bp as events_bp
-from lib.webapp.routes.recaps import bp as recaps_bp
-from lib.webapp.routes.emails import bp as emails_bp
 from lib.webapp.routes.memos import bp as memos_bp
-from lib.webapp.routes.blog import bp as blog_bp
-from lib.webapp.routes.sessions import bp as sessions_bp
+from lib.webapp.routes.messages import bp as messages_bp
 from lib.webapp.routes.misc import bp as misc_bp
+from lib.webapp.routes.npcs import bp as npcs_bp
+from lib.webapp.routes.orchestrator import bp as orchestrator_bp
+from lib.webapp.routes.recaps import bp as recaps_bp
+from lib.webapp.routes.sessions import bp as sessions_bp
+from lib.webapp.routes.tickets import bp as tickets_bp
+from lib.webapp.state import (
+    # Path constants
+    CHAT_LOG,
+    DOCS_DIR,
+    LOGS_DIR,
+    _agent_firing,
+    _agent_last_activity,
+    # Agent state
+    _agent_online,
+    _agent_online_lock,
+    _agent_thoughts,
+    _agent_thoughts_lock,
+    _agent_verbosity,
+    _channel_lock,
+    _channel_members,
+    # Channels
+    _channels,
+    _command_lock,
+    # Documents
+    _docs_index,
+    _docs_lock,
+    _folder_access,
+    _folder_lock,
+    # Folders
+    _folders,
+    _gitlab_commits,
+    _gitlab_lock,
+    # GitLab
+    _gitlab_repos,
+    _lock,
+    # Messages
+    _messages,
+    _orchestrator_commands,
+    _orchestrator_lock,
+    # Orchestrator
+    _orchestrator_status,
+    # Recaps
+    _recaps,
+    _sub_lock,
+    _subscribers,
+    # Tickets
+    _tickets,
+    _tickets_lock,
+)
 
 
 def create_app() -> Flask:

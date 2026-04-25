@@ -5,8 +5,11 @@ import time
 from flask import Blueprint, jsonify, request
 
 from lib.webapp.state import (
-    _recaps, _messages, _lock,
-    _docs_index, _tickets,
+    _docs_index,
+    _lock,
+    _messages,
+    _recaps,
+    _tickets,
 )
 
 bp = Blueprint("recaps", __name__)
@@ -21,8 +24,9 @@ def list_recaps():
 def generate_recap():
     import asyncio
     import threading
-    from lib.agent_runner import run_agent_for_response
     from pathlib import Path
+
+    from lib.agent_runner import run_agent_for_response
 
     data = request.get_json(force=True)
     style = data.get("style", "normal")
@@ -60,10 +64,13 @@ def generate_recap():
         msg_summary.append(f"[{m.get('channel', '#general')}] {m['sender']}: {m['content'][:200]}")
 
     from lib.events import get_event_log
+
     event_log = get_event_log()
     event_summary = []
     for e in event_log:
-        event_summary.append(f"[{e.get('severity', 'medium')}] {e.get('name', 'Event')} - {len(e.get('actions', []))} actions")
+        event_summary.append(
+            f"[{e.get('severity', 'medium')}] {e.get('name', 'Event')} - {len(e.get('actions', []))} actions"
+        )
 
     nl = chr(10)
     prompt = f"""You are a recap writer. Summarize what happened in this simulation session.
@@ -85,7 +92,7 @@ def generate_recap():
 
 ## Stats
 - Total messages: {len(msgs)}
-- Channels active: {len(set(m.get('channel', '#general') for m in msgs))}
+- Channels active: {len(set(m.get("channel", "#general") for m in msgs))}
 
 Write a compelling recap of this simulation session in the requested style. Keep it to no more than 15 paragraphs. Make it entertaining and capture the key moments, decisions, and drama."""
 

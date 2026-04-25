@@ -8,6 +8,7 @@ bp = Blueprint("memos", __name__)
 @bp.route("/api/memos/threads", methods=["GET"])
 def list_memo_threads():
     from lib.memos import get_threads
+
     include_posts = request.args.get("include_posts", "").lower() in ("1", "true")
     return jsonify(get_threads(include_recent_posts=include_posts))
 
@@ -15,6 +16,7 @@ def list_memo_threads():
 @bp.route("/api/memos/threads", methods=["POST"])
 def create_memo_thread_endpoint():
     from lib.memos import create_thread
+
     data = request.get_json(force=True)
     title = data.get("title", "").strip()
     if not title:
@@ -27,7 +29,8 @@ def create_memo_thread_endpoint():
 
 @bp.route("/api/memos/threads/<thread_id>", methods=["GET"])
 def get_memo_thread_detail(thread_id):
-    from lib.memos import get_thread, get_posts
+    from lib.memos import get_posts, get_thread
+
     thread = get_thread(thread_id)
     if not thread:
         return jsonify({"error": "not found"}), 404
@@ -38,12 +41,14 @@ def get_memo_thread_detail(thread_id):
 @bp.route("/api/memos/threads/<thread_id>/posts", methods=["GET"])
 def list_memo_posts(thread_id):
     from lib.memos import get_posts
+
     return jsonify(get_posts(thread_id))
 
 
 @bp.route("/api/memos/threads/<thread_id>/posts", methods=["POST"])
 def post_memo_endpoint(thread_id):
     from lib.memos import post_memo
+
     data = request.get_json(force=True)
     text = data.get("text", "").strip()
     if not text:
@@ -59,6 +64,7 @@ def post_memo_endpoint(thread_id):
 @bp.route("/api/memos/threads/<thread_id>", methods=["DELETE"])
 def delete_memo_thread_endpoint(thread_id):
     from lib.memos import delete_thread
+
     if delete_thread(thread_id):
         return jsonify({"ok": True})
     return jsonify({"error": "not found"}), 404

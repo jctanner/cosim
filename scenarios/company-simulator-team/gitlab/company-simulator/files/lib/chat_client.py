@@ -367,8 +367,9 @@ class ChatClient:
         resp.raise_for_status()
         return resp.json()
 
-    def create_blog_post(self, title: str, body: str, author: str,
-                         is_external: bool = False, tags: list[str] | None = None) -> dict:
+    def create_blog_post(
+        self, title: str, body: str, author: str, is_external: bool = False, tags: list[str] | None = None
+    ) -> dict:
         """Create a new blog post."""
         payload = {"title": title, "body": body, "author": author, "is_external": is_external}
         if tags:
@@ -441,15 +442,20 @@ class ChatClient:
 
     # -- Orchestrator control --
 
-    def send_heartbeat(self, state: str, scenario: str, agents: dict,
-                       message: str = "", check_commands: bool = True) -> dict:
+    def send_heartbeat(
+        self, state: str, scenario: str, agents: dict, message: str = "", check_commands: bool = True
+    ) -> dict:
         """Send orchestrator heartbeat. Returns any pending command if check_commands=True."""
         try:
             resp = requests.post(
                 f"{self.base_url}/api/orchestrator/heartbeat",
-                json={"state": state, "scenario": scenario,
-                      "agents": agents, "message": message,
-                      "check_commands": check_commands},
+                json={
+                    "state": state,
+                    "scenario": scenario,
+                    "agents": agents,
+                    "message": message,
+                    "check_commands": check_commands,
+                },
                 timeout=5,
             )
             resp.raise_for_status()

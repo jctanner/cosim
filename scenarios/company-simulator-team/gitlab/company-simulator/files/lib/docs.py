@@ -3,7 +3,6 @@
 import re
 import unicodedata
 
-
 # Folder definitions and access controls.
 # Populated at startup by lib.scenario_loader.load_scenario().
 DEFAULT_FOLDERS: dict[str, dict] = {}
@@ -12,10 +11,7 @@ DEFAULT_FOLDER_ACCESS: dict[str, set[str]] = {}
 
 def get_accessible_folders(persona_key: str) -> set[str]:
     """Return the set of folder names a persona can access."""
-    return {
-        folder for folder, members in DEFAULT_FOLDER_ACCESS.items()
-        if persona_key in members
-    }
+    return {folder for folder, members in DEFAULT_FOLDER_ACCESS.items() if persona_key in members}
 
 
 def slugify(title: str, max_length: int = 80) -> str:

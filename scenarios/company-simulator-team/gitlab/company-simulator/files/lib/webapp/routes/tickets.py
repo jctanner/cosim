@@ -4,9 +4,9 @@ import time
 
 from flask import Blueprint, jsonify, request
 
-from lib.tickets import save_tickets_index, generate_ticket_id
-from lib.webapp.state import _tickets, _tickets_lock
+from lib.tickets import generate_ticket_id, save_tickets_index
 from lib.webapp.helpers import _broadcast_tickets_event
+from lib.webapp.state import _tickets, _tickets_lock
 
 bp = Blueprint("tickets", __name__)
 
