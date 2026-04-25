@@ -8,6 +8,13 @@ import time
 from flask import Blueprint, jsonify, request, send_file
 
 from lib.gitlab import GITLAB_DIR, generate_commit_id, next_mr_id, save_merge_requests, save_repos_index
+
+
+def _normalize_mr_id(mr_id: str) -> str:
+    """Normalize MR ID to canonical !N format. Accepts '1', '!1', '%211'."""
+    from urllib.parse import unquote
+    mr_id = unquote(mr_id).strip().lstrip("!")
+    return f"!{mr_id}"
 from lib.webapp.helpers import _broadcast_gitlab_event
 from lib.webapp.state import _gitlab_commits, _gitlab_lock, _gitlab_merge_requests, _gitlab_repos
 
@@ -249,6 +256,7 @@ def create_merge_request(project):
 
 @bp.route("/api/gitlab/repos/<project>/merge-requests/<mr_id>", methods=["GET"])
 def get_merge_request(project, mr_id):
+    mr_id = _normalize_mr_id(mr_id)
     with _gitlab_lock:
         if project not in _gitlab_repos:
             return jsonify({"error": "repo not found"}), 404
@@ -260,6 +268,7 @@ def get_merge_request(project, mr_id):
 
 @bp.route("/api/gitlab/repos/<project>/merge-requests/<mr_id>/comment", methods=["POST"])
 def comment_on_mr(project, mr_id):
+    mr_id = _normalize_mr_id(mr_id)
     data = request.get_json(force=True)
     text = data.get("text", "").strip()
     if not text:
@@ -283,6 +292,7 @@ def comment_on_mr(project, mr_id):
 
 @bp.route("/api/gitlab/repos/<project>/merge-requests/<mr_id>", methods=["PUT"])
 def update_mr(project, mr_id):
+    mr_id = _normalize_mr_id(mr_id)
     data = request.get_json(force=True)
     new_status = data.get("status")
     with _gitlab_lock:
@@ -309,6 +319,7 @@ def update_mr(project, mr_id):
 
 @bp.route("/api/gitlab/repos/<project>/merge-requests/<mr_id>/approve", methods=["POST"])
 def approve_mr(project, mr_id):
+    mr_id = _normalize_mr_id(mr_id)
     data = request.get_json(force=True)
     author = data.get("author", "System")
     with _gitlab_lock:
@@ -331,6 +342,7 @@ def approve_mr(project, mr_id):
 
 @bp.route("/api/gitlab/repos/<project>/merge-requests/<mr_id>/merge", methods=["POST"])
 def merge_mr(project, mr_id):
+    mr_id = _normalize_mr_id(mr_id)
     data = request.get_json(force=True) if request.data else {}
     with _gitlab_lock:
         if project not in _gitlab_repos:

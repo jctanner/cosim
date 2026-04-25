@@ -13,6 +13,7 @@ import json
 import logging
 import threading
 import time
+import urllib.parse
 from collections import deque
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -655,7 +656,7 @@ def _register_gitlab_tools(
         if not _can_access_repo(project):
             return f"Error: you don't have access to repository '{project}'."
         t0 = time.time()
-        result = await _flask("GET", f"/api/gitlab/repos/{project}/merge-requests/{mr_id}", flask_url)
+        result = await _flask("GET", f"/api/gitlab/repos/{project}/merge-requests/{urllib.parse.quote(mr_id, safe='')}", flask_url)
         _record_audit(
             agent_key, "get_merge_request", {"project": project, "mr_id": mr_id},
             result.get("title", "?"), (time.time() - t0) * 1000,
@@ -671,7 +672,7 @@ def _register_gitlab_tools(
             return f"Error: you don't have access to repository '{project}'."
         t0 = time.time()
         result = await _flask(
-            "POST", f"/api/gitlab/repos/{project}/merge-requests/{mr_id}/comment",
+            "POST", f"/api/gitlab/repos/{project}/merge-requests/{urllib.parse.quote(mr_id, safe='')}/comment",
             flask_url, json={"text": text, "author": display_name},
         )
         _record_audit(
@@ -689,7 +690,7 @@ def _register_gitlab_tools(
             return f"Error: you don't have access to repository '{project}'."
         t0 = time.time()
         result = await _flask(
-            "POST", f"/api/gitlab/repos/{project}/merge-requests/{mr_id}/approve",
+            "POST", f"/api/gitlab/repos/{project}/merge-requests/{urllib.parse.quote(mr_id, safe='')}/approve",
             flask_url, json={"author": display_name},
         )
         _record_audit(
@@ -707,7 +708,7 @@ def _register_gitlab_tools(
             return f"Error: you don't have access to repository '{project}'."
         t0 = time.time()
         result = await _flask(
-            "POST", f"/api/gitlab/repos/{project}/merge-requests/{mr_id}/merge",
+            "POST", f"/api/gitlab/repos/{project}/merge-requests/{urllib.parse.quote(mr_id, safe='')}/merge",
             flask_url, json={"author": display_name},
         )
         _record_audit(

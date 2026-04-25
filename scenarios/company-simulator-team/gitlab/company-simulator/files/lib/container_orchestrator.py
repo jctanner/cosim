@@ -185,13 +185,19 @@ MCP_TOOL_NAMES = [
     "list_docs",
     "delete_doc",
     "append_doc",
-    # GitLab (6)
+    # GitLab (12)
     "list_repos",
     "create_repo",
     "commit_files",
     "read_file",
     "list_repo_tree",
     "get_repo_log",
+    "create_merge_request",
+    "list_merge_requests",
+    "get_merge_request",
+    "comment_on_merge_request",
+    "approve_merge_request",
+    "merge_merge_request",
     # Tickets (5)
     "get_ticket",
     "create_ticket",
@@ -620,12 +626,21 @@ class ContainerPool:
 
             success = exit_code == 0
 
-            # Try to extract response from JSON output
+            # Try to extract response and thinking from JSON output
             response_text = ""
+            thinking_text = ""
             if stdout_text.strip():
                 try:
                     output = json.loads(stdout_text.strip())
                     response_text = output.get("result", stdout_text.strip())
+                    # Extract thinking from Claude Code's JSON output if present
+                    thinking_text = output.get("thinking", "")
+                    # Also check usage for any internal monologue
+                    if not thinking_text:
+                        # Claude Code may embed thinking in the content blocks
+                        for block in output.get("content", []):
+                            if isinstance(block, dict) and block.get("type") == "thinking":
+                                thinking_text += block.get("thinking", "") + "\n"
                 except (json.JSONDecodeError, ValueError):
                     response_text = stdout_text.strip()
 
@@ -637,8 +652,10 @@ class ContainerPool:
 
             return {
                 "name": display_name,
+                "persona_key": persona_key,
                 "success": success,
                 "response_text": response_text,
+                "thinking_text": thinking_text,
                 "duration_seconds": elapsed,
                 "exit_code": exit_code,
             }
@@ -1085,6 +1102,11 @@ async def _run_loop(
 
                 if result["success"]:
                     print(f"  {display_name}: completed ({format_duration(result['duration_seconds'])})")
+                    # Post agent thoughts if captured
+                    thinking = result.get("thinking_text", "")
+                    response = result.get("response_text", "")
+                    if thinking or response:
+                        client.post_thoughts(pk, thinking, response)
                 else:
                     error = result.get("error", f"exit code {result.get('exit_code', '?')}")
                     print(f"  {display_name}: failed — {error} ({format_duration(result['duration_seconds'])})")

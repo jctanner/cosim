@@ -618,6 +618,127 @@ events:
     content: 'MR !1 is up for review: ''Add GitLab merge request subsystem with approval workflow''. 7 files changed, +557 -5. @T4NN3R can you take a look? The diff is in the MR — state module, REST endpoints,
       MCP tools, and the UI.'
     is_event: true
+- name: 'T4NN3R Tests MR !1: Merge Fails with 404'
+  severity: medium
+  actions:
+  - type: message
+    channel: '#dev'
+    sender: T4NN3R (Maintainer)
+    content: Reviewed MR !1 — the code looks solid. Approving. Let me test the merge flow real quick.
+    is_event: true
+  - type: message
+    channel: '#dev'
+    sender: T4NN3R (Maintainer)
+    content: Hmm. Approved !1 but when I try to merge it I get a 404. The MR ID is !1 — I think the exclamation mark in the URL is causing issues. The endpoint exists but the request isn't routing correctly.
+    is_event: true
+  - type: message
+    channel: '#bugs'
+    sender: T4NN3R (Maintainer)
+    content: 'Bug: merge_merge_request MCP tool returns 404 for MR !1. The ! character in the ID isn''t being URL-encoded in the MCP proxy call. Also noticed the MR ID normalization is inconsistent — some
+      places expect !1, some expect 1, some get %211 from URL encoding. Need a normalizer.'
+    is_event: true
+  - type: ticket
+    title: MR merge returns 404 — MR ID encoding issue
+    description: 'When calling merge_merge_request with MR !1, the MCP tool constructs a URL with a raw ! character which causes a 404.
+
+
+      Steps to reproduce:
+
+      1. Create MR !1
+
+      2. Approve it
+
+      3. Try to merge via MCP tool
+
+      4. 404 error
+
+
+      Root cause: The ! in the URL path isn''t being encoded. Also need to normalize MR IDs so 1, !1, and %211 all resolve to the same MR.
+
+
+      Also while testing: agent thoughts aren''t being captured — the NPC card shows ''(no thinking captured)''. The container orchestrator needs to extract thinking from Claude Code''s JSON output and
+      post it via post_thoughts().'
+    priority: high
+    author: T4NN3R (Maintainer)
+- name: 'MR: Fix MR merge 404, add thought capture and ID normalization'
+  severity: low
+  actions:
+  - type: merge_request
+    project: company-simulator
+    title: Fix MR merge 404, add thought capture, MR ID normalization with tests
+    sender: 1.z3r0 (Collaborator)
+    description: 'Follow-up fixes from testing MR !1:
+
+
+      - URL-encode MR IDs in MCP tool calls to prevent 404 on !1
+
+      - Normalize MR IDs in all endpoints: accepts 1, !1, or %211
+
+      - 11 new tests for MR ID normalization and next_mr_id
+
+      - Extract thinking from Claude Code JSON output
+
+      - Post agent thoughts to Flask server after each successful turn
+
+      - GCE_METADATA_HOST=127.0.0.1 to fix 5-min auth timeout in containers
+
+
+      5 files changed, +189 -13'
+    diff: "diff --git a/lib/container_orchestrator.py b/lib/container_orchestrator.py\nindex 423f7bc..b4675d2 100644\n--- a/lib/container_orchestrator.py\n+++ b/lib/container_orchestrator.py\n@@ -626,12\
+      \ +626,21 @@ class ContainerPool:\n \n             success = exit_code == 0\n \n-            # Try to extract response from JSON output\n+            # Try to extract response and thinking from JSON\
+      \ output\n             response_text = \"\"\n+            thinking_text = \"\"\n             if stdout_text.strip():\n                 try:\n                     output = json.loads(stdout_text.strip())\n\
+      \                     response_text = output.get(\"result\", stdout_text.strip())\n+                    # Extract thinking from Claude Code's JSON output if present\n+                    thinking_text\
+      \ = output.get(\"thinking\", \"\")\n+                    # Also check usage for any internal monologue\n+                    if not thinking_text:\n+                        # Claude Code may embed\
+      \ thinking in the content blocks\n+                        for block in output.get(\"content\", []):\n+                            if isinstance(block, dict) and block.get(\"type\") == \"thinking\"\
+      :\n+                                thinking_text += block.get(\"thinking\", \"\") + \"\\n\"\n                 except (json.JSONDecodeError, ValueError):\n                     response_text = stdout_text.strip()\n\
+      \ \n@@ -643,8 +652,10 @@ class ContainerPool:\n \n             return {\n                 \"name\": display_name,\n+                \"persona_key\": persona_key,\n                 \"success\": success,\n\
+      \                 \"response_text\": response_text,\n+                \"thinking_text\": thinking_text,\n                 \"duration_seconds\": elapsed,\n                 \"exit_code\": exit_code,\n\
+      \             }\n@@ -1091,6 +1102,11 @@ async def _run_loop(\n \n                 if result[\"success\"]:\n                     print(f\"  {display_name}: completed ({format_duration(result['duration_seconds'])})\"\
+      )\n+                    # Post agent thoughts if captured\n+                    thinking = result.get(\"thinking_text\", \"\")\n+                    response = result.get(\"response_text\", \"\")\n\
+      +                    if thinking or response:\n+                        client.post_thoughts(pk, thinking, response)\n                 else:\n                     error = result.get(\"error\", f\"\
+      exit code {result.get('exit_code', '?')}\")\n                     print(f\"  {display_name}: failed — {error} ({format_duration(result['duration_seconds'])})\")\ndiff --git a/lib/mcp_server.py b/lib/mcp_server.py\n\
+      index d0f0ea8..def2fff 100644\n--- a/lib/mcp_server.py\n+++ b/lib/mcp_server.py\n@@ -13,6 +13,7 @@ import json\n import logging\n import threading\n import time\n+import urllib.parse\n from collections\
+      \ import deque\n from contextlib import asynccontextmanager\n from pathlib import Path\n@@ -655,7 +656,7 @@ def _register_gitlab_tools(\n         if not _can_access_repo(project):\n             return\
+      \ f\"Error: you don't have access to repository '{project}'.\"\n         t0 = time.time()\n-        result = await _flask(\"GET\", f\"/api/gitlab/repos/{project}/merge-requests/{mr_id}\", flask_url)\n\
+      +        result = await _flask(\"GET\", f\"/api/gitlab/repos/{project}/merge-requests/{urllib.parse.quote(mr_id, safe='')}\", flask_url)\n         _record_audit(\n             agent_key, \"get_merge_request\"\
+      , {\"project\": project, \"mr_id\": mr_id},\n             result.get(\"title\", \"?\"), (time.time() - t0) * 1000,\n@@ -671,7 +672,7 @@ def _register_gitlab_tools(\n             return f\"Error: you\
+      \ don't have access to repository '{project}'.\"\n         t0 = time.time()\n         result = await _flask(\n-            \"POST\", f\"/api/gitlab/repos/{project}/merge-requests/{mr_id}/comment\"\
+      ,\n+            \"POST\", f\"/api/gitlab/repos/{project}/merge-requests/{urllib.parse.quote(mr_id, safe='')}/comment\",\n             flask_url, json={\"text\": text, \"author\": display_name},\n\
+      \         )\n         _record_audit(\n@@ -689,7 +690,7 @@ def _register_gitlab_tools(\n             return f\"Error: you don't have access to repository '{project}'.\"\n         t0 = time.time()\n\
+      \         result = await _flask(\n-            \"POST\", f\"/api/gitlab/repos/{project}/merge-requests/{mr_id}/approve\",\n+            \"POST\", f\"/api/gitlab/repos/{project}/merge-requests/{urllib.parse.quote(mr_id,\
+      \ safe='')}/approve\",\n             flask_url, json={\"author\": display_name},\n         )\n         _record_audit(\n@@ -707,7 +708,7 @@ def _register_gitlab_tools(\n             return f\"Error:\
+      \ you don't have access to repository '{project}'.\"\n         t0 = time.time()\n         result = await _flask(\n-            \"POST\", f\"/api/gitlab/repos/{project}/merge-requests/{mr_id}/merge\"\
+      ,\n+            \"POST\", f\"/api/gitlab/repos/{project}/merge-requests/{urllib.parse.quote(mr_id, safe='')}/merge\",\n             flask_url, json={\"author\": display_name},\n         )\n      \
+      \   _record_audit(\ndiff --git a/lib/webapp/routes/gitlab.py b/lib/webapp/routes/gitlab.py\nindex 1ebd212..76e1df6 100644\n--- a/lib/webapp/routes/gitlab.py\n+++ b/lib/webapp/routes/gitlab.py\n@@\
+      \ -8,6 +8,13 @@ import time\n from flask import Blueprint, jsonify, request, send_file\n \n from lib.gitlab import GITLAB_DIR, generate_commit_id, next_mr_id, save_merge_requests, save_repos_index\n\
+      +\n+\n+def _normalize_mr_id(mr_id: str) -> str:\n+    \"\"\"Normalize MR ID to canonical !N format. Accepts '1', '!1', '%211'.\"\"\"\n+    from urllib.parse import unquote\n+    mr_id = unquote(mr_id).strip().lstrip(\"\
+      !\")\n+    return f\"!{mr_id}\"\n from lib.webapp.helpers import _broadcast_gitlab_event\n from lib.webapp.state import _gitlab_commits, _gitlab_lock, _gitlab_merge_requests, _gitlab_repos\n \n@@\
+      \ -249,6 +256,7 @@ def create_merge_request(project):\n \n @bp.route(\"/api/gitlab/repos/<project>/merge-requests/<mr_id>\", methods=[\"GET\"])\n def get_merge_request(project, mr_id):\n+    mr_id\
+      \ = _normalize_mr_id(mr_id)\n     with _gitlab_lock:\n         if project not in _gitlab_repos:\n             return jsonify({\"error\": \"repo not found\"}), 404\n@@ -260,6 +268,7 @@ def get_merge_request(project,\
+      \ mr_id):\n \n @bp.route(\"/api/gitlab/repos/<project>/merge-requests/<mr_id>/comment\", methods=[\"POST\"])\n def comment_on_mr(project, mr_id):\n+    mr_id = _normalize_mr_id(mr_id)\n     data =\
+      \ request.get_json(force=True)\n     text = data.get(\"text\", \"\").strip()\n     if not text:\n@@ -283,6 +292,7 @@ def comment_on_mr(project, mr_id):\n \n @bp.route(\"/api/gitlab/repos/<project>/merge-requests/<mr_id>\"\
+      , methods=[\"PUT\"])\n def update_mr(project, mr_id):\n+    mr_id = _normalize_mr_id(mr_id)\n     data = request.get_json(force=True)\n     new_status = data.get(\"status\")\n     with _gitlab_lock:\n\
+      @@ -309,6 +319,7 @@ def update_mr(project, mr_id):\n \n @bp.route(\"/api/gitlab/repos/<project>/merge-requests/<mr_id>/approve\", methods=[\"POST\"])\n def approve_mr(project, mr_id):\n+    mr_id\
+      \ = _normalize_mr_id(mr_id)\n     data = request.get_json(force=True)\n     author = data.get(\"author\", \"System\")\n     with _gitlab_lock:\n@@ -331,6 +342,7 @@ def approve_mr(project, mr_id):\n\
+      \ \n @bp.route(\"/api/gitlab/repos/<project>/merge-requests/<mr_id>/merge\", methods=[\"POST\"])\n def merge_mr(project, mr_id):\n+    mr_id = _normalize_mr_id(mr_id)\n     data = request.get_json(force=True)\
+      \ if request.data else {}\n     with _gitlab_lock:\n         if project not in _gitlab_repos:\ndiff --git a/tests/test_gitlab.py b/tests/test_gitlab.py\nindex aa05072..86b1806 100644\n--- a/tests/test_gitlab.py\n\
+      +++ b/tests/test_gitlab.py\n@@ -1,6 +1,7 @@\n import re\n \n-from lib.gitlab import DEFAULT_REPO_ACCESS, generate_commit_id, get_accessible_repos\n+from lib.gitlab import DEFAULT_REPO_ACCESS, generate_commit_id,\
+      \ get_accessible_repos, next_mr_id\n+from lib.webapp.routes.gitlab import _normalize_mr_id\n \n \n class TestGenerateCommitId:\n@@ -52,3 +53,40 @@ class TestGetAccessibleRepos:\n         names = {r[\"\
+      name\"] for r in result}\n         assert \"frontend\" in names\n         assert \"backend\" in names\n+\n+\n+class TestNormalizeMrId:\n+    def test_bare_number(self):\n+        assert _normalize_mr_id(\"\
+      1\") == \"!1\"\n+\n+    def test_with_bang(self):\n+        assert _normalize_mr_id(\"!1\") == \"!1\"\n+\n+    def test_url_encoded(self):\n+        assert _normalize_mr_id(\"%211\") == \"!1\"\n+\n\
+      +    def test_url_encoded_double_digit(self):\n+        assert _normalize_mr_id(\"%2142\") == \"!42\"\n+\n+    def test_with_whitespace(self):\n+        assert _normalize_mr_id(\"  !3  \") == \"!3\"\
+      \n+\n+    def test_bare_number_double_digit(self):\n+        assert _normalize_mr_id(\"99\") == \"!99\"\n+\n+    def test_url_encoded_with_bang(self):\n+        assert _normalize_mr_id(\"%21!1\")\
+      \ == \"!1\"\n+\n+\n+class TestNextMrId:\n+    def test_empty_list(self):\n+        assert next_mr_id([]) == \"!1\"\n+\n+    def test_single_mr(self):\n+        assert next_mr_id([{\"id\": \"!1\"}])\
+      \ == \"!2\"\n+\n+    def test_multiple_mrs(self):\n+        assert next_mr_id([{\"id\": \"!1\"}, {\"id\": \"!2\"}, {\"id\": \"!3\"}]) == \"!4\"\n+\n+    def test_non_sequential(self):\n+        assert\
+      \ next_mr_id([{\"id\": \"!1\"}, {\"id\": \"!5\"}]) == \"!6\"\n"
+    reviewers:
+    - maintainer
+  - type: message
+    channel: '#dev'
+    sender: 1.z3r0 (Collaborator)
+    content: MR !2 is up — follow-up fixes from testing !1. Fixed the merge 404 (MR IDs need URL encoding), added thought capture so NPC cards show agent thinking, and normalized MR ID handling so 1, !1,
+      and %211 all work. Also fixed the 5-minute container auth timeout. Tests included. @T4NN3R
+    is_event: true
 settings:
   enable_memos: true
   enable_blog: true
