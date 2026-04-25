@@ -54,3 +54,30 @@ def generate_commit_id(message: str, author: str, timestamp: float) -> str:
     """Generate a short hex commit ID from message, author, and timestamp."""
     raw = f"{message}:{author}:{timestamp}"
     return hashlib.sha1(raw.encode()).hexdigest()[:8]
+
+
+# --- Merge Request helpers ---
+
+def load_merge_requests(project: str) -> list[dict]:
+    """Load merge requests for a project from disk."""
+    mr_path = GITLAB_DIR / project / "_merge_requests.json"
+    if not mr_path.exists():
+        return []
+    try:
+        return json.loads(mr_path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return []
+
+
+def save_merge_requests(project: str, mrs: list[dict]):
+    """Save merge requests for a project to disk."""
+    mr_path = GITLAB_DIR / project / "_merge_requests.json"
+    mr_path.write_text(json.dumps(mrs, indent=2))
+
+
+def next_mr_id(mrs: list[dict]) -> str:
+    """Generate the next MR ID for a project (e.g. !1, !2, !3)."""
+    if not mrs:
+        return "!1"
+    max_num = max(int(mr["id"].lstrip("!")) for mr in mrs)
+    return f"!{max_num + 1}"

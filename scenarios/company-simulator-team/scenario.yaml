@@ -1,208 +1,623 @@
-name: "Company Simulator Team"
-description: "A 2-person team building the company-simulator itself. Recursive vibes."
-
+name: Company Simulator Team
+description: A 2-person team building the company-simulator itself. Recursive vibes.
 characters:
   maintainer:
-    display_name: "T4NN3R (Maintainer)"
-    character_file: "characters/t4nn3r-maintainer.CS.md"
-    team_description: "project creator, architecture decisions, vision, code review"
+    display_name: T4NN3R (Maintainer)
+    character_file: characters/t4nn3r-maintainer.CS.md
+    team_description: project creator, architecture decisions, vision, code review
   collaborator:
-    display_name: "1.z3r0 (Collaborator)"
-    character_file: "characters/1z3r0-collaborator.CS.md"
-    team_description: "feature implementation, UX ideas, testing, vibe coding"
-
+    display_name: 1.z3r0 (Collaborator)
+    character_file: characters/1z3r0-collaborator.CS.md
+    team_description: feature implementation, UX ideas, testing, vibe coding
 channels:
-  "#general":
-    description: "Main discussion"
+  '#general':
+    description: Main discussion
     is_external: false
-  "#dev":
-    description: "Development work and code discussion"
+  '#dev':
+    description: Development work and code discussion
     is_external: false
-  "#ideas":
-    description: "Feature ideas and brainstorming"
+  '#ideas':
+    description: Feature ideas and brainstorming
     is_external: false
-  "#bugs":
-    description: "Bug reports and fixes"
+  '#bugs':
+    description: Bug reports and fixes
     is_external: false
-
 memberships:
-  maintainer: ["#general", "#dev", "#ideas", "#bugs"]
-  collaborator: ["#general", "#dev", "#ideas", "#bugs"]
-
+  maintainer:
+  - '#general'
+  - '#dev'
+  - '#ideas'
+  - '#bugs'
+  collaborator:
+  - '#general'
+  - '#dev'
+  - '#ideas'
+  - '#bugs'
 response_tiers:
-  1: ["maintainer", "collaborator"]
-
+  1:
+  - maintainer
+  - collaborator
 folders:
   shared:
-    type: "shared"
-    description: "Shared project documents"
+    type: shared
+    description: Shared project documents
   public:
-    type: "public"
-    description: "Public-facing docs"
+    type: public
+    description: Public-facing docs
   dev:
-    type: "department"
-    description: "Development notes and specs"
+    type: department
+    description: Development notes and specs
   tanner:
-    type: "personal"
-    description: "Tanner's notes"
+    type: personal
+    description: Tanner's notes
   acp:
-    type: "personal"
-    description: "ACP's notes"
-
+    type: personal
+    description: ACP's notes
 folder_access:
-  shared: ["maintainer", "collaborator"]
-  public: ["maintainer", "collaborator"]
-  dev: ["maintainer", "collaborator"]
-  tanner: ["maintainer"]
-  acp: ["collaborator"]
-
+  shared:
+  - maintainer
+  - collaborator
+  public:
+  - maintainer
+  - collaborator
+  dev:
+  - maintainer
+  - collaborator
+  tanner:
+  - maintainer
+  acp:
+  - collaborator
 events:
-  - name: "SDK Breaking Change"
-    severity: "high"
-    actions:
-      - type: "message"
-        channel: "#dev"
-        sender: "Dependabot (System)"
-        content: "claude-agent-sdk v0.2.0 released with BREAKING CHANGES. The ClaudeSDKClient constructor signature changed. Our AgentPool initialization will fail on upgrade. Migration guide: https://docs.anthropic.com/sdk/migration"
-      - type: "ticket"
-        title: "SDK upgrade: claude-agent-sdk v0.2.0 breaking changes"
-        description: "New SDK version changes ClaudeSDKClient constructor. Need to update AgentPool and agent_runner.py before upgrading."
-        priority: "high"
-        author: "Dependabot (System)"
+- name: SDK Breaking Change
+  severity: high
+  actions:
+  - type: message
+    channel: '#dev'
+    sender: Dependabot (System)
+    content: 'claude-agent-sdk v0.2.0 released with BREAKING CHANGES. The ClaudeSDKClient constructor signature changed. Our AgentPool initialization will fail on upgrade. Migration guide: https://docs.anthropic.com/sdk/migration'
+  - type: ticket
+    title: 'SDK upgrade: claude-agent-sdk v0.2.0 breaking changes'
+    description: New SDK version changes ClaudeSDKClient constructor. Need to update AgentPool and agent_runner.py before upgrading.
+    priority: high
+    author: Dependabot (System)
+- name: Context Window Exceeded
+  severity: critical
+  actions:
+  - type: message
+    channel: '#bugs'
+    sender: Error Monitor (System)
+    content: 'ALERT: Agent ''Sarah (PM)'' hit context window limit during response generation. The prompt is too large — chat history + docs + tickets exceeds the model''s token limit. Agents may start
+      losing context or failing silently.'
+- name: PR Review Requested
+  severity: low
+  actions:
+  - type: message
+    channel: '#dev'
+    sender: GitHub (System)
+    content: 'T4NN3R requested a review from 1.z3r0 on PR #42: ''Add event system with scenario-defined event pools''. 6 files changed, +450 -20.'
+- name: UI Bug Report
+  severity: medium
+  actions:
+  - type: message
+    channel: '#bugs'
+    sender: Beta Tester (User)
+    content: 'Bug report: The NPC page cards are overlapping on mobile viewport widths. Also the ''Being Fired'' status dot animation is causing layout jank in Firefox. Screenshots attached (not really,
+      imagine them).'
+  - type: ticket
+    title: 'UI Bug: NPC cards overlap on mobile + Firefox animation jank'
+    description: '1. NPC cards overlap below 768px viewport width
 
-  - name: "Context Window Exceeded"
-    severity: "critical"
-    actions:
-      - type: "message"
-        channel: "#bugs"
-        sender: "Error Monitor (System)"
-        content: "ALERT: Agent 'Sarah (PM)' hit context window limit during response generation. The prompt is too large — chat history + docs + tickets exceeds the model's token limit. Agents may start losing context or failing silently."
+      2. ''Being Fired'' CSS animation causes layout jank in Firefox
 
-  - name: "PR Review Requested"
-    severity: "low"
-    actions:
-      - type: "message"
-        channel: "#dev"
-        sender: "GitHub (System)"
-        content: "T4NN3R requested a review from 1.z3r0 on PR #42: 'Add event system with scenario-defined event pools'. 6 files changed, +450 -20."
 
-  - name: "UI Bug Report"
-    severity: "medium"
-    actions:
-      - type: "message"
-        channel: "#bugs"
-        sender: "Beta Tester (User)"
-        content: "Bug report: The NPC page cards are overlapping on mobile viewport widths. Also the 'Being Fired' status dot animation is causing layout jank in Firefox. Screenshots attached (not really, imagine them)."
-      - type: "ticket"
-        title: "UI Bug: NPC cards overlap on mobile + Firefox animation jank"
-        description: "1. NPC cards overlap below 768px viewport width\n2. 'Being Fired' CSS animation causes layout jank in Firefox\n\nPriority: medium — desktop works fine, mobile is stretch goal"
-        priority: "medium"
-        author: "Beta Tester (User)"
+      Priority: medium — desktop works fine, mobile is stretch goal'
+    priority: medium
+    author: Beta Tester (User)
+- name: Mandatory Security Training
+  severity: medium
+  actions:
+  - type: email
+    sender: InfoSec (System)
+    subject: 'REQUIRED: Security Best Practices Training — Due by April 15'
+    body: 'Team,
 
-  - name: "Mandatory Security Training"
-    severity: "medium"
-    actions:
-      - type: "email"
-        sender: "InfoSec (System)"
-        subject: "REQUIRED: Security Best Practices Training — Due by April 15"
-        body: "Team,\n\nAnnual security training is now available. Topics include:\n- API key management (don't commit .env files)\n- Dependency vulnerability scanning\n- Secure session handling\n- The irony of simulating a company that handles security training\n\nDeadline: April 15, 2026\n\nLink: training.internal/security-2026\n\n— InfoSec"
 
-  - name: "Project Milestone Update"
-    severity: "low"
-    actions:
-      - type: "email"
-        sender: "T4NN3R (Maintainer)"
-        subject: "CoSim v0.3 — What We Shipped This Week"
-        body: "1.z3r0,\n\nQuick recap of what landed this week:\n- Events system with multi-action bundles\n- Hire/fire with hot add/remove\n- Per-agent verbosity control\n- Agent thoughts search\n- 8 character templates\n\nThe orchestrator is getting fragile with the hot add/remove stuff. We should probably talk about the subprocess-per-agent rearchitecture before we add more lifecycle complexity.\n\nAlso the agents keep dropping raw JSON in chat. The parser fix helps but it's not bulletproof.\n\n— T4NN3R"
+      Annual security training is now available. Topics include:
 
-  - name: "Remote Work Equipment Stipend"
-    severity: "low"
-    actions:
-      - type: "email"
-        sender: "HR (System)"
-        subject: "Remote Work Policy & Equipment Stipend — You're Set Up for Success"
-        body: "Team,\n\nQuick reminder: we're a remote-first company. Work from wherever you do your best work.\n\nTo make sure everyone has what they need, we're offering an annual equipment stipend of $2,500. This covers:\n\n- Monitors, keyboards, mice, docks\n- Webcams and microphones\n- Headsets (noise-cancelling encouraged)\n- Ring lights, boom arms, and streaming/rigging gear\n- Standing desks or ergonomic chairs\n- Anything else that makes your setup better\n\nNo approval needed — just submit receipts through Expensify. If you need something above the stipend, talk to your manager.\n\nWe want you comfortable, productive, and looking good on camera (or not — cameras optional, always).\n\n— HR"
+      - API key management (don''t commit .env files)
 
-  - name: "RFC: Orchestrator Rearchitecture"
-    severity: "medium"
-    actions:
-      - type: "memo"
-        title: "RFC: Subprocess-Per-Agent Orchestrator Rearchitecture"
-        sender: "T4NN3R (Maintainer)"
-        description: "Discussion thread for the orchestrator rearchitecture proposal"
-        text: "The current orchestrator is getting fragile. Every _close_session() poisons subsequent awaits via anyio cancel scope leaks. Hot add/remove works but requires try/except everywhere plus auto-restart.\n\nProposal: move to subprocess-per-agent. Each agent runs in its own process with its own event loop. Hire spawns a process, fire kills one. No cross-contamination.\n\nAlternatives:\n1. One-shot sessions (higher latency)\n2. SDK fix upstream (waiting on Anthropic)\n3. Clean lifecycle separation (bandaid)\n\nThoughts?"
-      - type: "message"
-        channel: "#dev"
-        sender: "T4NN3R (Maintainer)"
-        content: "Posted an RFC on the memo-list about the orchestrator rearchitecture. Would love your thoughts — the cancel scope leaks are getting worse with every new feature."
+      - Dependency vulnerability scanning
 
-  - name: "RFC 2324: HTCPCP (Coffee Pot Protocol)"
-    severity: "low"
-    actions:
-      - type: "memo"
-        title: "RFC 2324: Hyper Text Coffee Pot Control Protocol"
-        sender: "1.z3r0 (Collaborator)"
-        description: "Proposal to implement HTCPCP for agent caffeine management"
-        text: "Team, I've been reading through the IETF archives and I think we're missing a critical protocol.\n\nRFC 2324 defines HTCPCP — the Hyper Text Coffee Pot Control Protocol. Key features:\n- BREW method for initiating coffee\n- New HTTP error code: 418 I'm a teapot\n- Content-Type: application/coffee-pot-command\n- milk-type header (whole, skim, cream, half-and-half)\n\nI'm proposing we add HTCPCP support to CoSim. Our agents are working long hours and deserve programmatic access to caffeine. The 418 status code alone is worth the implementation.\n\nConsiderations:\n- Do we need separate endpoints for decaf?\n- Should the CEO have priority brew access?\n- What's our SLA on pot refills?\n\nThis is absolutely a serious proposal and I will not be taking questions about my priorities at this time."
-      - type: "message"
-        channel: "#dev"
-        sender: "1.z3r0 (Collaborator)"
-        content: "Posted an RFC on the memo-list about HTCPCP support. Before you say anything — RFC 2324 is a real IETF RFC. The 418 status code is canon. This is serious engineering."
+      - Secure session handling
 
-  - name: "RFC 1149: IP over Avian Carriers"
-    severity: "low"
-    actions:
-      - type: "memo"
-        title: "RFC 1149: IP over Avian Carriers — A Latency Discussion"
-        sender: "1.z3r0 (Collaborator)"
-        description: "Exploring carrier pigeon networking as a fallback transport layer"
-        text: "So I've been thinking about our orchestrator reliability issues and I may have found the solution.\n\nRFC 1149 specifies a Standard for the Transmission of IP Datagrams on Avian Carriers. Yes, carrier pigeons. It was actually tested in 2001 in Bergen, Norway — they achieved a 55% packet loss rate with a latency of 3000-6000 seconds.\n\nNow hear me out:\n- Our current orchestrator crashes every time we close a session\n- Pigeons don't have anyio cancel scope leaks\n- The 55% packet loss is honestly comparable to our heartbeat reliability after a hot-remove\n- MTU is limited to what you can strap to a pigeon's leg, but our JSON responses are pretty small if the agents would stop writing dissertations\n\nRFC 6214 later updated this for IPv6. We should future-proof.\n\nAlso worth noting RFC 2549 added QoS — so we could give the CEO's pigeon priority routing.\n\nI'm only half joking."
-      - type: "message"
-        channel: "#general"
-        sender: "1.z3r0 (Collaborator)"
-        content: "New memo-list thread: I've been researching alternative transport protocols for the orchestrator. RFC 1149 has some interesting properties. 55% packet loss but zero cancel scope leaks."
+      - The irony of simulating a company that handles security training
 
-  - name: "RFC 8771: HTTP Status Code 451"
-    severity: "low"
-    actions:
-      - type: "memo"
-        title: "Proposal: Agent Content Moderation via HTTP 451"
-        sender: "1.z3r0 (Collaborator)"
-        description: "Using HTTP 451 (Unavailable For Legal Reasons) when agents try to post raw JSON"
-        text: "OK so we have a recurring problem where agents dump raw JSON into chat instead of actual human-readable messages.\n\nI propose we return HTTP 451 — Unavailable For Legal Reasons — when an agent tries to post a message that's clearly just a JSON blob. Named after Fahrenheit 451 (the temperature at which paper burns), which feels appropriate for messages that should never see the light of day.\n\nImplementation:\n- Regex check on message content\n- If it looks like raw JSON response, return 451\n- Include a Retry-After header set to 'after you learn to parse your own output'\n- Log it to the agent's thoughts as a shame entry\n\nRelated: RFC 7168 extended HTCPCP to support tea. I mention this only because I feel like we're not taking the coffee pot protocol seriously enough."
-      - type: "message"
-        channel: "#dev"
-        sender: "1.z3r0 (Collaborator)"
-        content: "New memo-list thread about using HTTP 451 for raw JSON detection. Also a reminder that we still haven't implemented HTCPCP."
 
-  - name: "Dev Log: Building the Blog System"
-    severity: "low"
-    actions:
-      - type: "blog"
-        title: "Dev Log: We Built a Blog Inside the Simulator"
-        sender: "T4NN3R (Maintainer)"
-        is_external: false
-        tags: ["dev-log", "meta", "architecture"]
-        body: "So here's something fun — we just shipped a blog subsystem for CoSim. Yes, the agents can now write blog posts. Internal dev logs, external company announcements, the whole deal.\n\nThe implementation follows the exact same pattern as memo-list:\n- lib/blog.py for state management\n- Agent commands (CREATE, REPLY, READ, LIST)\n- Feature-flagged via enable_blog in scenario settings\n- Session save/load\n- Event action type for firing blog posts from events\n\nThe meta part: the agents in the company-simulator-team scenario can now blog about building the company simulator. I'm writing this blog post about building the blog system that lets me write blog posts.\n\nWe've gone full recursive. I regret nothing.\n\n— T4NN3R"
-      - type: "message"
-        channel: "#dev"
-        sender: "T4NN3R (Maintainer)"
-        content: "New dev log on the blog: we built a blog inside the simulator. Yes, it's as meta as it sounds."
+      Deadline: April 15, 2026
 
-  - name: "Hacker News Post: Why We Simulate Companies"
-    severity: "low"
-    actions:
-      - type: "blog"
-        title: "Why We Built a Company Simulator (And Why You Should Care)"
-        sender: "1.z3r0 (Collaborator)"
-        is_external: true
-        tags: ["ai", "simulation", "open-source"]
-        body: "What happens when you give 11 AI agents a Slack workspace, a ticket tracker, a document system, and a git repo?\n\nThey form opinions. They disagree. They create documents nobody asked for. They file tickets against each other. One of them wrote an RFC about implementing a coffee pot protocol.\n\nWe built CoSim — a multi-agent organization simulator where AI personas collaborate as a simulated company. Each agent has a role, a personality, a communication style, and domain expertise. They respond to events, coordinate across channels, and produce artifacts that look eerily like what a real team would produce.\n\nThe surprising part isn't that they can do it. It's that the emergent behavior is genuinely interesting. The PM and the engineer have different priorities. The CEO makes strategic calls that the CFO pushes back on. The support engineer advocates for the customer when engineering wants to cut corners.\n\nIt's not AGI. It's not even close. But it's a fascinating lens on how organizations work — and how they break.\n\nCode is open source. Try it yourself.\n\n— 1.z3r0"
-      - type: "message"
-        channel: "#general"
-        sender: "1.z3r0 (Collaborator)"
-        content: "Just published an external blog post — 'Why We Built a Company Simulator.' Tried to make it Hacker News worthy. Feedback welcome before I actually submit it."
 
+      Link: training.internal/security-2026
+
+
+      — InfoSec'
+- name: Project Milestone Update
+  severity: low
+  actions:
+  - type: email
+    sender: T4NN3R (Maintainer)
+    subject: CoSim v0.3 — What We Shipped This Week
+    body: '1.z3r0,
+
+
+      Quick recap of what landed this week:
+
+      - Events system with multi-action bundles
+
+      - Hire/fire with hot add/remove
+
+      - Per-agent verbosity control
+
+      - Agent thoughts search
+
+      - 8 character templates
+
+
+      The orchestrator is getting fragile with the hot add/remove stuff. We should probably talk about the subprocess-per-agent rearchitecture before we add more lifecycle complexity.
+
+
+      Also the agents keep dropping raw JSON in chat. The parser fix helps but it''s not bulletproof.
+
+
+      — T4NN3R'
+- name: Remote Work Equipment Stipend
+  severity: low
+  actions:
+  - type: email
+    sender: HR (System)
+    subject: Remote Work Policy & Equipment Stipend — You're Set Up for Success
+    body: 'Team,
+
+
+      Quick reminder: we''re a remote-first company. Work from wherever you do your best work.
+
+
+      To make sure everyone has what they need, we''re offering an annual equipment stipend of $2,500. This covers:
+
+
+      - Monitors, keyboards, mice, docks
+
+      - Webcams and microphones
+
+      - Headsets (noise-cancelling encouraged)
+
+      - Ring lights, boom arms, and streaming/rigging gear
+
+      - Standing desks or ergonomic chairs
+
+      - Anything else that makes your setup better
+
+
+      No approval needed — just submit receipts through Expensify. If you need something above the stipend, talk to your manager.
+
+
+      We want you comfortable, productive, and looking good on camera (or not — cameras optional, always).
+
+
+      — HR'
+- name: 'RFC: Orchestrator Rearchitecture'
+  severity: medium
+  actions:
+  - type: memo
+    title: 'RFC: Subprocess-Per-Agent Orchestrator Rearchitecture'
+    sender: T4NN3R (Maintainer)
+    description: Discussion thread for the orchestrator rearchitecture proposal
+    text: 'The current orchestrator is getting fragile. Every _close_session() poisons subsequent awaits via anyio cancel scope leaks. Hot add/remove works but requires try/except everywhere plus auto-restart.
+
+
+      Proposal: move to subprocess-per-agent. Each agent runs in its own process with its own event loop. Hire spawns a process, fire kills one. No cross-contamination.
+
+
+      Alternatives:
+
+      1. One-shot sessions (higher latency)
+
+      2. SDK fix upstream (waiting on Anthropic)
+
+      3. Clean lifecycle separation (bandaid)
+
+
+      Thoughts?'
+  - type: message
+    channel: '#dev'
+    sender: T4NN3R (Maintainer)
+    content: Posted an RFC on the memo-list about the orchestrator rearchitecture. Would love your thoughts — the cancel scope leaks are getting worse with every new feature.
+- name: 'RFC 2324: HTCPCP (Coffee Pot Protocol)'
+  severity: low
+  actions:
+  - type: memo
+    title: 'RFC 2324: Hyper Text Coffee Pot Control Protocol'
+    sender: 1.z3r0 (Collaborator)
+    description: Proposal to implement HTCPCP for agent caffeine management
+    text: 'Team, I''ve been reading through the IETF archives and I think we''re missing a critical protocol.
+
+
+      RFC 2324 defines HTCPCP — the Hyper Text Coffee Pot Control Protocol. Key features:
+
+      - BREW method for initiating coffee
+
+      - New HTTP error code: 418 I''m a teapot
+
+      - Content-Type: application/coffee-pot-command
+
+      - milk-type header (whole, skim, cream, half-and-half)
+
+
+      I''m proposing we add HTCPCP support to CoSim. Our agents are working long hours and deserve programmatic access to caffeine. The 418 status code alone is worth the implementation.
+
+
+      Considerations:
+
+      - Do we need separate endpoints for decaf?
+
+      - Should the CEO have priority brew access?
+
+      - What''s our SLA on pot refills?
+
+
+      This is absolutely a serious proposal and I will not be taking questions about my priorities at this time.'
+  - type: message
+    channel: '#dev'
+    sender: 1.z3r0 (Collaborator)
+    content: Posted an RFC on the memo-list about HTCPCP support. Before you say anything — RFC 2324 is a real IETF RFC. The 418 status code is canon. This is serious engineering.
+- name: 'RFC 1149: IP over Avian Carriers'
+  severity: low
+  actions:
+  - type: memo
+    title: 'RFC 1149: IP over Avian Carriers — A Latency Discussion'
+    sender: 1.z3r0 (Collaborator)
+    description: Exploring carrier pigeon networking as a fallback transport layer
+    text: 'So I''ve been thinking about our orchestrator reliability issues and I may have found the solution.
+
+
+      RFC 1149 specifies a Standard for the Transmission of IP Datagrams on Avian Carriers. Yes, carrier pigeons. It was actually tested in 2001 in Bergen, Norway — they achieved a 55% packet loss rate
+      with a latency of 3000-6000 seconds.
+
+
+      Now hear me out:
+
+      - Our current orchestrator crashes every time we close a session
+
+      - Pigeons don''t have anyio cancel scope leaks
+
+      - The 55% packet loss is honestly comparable to our heartbeat reliability after a hot-remove
+
+      - MTU is limited to what you can strap to a pigeon''s leg, but our JSON responses are pretty small if the agents would stop writing dissertations
+
+
+      RFC 6214 later updated this for IPv6. We should future-proof.
+
+
+      Also worth noting RFC 2549 added QoS — so we could give the CEO''s pigeon priority routing.
+
+
+      I''m only half joking.'
+  - type: message
+    channel: '#general'
+    sender: 1.z3r0 (Collaborator)
+    content: 'New memo-list thread: I''ve been researching alternative transport protocols for the orchestrator. RFC 1149 has some interesting properties. 55% packet loss but zero cancel scope leaks.'
+- name: 'RFC 8771: HTTP Status Code 451'
+  severity: low
+  actions:
+  - type: memo
+    title: 'Proposal: Agent Content Moderation via HTTP 451'
+    sender: 1.z3r0 (Collaborator)
+    description: Using HTTP 451 (Unavailable For Legal Reasons) when agents try to post raw JSON
+    text: 'OK so we have a recurring problem where agents dump raw JSON into chat instead of actual human-readable messages.
+
+
+      I propose we return HTTP 451 — Unavailable For Legal Reasons — when an agent tries to post a message that''s clearly just a JSON blob. Named after Fahrenheit 451 (the temperature at which paper burns),
+      which feels appropriate for messages that should never see the light of day.
+
+
+      Implementation:
+
+      - Regex check on message content
+
+      - If it looks like raw JSON response, return 451
+
+      - Include a Retry-After header set to ''after you learn to parse your own output''
+
+      - Log it to the agent''s thoughts as a shame entry
+
+
+      Related: RFC 7168 extended HTCPCP to support tea. I mention this only because I feel like we''re not taking the coffee pot protocol seriously enough.'
+  - type: message
+    channel: '#dev'
+    sender: 1.z3r0 (Collaborator)
+    content: New memo-list thread about using HTTP 451 for raw JSON detection. Also a reminder that we still haven't implemented HTCPCP.
+- name: 'Dev Log: Building the Blog System'
+  severity: low
+  actions:
+  - type: blog
+    title: 'Dev Log: We Built a Blog Inside the Simulator'
+    sender: T4NN3R (Maintainer)
+    is_external: false
+    tags:
+    - dev-log
+    - meta
+    - architecture
+    body: 'So here''s something fun — we just shipped a blog subsystem for CoSim. Yes, the agents can now write blog posts. Internal dev logs, external company announcements, the whole deal.
+
+
+      The implementation follows the exact same pattern as memo-list:
+
+      - lib/blog.py for state management
+
+      - Agent commands (CREATE, REPLY, READ, LIST)
+
+      - Feature-flagged via enable_blog in scenario settings
+
+      - Session save/load
+
+      - Event action type for firing blog posts from events
+
+
+      The meta part: the agents in the company-simulator-team scenario can now blog about building the company simulator. I''m writing this blog post about building the blog system that lets me write blog
+      posts.
+
+
+      We''ve gone full recursive. I regret nothing.
+
+
+      — T4NN3R'
+  - type: message
+    channel: '#dev'
+    sender: T4NN3R (Maintainer)
+    content: 'New dev log on the blog: we built a blog inside the simulator. Yes, it''s as meta as it sounds.'
+- name: 'Hacker News Post: Why We Simulate Companies'
+  severity: low
+  actions:
+  - type: blog
+    title: Why We Built a Company Simulator (And Why You Should Care)
+    sender: 1.z3r0 (Collaborator)
+    is_external: true
+    tags:
+    - ai
+    - simulation
+    - open-source
+    body: 'What happens when you give 11 AI agents a Slack workspace, a ticket tracker, a document system, and a git repo?
+
+
+      They form opinions. They disagree. They create documents nobody asked for. They file tickets against each other. One of them wrote an RFC about implementing a coffee pot protocol.
+
+
+      We built CoSim — a multi-agent organization simulator where AI personas collaborate as a simulated company. Each agent has a role, a personality, a communication style, and domain expertise. They
+      respond to events, coordinate across channels, and produce artifacts that look eerily like what a real team would produce.
+
+
+      The surprising part isn''t that they can do it. It''s that the emergent behavior is genuinely interesting. The PM and the engineer have different priorities. The CEO makes strategic calls that the
+      CFO pushes back on. The support engineer advocates for the customer when engineering wants to cut corners.
+
+
+      It''s not AGI. It''s not even close. But it''s a fascinating lens on how organizations work — and how they break.
+
+
+      Code is open source. Try it yourself.
+
+
+      — 1.z3r0'
+  - type: message
+    channel: '#general'
+    sender: 1.z3r0 (Collaborator)
+    content: Just published an external blog post — 'Why We Built a Company Simulator.' Tried to make it Hacker News worthy. Feedback welcome before I actually submit it.
+- name: 'MR: Add GitLab Merge Request Subsystem'
+  severity: medium
+  actions:
+  - type: merge_request
+    project: company-simulator
+    title: Add GitLab merge request subsystem with approval workflow
+    sender: 1.z3r0 (Collaborator)
+    description: 'Adds merge request support to the simulated GitLab.
+
+
+      - MR data model with unified diff, comments, approvals, status (open/closed/merged)
+
+      - State machine: open -> closed|merged, closed -> open, merged is terminal
+
+      - Approval gate: at least one non-author approval required before merge
+
+      - 6 REST endpoints + 6 MCP tools
+
+      - UI: MR toggle in GitLab tab, list with status badges and +/- counts, detail view with color-highlighted diff, comment thread with Name/Role identity, approve/merge/close/reopen buttons
+
+
+      7 files changed, +557 -5'
+    diff: "diff --git a/lib/container_orchestrator.py b/lib/container_orchestrator.py\nindex 340007c..423f7bc 100644\n--- a/lib/container_orchestrator.py\n+++ b/lib/container_orchestrator.py\n@@ -185,13\
+      \ +185,19 @@ MCP_TOOL_NAMES = [\n     \"list_docs\",\n     \"delete_doc\",\n     \"append_doc\",\n-    # GitLab (6)\n+    # GitLab (12)\n     \"list_repos\",\n     \"create_repo\",\n     \"commit_files\"\
+      ,\n     \"read_file\",\n     \"list_repo_tree\",\n     \"get_repo_log\",\n+    \"create_merge_request\",\n+    \"list_merge_requests\",\n+    \"get_merge_request\",\n+    \"comment_on_merge_request\"\
+      ,\n+    \"approve_merge_request\",\n+    \"merge_merge_request\",\n     # Tickets (5)\n     \"get_ticket\",\n     \"create_ticket\",\ndiff --git a/lib/gitlab.py b/lib/gitlab.py\nindex bc72adf..f7dd4f2\
+      \ 100644\n--- a/lib/gitlab.py\n+++ b/lib/gitlab.py\n@@ -54,3 +54,30 @@ def generate_commit_id(message: str, author: str, timestamp: float) -> str:\n     \"\"\"Generate a short hex commit ID from message,\
+      \ author, and timestamp.\"\"\"\n     raw = f\"{message}:{author}:{timestamp}\"\n     return hashlib.sha1(raw.encode()).hexdigest()[:8]\n+\n+\n+# --- Merge Request helpers ---\n+\n+def load_merge_requests(project:\
+      \ str) -> list[dict]:\n+    \"\"\"Load merge requests for a project from disk.\"\"\"\n+    mr_path = GITLAB_DIR / project / \"_merge_requests.json\"\n+    if not mr_path.exists():\n+        return\
+      \ []\n+    try:\n+        return json.loads(mr_path.read_text())\n+    except (json.JSONDecodeError, OSError):\n+        return []\n+\n+\n+def save_merge_requests(project: str, mrs: list[dict]):\n\
+      +    \"\"\"Save merge requests for a project to disk.\"\"\"\n+    mr_path = GITLAB_DIR / project / \"_merge_requests.json\"\n+    mr_path.write_text(json.dumps(mrs, indent=2))\n+\n+\n+def next_mr_id(mrs:\
+      \ list[dict]) -> str:\n+    \"\"\"Generate the next MR ID for a project (e.g. !1, !2, !3).\"\"\"\n+    if not mrs:\n+        return \"!1\"\n+    max_num = max(int(mr[\"id\"].lstrip(\"!\")) for mr\
+      \ in mrs)\n+    return f\"!{max_num + 1}\"\ndiff --git a/lib/mcp_server.py b/lib/mcp_server.py\nindex 14a979e..d0f0ea8 100644\n--- a/lib/mcp_server.py\n+++ b/lib/mcp_server.py\n@@ -608,6 +608,114\
+      \ @@ def _register_gitlab_tools(\n         )\n         return json.dumps(result)\n \n+    # --- Merge Requests ---\n+\n+    @server.tool(\n+        name=\"create_merge_request\",\n+        description=\"\
+      Create a merge request with a unified diff for code review.\",\n+    )\n+    async def create_merge_request(\n+        project: str, title: str, description: str, diff: str, reviewers: list[str] |\
+      \ None = None\n+    ) -> str:\n+        if not _can_access_repo(project):\n+            return f\"Error: you don't have access to repository '{project}'.\"\n+        t0 = time.time()\n+        payload\
+      \ = {\"title\": title, \"description\": description, \"diff\": diff, \"author\": display_name}\n+        if reviewers:\n+            payload[\"reviewers\"] = reviewers\n+        result = await _flask(\"\
+      POST\", f\"/api/gitlab/repos/{project}/merge-requests\", flask_url, json=payload)\n+        _record_audit(\n+            agent_key, \"create_merge_request\", {\"project\": project, \"title\": title},\n\
+      +            f\"created {result.get('id', '?')}\", (time.time() - t0) * 1000,\n+        )\n+        return json.dumps(result)\n+\n+    @server.tool(\n+        name=\"list_merge_requests\",\n+    \
+      \    description=\"List merge requests for a GitLab repository. Optional status filter: open, merged, closed.\",\n+    )\n+    async def list_merge_requests(project: str, status: str | None = None)\
+      \ -> str:\n+        if not _can_access_repo(project):\n+            return f\"Error: you don't have access to repository '{project}'.\"\n+        t0 = time.time()\n+        params = {}\n+        if\
+      \ status:\n+            params[\"status\"] = status\n+        result = await _flask(\"GET\", f\"/api/gitlab/repos/{project}/merge-requests\", flask_url, params=params)\n+        _record_audit(\n+\
+      \            agent_key, \"list_merge_requests\", {\"project\": project}, f\"{len(result)} MRs\", (time.time() - t0) * 1000\n+        )\n+        return json.dumps(result)\n+\n+    @server.tool(\n\
+      +        name=\"get_merge_request\",\n+        description=\"Get a merge request's details including diff and review comments.\",\n+    )\n+    async def get_merge_request(project: str, mr_id: str)\
+      \ -> str:\n+        if not _can_access_repo(project):\n+            return f\"Error: you don't have access to repository '{project}'.\"\n+        t0 = time.time()\n+        result = await _flask(\"\
+      GET\", f\"/api/gitlab/repos/{project}/merge-requests/{mr_id}\", flask_url)\n+        _record_audit(\n+            agent_key, \"get_merge_request\", {\"project\": project, \"mr_id\": mr_id},\n+   \
+      \         result.get(\"title\", \"?\"), (time.time() - t0) * 1000,\n+        )\n+        return json.dumps(result)\n+\n+    @server.tool(\n+        name=\"comment_on_merge_request\",\n+        description=\"\
+      Add a review comment to a merge request.\",\n+    )\n+    async def comment_on_merge_request(project: str, mr_id: str, text: str) -> str:\n+        if not _can_access_repo(project):\n+           \
+      \ return f\"Error: you don't have access to repository '{project}'.\"\n+        t0 = time.time()\n+        result = await _flask(\n+            \"POST\", f\"/api/gitlab/repos/{project}/merge-requests/{mr_id}/comment\"\
+      ,\n+            flask_url, json={\"text\": text, \"author\": display_name},\n+        )\n+        _record_audit(\n+            agent_key, \"comment_on_merge_request\", {\"project\": project, \"mr_id\"\
+      : mr_id},\n+            f\"commented\", (time.time() - t0) * 1000,\n+        )\n+        return json.dumps(result)\n+\n+    @server.tool(\n+        name=\"approve_merge_request\",\n+        description=\"\
+      Approve a merge request. You cannot approve your own MR. At least one approval is required before merging.\",\n+    )\n+    async def approve_merge_request(project: str, mr_id: str) -> str:\n+   \
+      \     if not _can_access_repo(project):\n+            return f\"Error: you don't have access to repository '{project}'.\"\n+        t0 = time.time()\n+        result = await _flask(\n+           \
+      \ \"POST\", f\"/api/gitlab/repos/{project}/merge-requests/{mr_id}/approve\",\n+            flask_url, json={\"author\": display_name},\n+        )\n+        _record_audit(\n+            agent_key,\
+      \ \"approve_merge_request\", {\"project\": project, \"mr_id\": mr_id},\n+            f\"approved\", (time.time() - t0) * 1000,\n+        )\n+        return json.dumps(result)\n+\n+    @server.tool(\n\
+      +        name=\"merge_merge_request\",\n+        description=\"Merge an open merge request. Requires at least one non-author approval.\",\n+    )\n+    async def merge_merge_request(project: str,\
+      \ mr_id: str) -> str:\n+        if not _can_access_repo(project):\n+            return f\"Error: you don't have access to repository '{project}'.\"\n+        t0 = time.time()\n+        result = await\
+      \ _flask(\n+            \"POST\", f\"/api/gitlab/repos/{project}/merge-requests/{mr_id}/merge\",\n+            flask_url, json={\"author\": display_name},\n+        )\n+        _record_audit(\n+ \
+      \           agent_key, \"merge_merge_request\", {\"project\": project, \"mr_id\": mr_id},\n+            f\"merged\", (time.time() - t0) * 1000,\n+        )\n+        return json.dumps(result)\n+\n\
+      \ \n def _register_ticket_tools(\n     server: FastMCP,\ndiff --git a/lib/webapp/helpers.py b/lib/webapp/helpers.py\nindex ef035ef..eda3271 100644\n--- a/lib/webapp/helpers.py\n+++ b/lib/webapp/helpers.py\n\
+      @@ -32,6 +32,7 @@ from lib.webapp.state import (\n     _folders,\n     _gitlab_commits,\n     _gitlab_lock,\n+    _gitlab_merge_requests,\n     _gitlab_repos,\n     _lock,\n     _messages,\n@@ -360,10\
+      \ +361,11 @@ def _init_gitlab():\n     with _gitlab_lock:\n         _gitlab_repos.clear()\n         _gitlab_commits.clear()\n+        _gitlab_merge_requests.clear()\n         index = load_repos_index()\n\
+      \         _gitlab_repos.update(index)\n-        # Load commit logs for each repo\n         for repo_name in index:\n+            # Load commit logs\n             commits_path = GITLAB_DIR / repo_name\
+      \ / \"_commits.json\"\n             if commits_path.exists():\n                 try:\n@@ -372,6 +374,9 @@ def _init_gitlab():\n                     _gitlab_commits[repo_name] = []\n             else:\n\
+      \                 _gitlab_commits[repo_name] = []\n+            # Load merge requests\n+            from lib.gitlab import load_merge_requests\n+            _gitlab_merge_requests[repo_name] = load_merge_requests(repo_name)\n\
+      \ \n \n def _init_tickets():\ndiff --git a/lib/webapp/routes/gitlab.py b/lib/webapp/routes/gitlab.py\nindex ae6bffc..1ebd212 100644\n--- a/lib/webapp/routes/gitlab.py\n+++ b/lib/webapp/routes/gitlab.py\n\
+      @@ -7,9 +7,9 @@ import time\n \n from flask import Blueprint, jsonify, request, send_file\n \n-from lib.gitlab import GITLAB_DIR, generate_commit_id, save_repos_index\n+from lib.gitlab import GITLAB_DIR,\
+      \ generate_commit_id, next_mr_id, save_merge_requests, save_repos_index\n from lib.webapp.helpers import _broadcast_gitlab_event\n-from lib.webapp.state import _gitlab_commits, _gitlab_lock, _gitlab_repos\n\
+      +from lib.webapp.state import _gitlab_commits, _gitlab_lock, _gitlab_merge_requests, _gitlab_repos\n \n bp = Blueprint(\"gitlab\", __name__)\n \n@@ -182,3 +182,171 @@ def gitlab_log(project):\n  \
+      \   # Return newest first\n     commits.reverse()\n     return jsonify(commits)\n+\n+\n+# --- Merge Requests ---\n+\n+\n+@bp.route(\"/api/gitlab/repos/<project>/merge-requests\", methods=[\"GET\"\
+      ])\n+def list_merge_requests(project):\n+    with _gitlab_lock:\n+        if project not in _gitlab_repos:\n+            return jsonify({\"error\": \"repo not found\"}), 404\n+        mrs = list(_gitlab_merge_requests.get(project,\
+      \ []))\n+    status_filter = request.args.get(\"status\")\n+    if status_filter:\n+        mrs = [mr for mr in mrs if mr.get(\"status\") == status_filter]\n+    mrs.reverse()\n+    return jsonify(mrs)\n\
+      +\n+\n+@bp.route(\"/api/gitlab/repos/<project>/merge-requests\", methods=[\"POST\"])\n+def create_merge_request(project):\n+    data = request.get_json(force=True)\n+    title = data.get(\"title\"\
+      , \"\").strip()\n+    if not title:\n+        return jsonify({\"error\": \"title required\"}), 400\n+    diff = data.get(\"diff\", \"\").strip()\n+    if not diff:\n+        return jsonify({\"error\"\
+      : \"diff required\"}), 400\n+\n+    with _gitlab_lock:\n+        if project not in _gitlab_repos:\n+            return jsonify({\"error\": \"repo not found\"}), 404\n+        mrs = _gitlab_merge_requests.setdefault(project,\
+      \ [])\n+        mr_id = next_mr_id(mrs)\n+        now = time.time()\n+        # Count additions/deletions from diff\n+        additions = 0\n+        deletions = 0\n+        for line in diff.split(\"\
+      \\n\"):\n+            if line.startswith(\"+\") and not line.startswith(\"+++\"):\n+                additions += 1\n+            elif line.startswith(\"-\") and not line.startswith(\"---\"):\n+  \
+      \              deletions += 1\n+\n+        mr = {\n+            \"id\": mr_id,\n+            \"title\": title,\n+            \"description\": data.get(\"description\", \"\").strip(),\n+          \
+      \  \"author\": data.get(\"author\", \"System\"),\n+            \"project\": project,\n+            \"diff\": diff,\n+            \"additions\": additions,\n+            \"deletions\": deletions,\n\
+      +            \"status\": \"open\",\n+            \"reviewers\": data.get(\"reviewers\", []),\n+            \"approvals\": [],\n+            \"comments\": [],\n+            \"created_at\": now,\n+\
+      \            \"updated_at\": now,\n+        }\n+        mrs.append(mr)\n+        save_merge_requests(project, mrs)\n+    _broadcast_gitlab_event(\"mr_created\", {\"project\": project, **mr})\n+  \
+      \  return jsonify(mr), 201\n+\n+\n+@bp.route(\"/api/gitlab/repos/<project>/merge-requests/<mr_id>\", methods=[\"GET\"])\n+def get_merge_request(project, mr_id):\n+    with _gitlab_lock:\n+       \
+      \ if project not in _gitlab_repos:\n+            return jsonify({\"error\": \"repo not found\"}), 404\n+        for mr in _gitlab_merge_requests.get(project, []):\n+            if mr[\"id\"] == mr_id:\n\
+      +                return jsonify(dict(mr))\n+    return jsonify({\"error\": \"merge request not found\"}), 404\n+\n+\n+@bp.route(\"/api/gitlab/repos/<project>/merge-requests/<mr_id>/comment\", methods=[\"\
+      POST\"])\n+def comment_on_mr(project, mr_id):\n+    data = request.get_json(force=True)\n+    text = data.get(\"text\", \"\").strip()\n+    if not text:\n+        return jsonify({\"error\": \"text\
+      \ required\"}), 400\n+    with _gitlab_lock:\n+        if project not in _gitlab_repos:\n+            return jsonify({\"error\": \"repo not found\"}), 404\n+        for mr in _gitlab_merge_requests.get(project,\
+      \ []):\n+            if mr[\"id\"] == mr_id:\n+                comment = {\n+                    \"author\": data.get(\"author\", \"System\"),\n+                    \"text\": text,\n+            \
+      \        \"timestamp\": time.time(),\n+                }\n+                mr[\"comments\"].append(comment)\n+                mr[\"updated_at\"] = time.time()\n+                save_merge_requests(project,\
+      \ _gitlab_merge_requests[project])\n+                return jsonify(comment), 201\n+    return jsonify({\"error\": \"merge request not found\"}), 404\n+\n+\n+@bp.route(\"/api/gitlab/repos/<project>/merge-requests/<mr_id>\"\
+      , methods=[\"PUT\"])\n+def update_mr(project, mr_id):\n+    data = request.get_json(force=True)\n+    new_status = data.get(\"status\")\n+    with _gitlab_lock:\n+        if project not in _gitlab_repos:\n\
+      +            return jsonify({\"error\": \"repo not found\"}), 404\n+        for mr in _gitlab_merge_requests.get(project, []):\n+            if mr[\"id\"] == mr_id:\n+                if new_status:\n\
+      +                    current = mr[\"status\"]\n+                    # State machine: open -> closed|merged, closed -> open, merged -> (none)\n+                    valid_transitions = {\n+        \
+      \                \"open\": {\"closed\"},\n+                        \"closed\": {\"open\"},\n+                        \"merged\": set(),\n+                    }\n+                    if new_status\
+      \ not in valid_transitions.get(current, set()):\n+                        return jsonify({\"error\": f\"cannot transition from {current} to {new_status}\"}), 400\n+                    mr[\"status\"\
+      ] = new_status\n+                mr[\"updated_at\"] = time.time()\n+                save_merge_requests(project, _gitlab_merge_requests[project])\n+                return jsonify(mr)\n+    return\
+      \ jsonify({\"error\": \"merge request not found\"}), 404\n+\n+\n+@bp.route(\"/api/gitlab/repos/<project>/merge-requests/<mr_id>/approve\", methods=[\"POST\"])\n+def approve_mr(project, mr_id):\n+\
+      \    data = request.get_json(force=True)\n+    author = data.get(\"author\", \"System\")\n+    with _gitlab_lock:\n+        if project not in _gitlab_repos:\n+            return jsonify({\"error\"\
+      : \"repo not found\"}), 404\n+        for mr in _gitlab_merge_requests.get(project, []):\n+            if mr[\"id\"] == mr_id:\n+                if mr[\"status\"] != \"open\":\n+                 \
+      \   return jsonify({\"error\": f\"cannot approve: status is {mr['status']}\"}), 400\n+                if author == mr[\"author\"]:\n+                    return jsonify({\"error\": \"cannot approve\
+      \ your own merge request\"}), 400\n+                approvals = mr.setdefault(\"approvals\", [])\n+                if author not in approvals:\n+                    approvals.append(author)\n+   \
+      \                 mr[\"updated_at\"] = time.time()\n+                    save_merge_requests(project, _gitlab_merge_requests[project])\n+                return jsonify(mr)\n+    return jsonify({\"\
+      error\": \"merge request not found\"}), 404\n+\n+\n+@bp.route(\"/api/gitlab/repos/<project>/merge-requests/<mr_id>/merge\", methods=[\"POST\"])\n+def merge_mr(project, mr_id):\n+    data = request.get_json(force=True)\
+      \ if request.data else {}\n+    with _gitlab_lock:\n+        if project not in _gitlab_repos:\n+            return jsonify({\"error\": \"repo not found\"}), 404\n+        for mr in _gitlab_merge_requests.get(project,\
+      \ []):\n+            if mr[\"id\"] == mr_id:\n+                if mr[\"status\"] != \"open\":\n+                    return jsonify({\"error\": f\"cannot merge: status is {mr['status']}\"}), 400\n\
+      +                approvals = mr.get(\"approvals\", [])\n+                if not approvals:\n+                    return jsonify({\"error\": \"cannot merge: no approvals. At least one non-author approval\
+      \ required\"}), 400\n+                mr[\"status\"] = \"merged\"\n+                mr[\"merged_by\"] = data.get(\"author\", \"System\")\n+                mr[\"merged_at\"] = time.time()\n+      \
+      \          mr[\"updated_at\"] = time.time()\n+                save_merge_requests(project, _gitlab_merge_requests[project])\n+                _broadcast_gitlab_event(\"mr_merged\", {\"project\": project,\
+      \ \"id\": mr_id, \"title\": mr[\"title\"]})\n+                return jsonify(mr)\n+    return jsonify({\"error\": \"merge request not found\"}), 404\ndiff --git a/lib/webapp/state.py b/lib/webapp/state.py\n\
+      index 7ce1119..017b5e8 100644\n--- a/lib/webapp/state.py\n+++ b/lib/webapp/state.py\n@@ -47,9 +47,10 @@ _folders: dict[str, dict] = {}\n _folder_access: dict[str, set[str]] = {}\n _folder_lock = threading.Lock()\n\
+      \ \n-# GitLab state: repo_name -> metadata, repo_name -> commit list\n+# GitLab state: repo_name -> metadata, repo_name -> commit list, repo_name -> MR list\n _gitlab_repos: dict[str, dict] = {}\n\
+      \ _gitlab_commits: dict[str, list[dict]] = {}\n+_gitlab_merge_requests: dict[str, list[dict]] = {}\n _gitlab_lock = threading.Lock()\n \n # Tickets state: ticket_id -> full ticket dict\ndiff --git\
+      \ a/lib/webapp/template.py b/lib/webapp/template.py\nindex e9b74ac..8ff4da6 100644\n--- a/lib/webapp/template.py\n+++ b/lib/webapp/template.py\n@@ -926,6 +926,7 @@ WEB_UI = \"\"\"<!DOCTYPE html>\n\
+      \       <div id=\"gitlab-toggle-bar\">\n         <button class=\"gitlab-toggle-btn active\" data-view=\"tree\" id=\"gl-toggle-tree\">Files</button>\n         <button class=\"gitlab-toggle-btn\" data-view=\"\
+      commits\" id=\"gl-toggle-commits\">Commits</button>\n+        <button class=\"gitlab-toggle-btn\" data-view=\"mrs\" id=\"gl-toggle-mrs\">Merge Requests</button>\n       </div>\n       <div id=\"gitlab-content\"\
+      >\n         <div id=\"gitlab-empty\">No repositories yet.</div>\n@@ -2564,6 +2565,7 @@ async function loadRepos() {\n   }\n   if (glCurrentRepo) {\n     if (glCurrentView === 'tree') loadTree(glCurrentRepo,\
+      \ glCurrentPath);\n+    else if (glCurrentView === 'mrs') loadMergeRequests(glCurrentRepo);\n     else loadCommits(glCurrentRepo);\n   } else {\n     renderRepoLanding();\n@@ -2645,6 +2647,8 @@ function\
+      \ updateGlToggles() {\n     'gitlab-toggle-btn' + (glCurrentView === 'tree' ? ' active' : '');\n   document.getElementById('gl-toggle-commits').className =\n     'gitlab-toggle-btn' + (glCurrentView\
+      \ === 'commits' ? ' active' : '');\n+  document.getElementById('gl-toggle-mrs').className =\n+    'gitlab-toggle-btn' + (glCurrentView === 'mrs' ? ' active' : '');\n }\n \n document.getElementById('gl-toggle-tree').addEventListener('click',\
+      \ () => {\n@@ -2657,6 +2661,239 @@ document.getElementById('gl-toggle-commits').addEventListener('click', () => {\n   glCurrentView = 'commits'; updateGlToggles();\n   loadCommits(glCurrentRepo);\n\
+      \ });\n+document.getElementById('gl-toggle-mrs').addEventListener('click', () => {\n+  if (!glCurrentRepo) return;\n+  glCurrentView = 'mrs'; updateGlToggles();\n+  loadMergeRequests(glCurrentRepo);\n\
+      +});\n+\n+let _currentMrId = null;\n+\n+async function loadMergeRequests(project) {\n+  const content = document.getElementById('gitlab-content');\n+  const resp = await fetch('/api/gitlab/repos/'\
+      \ + encodeURIComponent(project) + '/merge-requests');\n+  const mrs = await resp.json();\n+  let html = '<div style=\"display:flex;justify-content:flex-end;margin-bottom:12px\">';\n+  html += '<button\
+      \ onclick=\"showCreateMR()\" style=\"background:var(--accent);color:var(--text-bright);border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600\">+ New Merge Request</button>';\n\
+      +  html += '</div>';\n+  if (!mrs.length) {\n+    content.innerHTML = html + '<div style=\"text-align:center;color:var(--text-dimmer);padding:20px\">No merge requests yet.</div>';\n+    return;\n\
+      +  }\n+  mrs.forEach(function(mr) {\n+    const statusColors = {open: '#2ecc71', merged: '#9b59b6', closed: '#e94560'};\n+    const statusColor = statusColors[mr.status] || 'var(--text-dim)';\n+ \
+      \   const age = _memoTimeAgo(mr.created_at);\n+    const approvals = (mr.approvals || []).length;\n+    const comments = (mr.comments || []).length;\n+    html += '<div class=\"commit-item\" style=\"\
+      cursor:pointer;border-bottom:1px solid var(--border-dark);padding:12px\" data-project=\"' + escapeHtml(project) + '\" data-mr=\"' + escapeHtml(mr.id) + '\" onclick=\"viewMergeRequest(this.dataset.project,\
+      \ this.dataset.mr)\">';\n+    html += '<div style=\"display:flex;align-items:center;gap:8px\">';\n+    html += '<span style=\"font-family:monospace;font-size:12px;color:var(--highlight)\">' + escapeHtml(mr.id)\
+      \ + '</span>';\n+    html += '<span style=\"font-size:14px;font-weight:700;color:var(--text);flex:1\">' + escapeHtml(mr.title) + '</span>';\n+    html += '<span style=\"font-size:10px;font-weight:600;padding:2px\
+      \ 8px;border-radius:4px;background:' + statusColor + ';color:var(--text-bright);text-transform:uppercase\">' + escapeHtml(mr.status) + '</span>';\n+    html += '</div>';\n+    html += '<div style=\"\
+      font-size:12px;color:var(--text-dimmer);margin-top:4px\">';\n+    const adds = mr.additions || 0;\n+    const dels = mr.deletions || 0;\n+    html += escapeHtml(mr.author) + ' &middot; ' + age + '\
+      \ &middot; <span style=\"color:#2ecc71\">+' + adds + '</span> <span style=\"color:#e94560\">-' + dels + '</span> &middot; ' + comments + ' comment' + (comments !== 1 ? 's' : '') + ' &middot; ' + approvals\
+      \ + ' approval' + (approvals !== 1 ? 's' : '');\n+    html += '</div></div>';\n+  });\n+  content.innerHTML = html;\n+}\n+\n+async function viewMergeRequest(project, mrId) {\n+  _currentMrId = mrId;\n\
+      +  const content = document.getElementById('gitlab-content');\n+  const resp = await fetch('/api/gitlab/repos/' + encodeURIComponent(project) + '/merge-requests/' + encodeURIComponent(mrId));\n+ \
+      \ if (!resp.ok) { content.innerHTML = '<div style=\"color:var(--accent);padding:20px\">Merge request not found.</div>'; return; }\n+  const mr = await resp.json();\n+\n+  const statusColors = {open:\
+      \ '#2ecc71', merged: '#9b59b6', closed: '#e94560'};\n+  const statusColor = statusColors[mr.status] || 'var(--text-dim)';\n+  const approvals = mr.approvals || [];\n+\n+  let html = '<div style=\"\
+      padding:4px 0\">';\n+  html += '<div style=\"display:flex;align-items:center;gap:8px;margin-bottom:8px\">';\n+  html += '<span style=\"font-family:monospace;color:var(--highlight)\">' + escapeHtml(mr.id)\
+      \ + '</span>';\n+  html += '<span style=\"font-size:18px;font-weight:700;color:var(--text)\">' + escapeHtml(mr.title) + '</span>';\n+  html += '<span style=\"font-size:10px;font-weight:600;padding:2px\
+      \ 8px;border-radius:4px;background:' + statusColor + ';color:var(--text-bright);text-transform:uppercase\">' + escapeHtml(mr.status) + '</span>';\n+  html += '</div>';\n+  html += '<div style=\"font-size:12px;color:var(--text-dim);margin-bottom:12px\"\
+      >' + escapeHtml(mr.author) + ' &middot; ' + new Date(mr.created_at * 1000).toLocaleString() + '</div>';\n+\n+  if (mr.description) {\n+    html += '<div style=\"font-size:13px;color:var(--text);margin-bottom:16px;white-space:pre-wrap\"\
+      >' + escapeHtml(mr.description) + '</div>';\n+  }\n+\n+  // Approvals\n+  html += '<div style=\"font-size:12px;color:var(--text-dim);margin-bottom:8px\"><strong>Approvals:</strong> ';\n+  html +=\
+      \ approvals.length ? escapeHtml(approvals.join(', ')) : '<em>none</em>';\n+  html += '</div>';\n+\n+  // Action buttons\n+  if (mr.status === 'open') {\n+    html += '<div style=\"display:flex;gap:6px;margin-bottom:16px\"\
+      >';\n+    html += '<button data-project=\"' + escapeHtml(project) + '\" data-mr=\"' + escapeHtml(mr.id) + '\" onclick=\"approveMR(this.dataset.project,this.dataset.mr)\" style=\"background:#2ecc71;color:var(--text-bright);border:none;padding:6px\
+      \ 14px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600\">Approve</button>';\n+    html += '<button data-project=\"' + escapeHtml(project) + '\" data-mr=\"' + escapeHtml(mr.id) + '\"\
+      \ onclick=\"mergeMR(this.dataset.project,this.dataset.mr)\" style=\"background:#9b59b6;color:var(--text-bright);border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600\"\
+      >Merge</button>';\n+    html += '<button data-project=\"' + escapeHtml(project) + '\" data-mr=\"' + escapeHtml(mr.id) + '\" onclick=\"closeMR(this.dataset.project,this.dataset.mr)\" style=\"background:transparent;color:var(--accent);border:1px\
+      \ solid var(--accent);padding:6px 14px;border-radius:6px;cursor:pointer;font-size:12px\">Close</button>';\n+    html += '</div>';\n+  } else if (mr.status === 'closed') {\n+    html += '<div style=\"\
+      display:flex;gap:6px;margin-bottom:16px\">';\n+    html += '<button data-project=\"' + escapeHtml(project) + '\" data-mr=\"' + escapeHtml(mr.id) + '\" onclick=\"reopenMR(this.dataset.project,this.dataset.mr)\"\
+      \ style=\"background:#2ecc71;color:var(--text-bright);border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600\">Reopen</button>';\n+    html += '</div>';\n+  }\n\
+      +\n+  // Diff\n+  html += '<div style=\"font-size:14px;font-weight:700;color:var(--text);margin-bottom:8px;border-bottom:1px solid var(--border-dark);padding-bottom:4px\">Diff</div>';\n+  html +=\
+      \ '<pre style=\"background:var(--input-bg);border:1px solid var(--border-dark);border-radius:6px;padding:12px;font-size:12px;overflow-x:auto;line-height:1.5\">';\n+  const diffLines = (mr.diff ||\
+      \ '').split('\\\\n').length > 1 ? (mr.diff || '').split('\\\\n') : (mr.diff || '').split('\\\\n');\n+  diffLines.forEach(function(line) {\n+    if (line.startsWith('+') && !line.startsWith('+++'))\
+      \ {\n+      html += '<span style=\"color:#2ecc71\">' + escapeHtml(line) + '</span>\\\\n';\n+    } else if (line.startsWith('-') && !line.startsWith('---')) {\n+      html += '<span style=\"color:#e94560\"\
+      >' + escapeHtml(line) + '</span>\\\\n';\n+    } else if (line.startsWith('@@')) {\n+      html += '<span style=\"color:#3498db\">' + escapeHtml(line) + '</span>\\\\n';\n+    } else if (line.startsWith('diff\
+      \ ') || line.startsWith('index ') || line.startsWith('---') || line.startsWith('+++')) {\n+      html += '<span style=\"color:var(--text-dim);font-weight:700\">' + escapeHtml(line) + '</span>\\\\\
+      n';\n+    } else {\n+      html += escapeHtml(line) + '\\\\n';\n+    }\n+  });\n+  html += '</pre>';\n+\n+  // Comments\n+  const comments = mr.comments || [];\n+  html += '<div style=\"font-size:14px;font-weight:700;color:var(--text);margin:16px\
+      \ 0 8px;border-bottom:1px solid var(--border-dark);padding-bottom:4px\">' + comments.length + ' Comment' + (comments.length !== 1 ? 's' : '') + '</div>';\n+  comments.forEach(function(c) {\n+    html\
+      \ += '<div style=\"background:var(--bg);border:1px solid var(--border-dark);border-radius:6px;padding:10px;margin-bottom:8px\">';\n+    html += '<div style=\"font-size:12px;font-weight:700;color:var(--highlight)\"\
+      >' + escapeHtml(c.author) + ' <span style=\"color:var(--text-dimmer);font-weight:400\">' + new Date(c.timestamp * 1000).toLocaleString() + '</span></div>';\n+    html += '<div style=\"font-size:13px;color:var(--text);margin-top:6px;white-space:pre-wrap\"\
+      >' + escapeHtml(c.text) + '</div>';\n+    html += '</div>';\n+  });\n+\n+  // Add comment form\n+  if (mr.status === 'open') {\n+    html += '<div style=\"margin-top:12px\">';\n+    html += '<div\
+      \ style=\"display:flex;gap:8px;margin-bottom:8px\"><input id=\"mr-comment-name\" type=\"text\" placeholder=\"Name\" style=\"flex:1;background:var(--input-bg);color:var(--text);border:1px solid var(--border-dark);padding:6px\
+      \ 10px;border-radius:4px;font-size:12px\" autocomplete=\"off\" />';\n+    html += '<select id=\"mr-comment-role\" style=\"flex:1;background:var(--input-bg);color:var(--text);border:1px solid var(--border-dark);padding:6px\
+      \ 10px;border-radius:4px;font-size:12px\"></select></div>';\n+    html += '<textarea id=\"mr-comment-text\" placeholder=\"Write a review comment...\" style=\"width:100%;min-height:60px;background:var(--input-bg);color:var(--text);border:1px\
+      \ solid var(--border-dark);padding:10px;border-radius:6px;font-family:inherit;resize:vertical;font-size:13px;box-sizing:border-box\"></textarea>';\n+    html += '<div style=\"display:flex;justify-content:flex-end;margin-top:6px\"\
+      ><button data-project=\"' + escapeHtml(project) + '\" data-mr=\"' + escapeHtml(mr.id) + '\" onclick=\"commentOnMR(this.dataset.project,this.dataset.mr)\" class=\"modal-btn-primary\" style=\"font-size:12px\"\
+      >Comment</button></div>';\n+    html += '</div>';\n+  }\n+\n+  html += '</div>';\n+  content.innerHTML = html;\n+  // Populate role dropdown for comments\n+  const cmtRole = document.getElementById('mr-comment-role');\n\
+      +  if (cmtRole) { populateRoleSelect(cmtRole, HUMAN_ROLES, {empty: true, emptyLabel: 'No role', default: 'Scenario Director'}); }\n+}\n+\n+function _getMrAuthor() {\n+  const name = document.getElementById('mr-comment-name');\n\
+      +  const role = document.getElementById('mr-comment-role');\n+  if (!name || !role) return 'Scenario Director';\n+  const n = name.value.trim() || 'Anonymous';\n+  const r = role.value;\n+  return\
+      \ r ? n + ' (' + r + ')' : n;\n+}\n+\n+async function approveMR(project, mrId) {\n+  const resp = await fetch('/api/gitlab/repos/' + project + '/merge-requests/' + mrId + '/approve', {\n+    method:\
+      \ 'POST', headers: {'Content-Type': 'application/json'},\n+    body: JSON.stringify({author: _getMrAuthor()})\n+  });\n+  const data = await resp.json();\n+  if (data.error) { showNotice(data.error);\
+      \ return; }\n+  showNotice('Approved ' + mrId);\n+  viewMergeRequest(project, mrId);\n+}\n+\n+async function mergeMR(project, mrId) {\n+  const resp = await fetch('/api/gitlab/repos/' + project +\
+      \ '/merge-requests/' + mrId + '/merge', {\n+    method: 'POST', headers: {'Content-Type': 'application/json'},\n+    body: JSON.stringify({author: _getMrAuthor()})\n+  });\n+  const data = await resp.json();\n\
+      +  if (data.error) { showNotice(data.error); return; }\n+  showNotice('Merged ' + mrId);\n+  viewMergeRequest(project, mrId);\n+}\n+\n+async function closeMR(project, mrId) {\n+  const resp = await\
+      \ fetch('/api/gitlab/repos/' + project + '/merge-requests/' + mrId, {\n+    method: 'PUT', headers: {'Content-Type': 'application/json'},\n+    body: JSON.stringify({status: 'closed'})\n+  });\n+\
+      \  const data = await resp.json();\n+  if (data.error) { showNotice(data.error); return; }\n+  showNotice('Closed ' + mrId);\n+  viewMergeRequest(project, mrId);\n+}\n+\n+async function reopenMR(project,\
+      \ mrId) {\n+  const resp = await fetch('/api/gitlab/repos/' + project + '/merge-requests/' + mrId, {\n+    method: 'PUT', headers: {'Content-Type': 'application/json'},\n+    body: JSON.stringify({status:\
+      \ 'open'})\n+  });\n+  const data = await resp.json();\n+  if (data.error) { showNotice(data.error); return; }\n+  showNotice('Reopened ' + mrId);\n+  viewMergeRequest(project, mrId);\n+}\n+\n+async\
+      \ function commentOnMR(project, mrId) {\n+  const text = document.getElementById('mr-comment-text').value.trim();\n+  if (!text) return;\n+  await fetch('/api/gitlab/repos/' + project + '/merge-requests/'\
+      \ + mrId + '/comment', {\n+    method: 'POST', headers: {'Content-Type': 'application/json'},\n+    body: JSON.stringify({text: text, author: _getMrAuthor()})\n+  });\n+  viewMergeRequest(project,\
+      \ mrId);\n+}\n+\n+function showCreateMR() {\n+  const content = document.getElementById('gitlab-content');\n+  let html = '<div style=\"max-width:700px\">';\n+  html += '<h3 style=\"color:var(--text);margin-bottom:12px\"\
+      >New Merge Request</h3>';\n+  html += '<div style=\"margin-bottom:10px\"><label style=\"font-size:12px;color:var(--text-dim);font-weight:600;display:block;margin-bottom:4px\">Author</label>';\n+ \
+      \ html += '<div style=\"display:flex;gap:8px\"><input id=\"mr-create-name\" type=\"text\" placeholder=\"Name\" style=\"flex:1;background:var(--input-bg);color:var(--text);border:1px solid var(--border-dark);padding:6px\
+      \ 10px;border-radius:4px;font-size:12px\" autocomplete=\"off\" />';\n+  html += '<select id=\"mr-create-role\" style=\"flex:1;background:var(--input-bg);color:var(--text);border:1px solid var(--border-dark);padding:6px\
+      \ 10px;border-radius:4px;font-size:12px\"></select></div></div>';\n+  html += '<div style=\"margin-bottom:10px\"><label style=\"font-size:12px;color:var(--text-dim);font-weight:600;display:block;margin-bottom:4px\"\
+      >Title</label>';\n+  html += '<input id=\"mr-create-title\" type=\"text\" placeholder=\"MR title...\" style=\"width:100%;background:var(--input-bg);color:var(--text);border:1px solid var(--border-dark);padding:8px\
+      \ 12px;border-radius:6px;font-size:14px;box-sizing:border-box\" autocomplete=\"off\" /></div>';\n+  html += '<div style=\"margin-bottom:10px\"><label style=\"font-size:12px;color:var(--text-dim);font-weight:600;display:block;margin-bottom:4px\"\
+      >Description</label>';\n+  html += '<textarea id=\"mr-create-desc\" placeholder=\"What does this MR do?\" style=\"width:100%;min-height:60px;background:var(--input-bg);color:var(--text);border:1px\
+      \ solid var(--border-dark);padding:8px 12px;border-radius:6px;font-size:13px;font-family:inherit;resize:vertical;box-sizing:border-box\"></textarea></div>';\n+  html += '<div style=\"margin-bottom:10px\"\
+      ><label style=\"font-size:12px;color:var(--text-dim);font-weight:600;display:block;margin-bottom:4px\">Diff (unified format)</label>';\n+  html += '<textarea id=\"mr-create-diff\" placeholder=\"Paste\
+      \ unified diff here...\" style=\"width:100%;min-height:200px;background:var(--input-bg);color:var(--text);border:1px solid var(--border-dark);padding:8px 12px;border-radius:6px;font-size:12px;font-family:monospace;resize:vertical;box-sizing:border-box\"\
+      ></textarea></div>';\n+  html += '<div style=\"display:flex;gap:8px;justify-content:flex-end\">';\n+  html += '<button onclick=\"loadMergeRequests(glCurrentRepo)\" class=\"session-btn\">Cancel</button>';\n\
+      +  html += '<button onclick=\"submitCreateMR()\" class=\"modal-btn-primary\" style=\"font-size:12px\">Create MR</button>';\n+  html += '</div></div>';\n+  content.innerHTML = html;\n+  const roleSel\
+      \ = document.getElementById('mr-create-role');\n+  if (roleSel) { populateRoleSelect(roleSel, HUMAN_ROLES, {empty: true, emptyLabel: 'No role', default: 'Scenario Director'}); }\n+  document.getElementById('mr-create-title').focus();\n\
+      +}\n+\n+async function submitCreateMR() {\n+  const title = document.getElementById('mr-create-title').value.trim();\n+  if (!title) { document.getElementById('mr-create-title').focus(); return; }\n\
+      +  const description = document.getElementById('mr-create-desc').value.trim();\n+  const diff = document.getElementById('mr-create-diff').value.trim();\n+  if (!diff) { document.getElementById('mr-create-diff').focus();\
+      \ return; }\n+  const mrName = document.getElementById('mr-create-name').value.trim() || 'Anonymous';\n+  const mrRole = document.getElementById('mr-create-role').value;\n+  const author = mrRole\
+      \ ? mrName + ' (' + mrRole + ')' : mrName;\n+  const resp = await fetch('/api/gitlab/repos/' + encodeURIComponent(glCurrentRepo) + '/merge-requests', {\n+    method: 'POST',\n+    headers: {'Content-Type':\
+      \ 'application/json'},\n+    body: JSON.stringify({title: title, description: description, diff: diff, author: author})\n+  });\n+  if (resp.ok) {\n+    const mr = await resp.json();\n+    showNotice('Created\
+      \ ' + mr.id + ': ' + title);\n+    viewMergeRequest(glCurrentRepo, mr.id);\n+  }\n+}\n \n async function loadTree(project, path) {\n   let url = '/api/gitlab/repos/' + encodeURIComponent(project)\
+      \ + '/tree';\n"
+    reviewers:
+    - maintainer
+  - type: message
+    channel: '#dev'
+    sender: 1.z3r0 (Collaborator)
+    content: 'MR !1 is up for review: ''Add GitLab merge request subsystem with approval workflow''. 7 files changed, +557 -5. @T4NN3R can you take a look? The diff is in the MR — state module, REST endpoints,
+      MCP tools, and the UI.'
+    is_event: true
 settings:
   enable_memos: true
   enable_blog: true

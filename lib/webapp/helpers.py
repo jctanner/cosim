@@ -32,6 +32,7 @@ from lib.webapp.state import (
     _folders,
     _gitlab_commits,
     _gitlab_lock,
+    _gitlab_merge_requests,
     _gitlab_repos,
     _lock,
     _messages,
@@ -360,10 +361,11 @@ def _init_gitlab():
     with _gitlab_lock:
         _gitlab_repos.clear()
         _gitlab_commits.clear()
+        _gitlab_merge_requests.clear()
         index = load_repos_index()
         _gitlab_repos.update(index)
-        # Load commit logs for each repo
         for repo_name in index:
+            # Load commit logs
             commits_path = GITLAB_DIR / repo_name / "_commits.json"
             if commits_path.exists():
                 try:
@@ -372,6 +374,9 @@ def _init_gitlab():
                     _gitlab_commits[repo_name] = []
             else:
                 _gitlab_commits[repo_name] = []
+            # Load merge requests
+            from lib.gitlab import load_merge_requests
+            _gitlab_merge_requests[repo_name] = load_merge_requests(repo_name)
 
 
 def _init_tickets():

@@ -185,13 +185,19 @@ MCP_TOOL_NAMES = [
     "list_docs",
     "delete_doc",
     "append_doc",
-    # GitLab (6)
+    # GitLab (12)
     "list_repos",
     "create_repo",
     "commit_files",
     "read_file",
     "list_repo_tree",
     "get_repo_log",
+    "create_merge_request",
+    "list_merge_requests",
+    "get_merge_request",
+    "comment_on_merge_request",
+    "approve_merge_request",
+    "merge_merge_request",
     # Tickets (5)
     "get_ticket",
     "create_ticket",
