@@ -4,19 +4,19 @@ import io
 import json
 import tarfile
 import time
+from urllib.parse import unquote
 
 from flask import Blueprint, jsonify, request, send_file
 
 from lib.gitlab import GITLAB_DIR, generate_commit_id, next_mr_id, save_merge_requests, save_repos_index
+from lib.webapp.helpers import _broadcast_gitlab_event
+from lib.webapp.state import _gitlab_commits, _gitlab_lock, _gitlab_merge_requests, _gitlab_repos
 
 
 def _normalize_mr_id(mr_id: str) -> str:
     """Normalize MR ID to canonical !N format. Accepts '1', '!1', '%211'."""
-    from urllib.parse import unquote
     mr_id = unquote(mr_id).strip().lstrip("!")
     return f"!{mr_id}"
-from lib.webapp.helpers import _broadcast_gitlab_event
-from lib.webapp.state import _gitlab_commits, _gitlab_lock, _gitlab_merge_requests, _gitlab_repos
 
 bp = Blueprint("gitlab", __name__)
 

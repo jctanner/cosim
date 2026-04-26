@@ -3609,9 +3609,31 @@ function renderThoughtsList(filter) {
     const ts = new Date(t.timestamp * 1000);
     const timeStr = ts.toLocaleTimeString();
     const dateStr = ts.toLocaleDateString();
-    const preview = (t.thinking || t.response || '').substring(0, 60).replace(/[\\n\\r]+/g, ' ');
+    const raw = t.thinking || t.response || '';
+    const dashIdx = raw.indexOf('\\n---\\n');
+    const thinkPart = dashIdx > -1 ? raw.substring(0, dashIdx) : raw;
+    const statsPart = dashIdx > -1 ? raw.substring(dashIdx + 5).trim() : '';
+    const preview = thinkPart.substring(0, 80).replace(/[\\n\\r]+/g, ' ');
+    let statsHtml = '';
+    if (statsPart) {
+      const costMatch = statsPart.match(/\\$(\\d+\\.\\d+)/);
+      let coloredStats = escapeHtml(statsPart);
+      if (costMatch) {
+        const cost = parseFloat(costMatch[1]);
+        let costColor = '#2ecc71';
+        let prefix = '';
+        if (cost >= 10.0) { costColor = '#e94560'; prefix = '🔥 '; }
+        else if (cost >= 5.0) costColor = '#e94560';
+        else if (cost > 2.50) costColor = '#f39c12';
+        coloredStats = escapeHtml(statsPart).replace(
+          escapeHtml(costMatch[0]),
+          prefix + '<span style="color:' + costColor + '">' + escapeHtml(costMatch[0]) + '</span>'
+        );
+      }
+      statsHtml = '<div style="font-size:9px;margin-top:3px;color:var(--text-dimmer)">' + coloredStats + '</div>';
+    }
     item.innerHTML = '<div class="thought-item-time">' + dateStr + ' ' + timeStr + '</div>' +
-      '<div class="thought-item-preview">' + escapeHtml(preview) + '</div>';
+      '<div class="thought-item-preview">' + escapeHtml(preview) + '</div>' + statsHtml;
     item.addEventListener('click', () => selectThought(idx));
     list.appendChild(item);
   });

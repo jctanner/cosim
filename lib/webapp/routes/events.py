@@ -209,7 +209,6 @@ def trigger_event():
                 results.append({"type": "blog", "action": "created", "slug": post["slug"], "title": title})
         elif action_type == "merge_request":
             from lib.gitlab import next_mr_id, save_merge_requests
-
             from lib.webapp.state import _gitlab_lock, _gitlab_merge_requests, _gitlab_repos
 
             project = action.get("project", "")
@@ -224,8 +223,8 @@ def trigger_event():
                         mrs = _gitlab_merge_requests.setdefault(project, [])
                         mr_id = next_mr_id(mrs)
                         now = time.time()
-                        additions = sum(1 for l in diff.split("\n") if l.startswith("+") and not l.startswith("+++"))
-                        deletions = sum(1 for l in diff.split("\n") if l.startswith("-") and not l.startswith("---"))
+                        additions = sum(1 for ln in diff.split("\n") if ln.startswith("+") and not ln.startswith("+++"))
+                        deletions = sum(1 for ln in diff.split("\n") if ln.startswith("-") and not ln.startswith("---"))
                         mr = {
                             "id": mr_id,
                             "title": title,

@@ -677,7 +677,7 @@ def _register_gitlab_tools(
         )
         _record_audit(
             agent_key, "comment_on_merge_request", {"project": project, "mr_id": mr_id},
-            f"commented", (time.time() - t0) * 1000,
+            "commented", (time.time() - t0) * 1000,
         )
         return json.dumps(result)
 
@@ -695,7 +695,7 @@ def _register_gitlab_tools(
         )
         _record_audit(
             agent_key, "approve_merge_request", {"project": project, "mr_id": mr_id},
-            f"approved", (time.time() - t0) * 1000,
+            "approved", (time.time() - t0) * 1000,
         )
         return json.dumps(result)
 
@@ -713,7 +713,7 @@ def _register_gitlab_tools(
         )
         _record_audit(
             agent_key, "merge_merge_request", {"project": project, "mr_id": mr_id},
-            f"merged", (time.time() - t0) * 1000,
+            "merged", (time.time() - t0) * 1000,
         )
         return json.dumps(result)
 
