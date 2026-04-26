@@ -18,6 +18,7 @@ def _normalize_mr_id(mr_id: str) -> str:
     mr_id = unquote(mr_id).strip().lstrip("!")
     return f"!{mr_id}"
 
+
 bp = Blueprint("gitlab", __name__)
 
 
@@ -353,7 +354,9 @@ def merge_mr(project, mr_id):
                     return jsonify({"error": f"cannot merge: status is {mr['status']}"}), 400
                 approvals = mr.get("approvals", [])
                 if not approvals:
-                    return jsonify({"error": "cannot merge: no approvals. At least one non-author approval required"}), 400
+                    return jsonify(
+                        {"error": "cannot merge: no approvals. At least one non-author approval required"}
+                    ), 400
                 mr["status"] = "merged"
                 mr["merged_by"] = data.get("author", "System")
                 mr["merged_at"] = time.time()

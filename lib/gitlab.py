@@ -58,6 +58,7 @@ def generate_commit_id(message: str, author: str, timestamp: float) -> str:
 
 # --- Merge Request helpers ---
 
+
 def load_merge_requests(project: str) -> list[dict]:
     """Load merge requests for a project from disk."""
     mr_path = GITLAB_DIR / project / "_merge_requests.json"

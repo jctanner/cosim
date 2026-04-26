@@ -674,7 +674,11 @@ class ContainerPool:
                         if cost:
                             summary_parts.append(f"${cost:.4f}")
                         if summary_parts:
-                            thinking_text = (thinking_text + "\n\n---\n" + ", ".join(summary_parts)) if thinking_text else ", ".join(summary_parts)
+                            thinking_text = (
+                                (thinking_text + "\n\n---\n" + ", ".join(summary_parts))
+                                if thinking_text
+                                else ", ".join(summary_parts)
+                            )
                         break
 
             if not success:

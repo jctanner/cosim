@@ -626,8 +626,11 @@ def _register_gitlab_tools(
             payload["reviewers"] = reviewers
         result = await _flask("POST", f"/api/gitlab/repos/{project}/merge-requests", flask_url, json=payload)
         _record_audit(
-            agent_key, "create_merge_request", {"project": project, "title": title},
-            f"created {result.get('id', '?')}", (time.time() - t0) * 1000,
+            agent_key,
+            "create_merge_request",
+            {"project": project, "title": title},
+            f"created {result.get('id', '?')}",
+            (time.time() - t0) * 1000,
         )
         return json.dumps(result)
 
@@ -656,10 +659,15 @@ def _register_gitlab_tools(
         if not _can_access_repo(project):
             return f"Error: you don't have access to repository '{project}'."
         t0 = time.time()
-        result = await _flask("GET", f"/api/gitlab/repos/{project}/merge-requests/{urllib.parse.quote(mr_id, safe='')}", flask_url)
+        result = await _flask(
+            "GET", f"/api/gitlab/repos/{project}/merge-requests/{urllib.parse.quote(mr_id, safe='')}", flask_url
+        )
         _record_audit(
-            agent_key, "get_merge_request", {"project": project, "mr_id": mr_id},
-            result.get("title", "?"), (time.time() - t0) * 1000,
+            agent_key,
+            "get_merge_request",
+            {"project": project, "mr_id": mr_id},
+            result.get("title", "?"),
+            (time.time() - t0) * 1000,
         )
         return json.dumps(result)
 
@@ -672,12 +680,17 @@ def _register_gitlab_tools(
             return f"Error: you don't have access to repository '{project}'."
         t0 = time.time()
         result = await _flask(
-            "POST", f"/api/gitlab/repos/{project}/merge-requests/{urllib.parse.quote(mr_id, safe='')}/comment",
-            flask_url, json={"text": text, "author": display_name},
+            "POST",
+            f"/api/gitlab/repos/{project}/merge-requests/{urllib.parse.quote(mr_id, safe='')}/comment",
+            flask_url,
+            json={"text": text, "author": display_name},
         )
         _record_audit(
-            agent_key, "comment_on_merge_request", {"project": project, "mr_id": mr_id},
-            "commented", (time.time() - t0) * 1000,
+            agent_key,
+            "comment_on_merge_request",
+            {"project": project, "mr_id": mr_id},
+            "commented",
+            (time.time() - t0) * 1000,
         )
         return json.dumps(result)
 
@@ -690,12 +703,17 @@ def _register_gitlab_tools(
             return f"Error: you don't have access to repository '{project}'."
         t0 = time.time()
         result = await _flask(
-            "POST", f"/api/gitlab/repos/{project}/merge-requests/{urllib.parse.quote(mr_id, safe='')}/approve",
-            flask_url, json={"author": display_name},
+            "POST",
+            f"/api/gitlab/repos/{project}/merge-requests/{urllib.parse.quote(mr_id, safe='')}/approve",
+            flask_url,
+            json={"author": display_name},
         )
         _record_audit(
-            agent_key, "approve_merge_request", {"project": project, "mr_id": mr_id},
-            "approved", (time.time() - t0) * 1000,
+            agent_key,
+            "approve_merge_request",
+            {"project": project, "mr_id": mr_id},
+            "approved",
+            (time.time() - t0) * 1000,
         )
         return json.dumps(result)
 
@@ -708,12 +726,17 @@ def _register_gitlab_tools(
             return f"Error: you don't have access to repository '{project}'."
         t0 = time.time()
         result = await _flask(
-            "POST", f"/api/gitlab/repos/{project}/merge-requests/{urllib.parse.quote(mr_id, safe='')}/merge",
-            flask_url, json={"author": display_name},
+            "POST",
+            f"/api/gitlab/repos/{project}/merge-requests/{urllib.parse.quote(mr_id, safe='')}/merge",
+            flask_url,
+            json={"author": display_name},
         )
         _record_audit(
-            agent_key, "merge_merge_request", {"project": project, "mr_id": mr_id},
-            "merged", (time.time() - t0) * 1000,
+            agent_key,
+            "merge_merge_request",
+            {"project": project, "mr_id": mr_id},
+            "merged",
+            (time.time() - t0) * 1000,
         )
         return json.dumps(result)
 

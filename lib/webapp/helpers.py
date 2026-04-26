@@ -376,6 +376,7 @@ def _init_gitlab():
                 _gitlab_commits[repo_name] = []
             # Load merge requests
             from lib.gitlab import load_merge_requests
+
             _gitlab_merge_requests[repo_name] = load_merge_requests(repo_name)
 
 
