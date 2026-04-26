@@ -30,7 +30,7 @@ pip install -e .
 ```bash
 cat > .env <<EOF
 CLAUDE_CODE_USE_VERTEX=1
-CLOUD_ML_REGION=us-east5
+CLOUD_ML_REGION=global
 ANTHROPIC_VERTEX_PROJECT_ID=<your-project-id>
 EOF
 ```
