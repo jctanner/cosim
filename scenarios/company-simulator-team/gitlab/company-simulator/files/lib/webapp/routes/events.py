@@ -5,15 +5,21 @@ import time
 from flask import Blueprint, jsonify, request
 
 from lib.tickets import generate_ticket_id
+from lib.webapp.helpers import (
+    _broadcast,
+    _broadcast_doc_event,
+    _broadcast_tickets_event,
+    _persist_message,
+    _save_index,
+)
 from lib.webapp.state import (
     DOCS_DIR,
-    _messages, _lock,
-    _tickets, _tickets_lock,
-    _docs_index, _docs_lock,
-)
-from lib.webapp.helpers import (
-    _persist_message, _broadcast,
-    _broadcast_tickets_event, _broadcast_doc_event, _save_index,
+    _docs_index,
+    _docs_lock,
+    _lock,
+    _messages,
+    _tickets,
+    _tickets_lock,
 )
 
 bp = Blueprint("events", __name__)
@@ -22,12 +28,14 @@ bp = Blueprint("events", __name__)
 @bp.route("/api/events/pool", methods=["GET"])
 def get_event_pool():
     from lib.events import get_event_pool as _get_pool
+
     return jsonify(_get_pool())
 
 
 @bp.route("/api/events/pool", methods=["POST"])
 def add_event_to_pool():
     from lib.events import add_event
+
     data = request.get_json(force=True)
     idx = add_event(data)
     return jsonify({"ok": True, "index": idx}), 201
@@ -36,6 +44,7 @@ def add_event_to_pool():
 @bp.route("/api/events/pool/<int:index>", methods=["PUT"])
 def update_event_in_pool(index):
     from lib.events import update_event
+
     data = request.get_json(force=True)
     update_event(index, data)
     return jsonify({"ok": True})
@@ -44,6 +53,7 @@ def update_event_in_pool(index):
 @bp.route("/api/events/pool/<int:index>", methods=["DELETE"])
 def delete_event_from_pool(index):
     from lib.events import delete_event
+
     delete_event(index)
     return jsonify({"ok": True})
 
@@ -51,6 +61,7 @@ def delete_event_from_pool(index):
 @bp.route("/api/events/trigger", methods=["POST"])
 def trigger_event():
     from lib.events import fire_event
+
     data = request.get_json(force=True)
     results = []
     # Execute each action
@@ -96,6 +107,7 @@ def trigger_event():
                 with _tickets_lock:
                     _tickets[ticket_id] = ticket
                     from lib.tickets import save_tickets_index
+
                     save_tickets_index(dict(_tickets))
                 _broadcast_tickets_event("created", ticket)
                 results.append({"type": "ticket", "id": ticket_id, "title": title})
@@ -103,6 +115,7 @@ def trigger_event():
             title = action.get("title", "")
             if title:
                 from lib.docs import slugify
+
                 author = action.get("author", "System")
                 folder = action.get("folder", "shared")
                 content = action.get("content", "")
@@ -130,6 +143,7 @@ def trigger_event():
                         results.append({"type": "document", "title": title, "folder": folder, "slug": slug})
         elif action_type == "email":
             from lib.email import send_email
+
             sender = action.get("sender", action.get("from", "System"))
             subject = action.get("subject", "")
             body = action.get("body", action.get("content", ""))
@@ -150,6 +164,7 @@ def trigger_event():
                 _broadcast(msg)
         elif action_type == "memo":
             from lib.memos import create_thread, post_memo
+
             title = action.get("title", action.get("thread_title", ""))
             creator = action.get("sender", action.get("creator", "System"))
             description = action.get("description", "")
@@ -169,7 +184,9 @@ def trigger_event():
                     post_memo(thread["id"], text, creator)
                 results.append({"type": "memo", "action": "created", "thread_id": thread["id"], "title": title})
         elif action_type == "blog":
-            from lib.blog import create_post as create_blog, reply_to_post as reply_blog
+            from lib.blog import create_post as create_blog
+            from lib.blog import reply_to_post as reply_blog
+
             title = action.get("title", "")
             body = action.get("body", action.get("content", ""))
             creator = action.get("sender", action.get("author", "System"))
@@ -181,7 +198,9 @@ def trigger_event():
                 # Reply to existing post
                 try:
                     reply = reply_blog(post_slug, text, creator)
-                    results.append({"type": "blog", "action": "replied", "post_slug": post_slug, "reply_id": reply["id"]})
+                    results.append(
+                        {"type": "blog", "action": "replied", "post_slug": post_slug, "reply_id": reply["id"]}
+                    )
                 except ValueError:
                     results.append({"type": "blog", "action": "reply_failed", "error": "post not found"})
             elif title:
@@ -197,4 +216,5 @@ def trigger_event():
 @bp.route("/api/events/log", methods=["GET"])
 def get_events_log():
     from lib.events import get_event_log
+
     return jsonify(get_event_log())

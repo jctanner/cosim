@@ -185,13 +185,19 @@ MCP_TOOL_NAMES = [
     "list_docs",
     "delete_doc",
     "append_doc",
-    # GitLab (6)
+    # GitLab (12)
     "list_repos",
     "create_repo",
     "commit_files",
     "read_file",
     "list_repo_tree",
     "get_repo_log",
+    "create_merge_request",
+    "list_merge_requests",
+    "get_merge_request",
+    "comment_on_merge_request",
+    "approve_merge_request",
+    "merge_merge_request",
     # Tickets (5)
     "get_ticket",
     "create_ticket",
@@ -444,6 +450,8 @@ class ContainerPool:
             f"AGENT_PERSONA_KEY={persona_key}",
             "-e",
             f"MCP_SERVER_URL={self._mcp_host}:{self._mcp_port}",
+            "-e",
+            "GCE_METADATA_HOST=127.0.0.1",
             *self._env_flags,
             "-v",
             f"{config_path.resolve()}:/home/agent/.mcp-config.json:ro,Z",
@@ -556,7 +564,8 @@ class ContainerPool:
             "--allowedTools",
             self._allowed_tools_str,
             "--output-format",
-            "json",
+            "stream-json",
+            "--verbose",
             "--model",
             self._model_id,
             "--max-turns",
@@ -618,14 +627,59 @@ class ContainerPool:
 
             success = exit_code == 0
 
-            # Try to extract response from JSON output
+            # Try to extract response and thinking from JSON output
             response_text = ""
+            thinking_text = ""
             if stdout_text.strip():
-                try:
-                    output = json.loads(stdout_text.strip())
-                    response_text = output.get("result", stdout_text.strip())
-                except (json.JSONDecodeError, ValueError):
-                    response_text = stdout_text.strip()
+                # Parse stream-json output: one JSON object per line
+                thinking_parts = []
+                for line in stdout_text.strip().split("\n"):
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        obj = json.loads(line)
+                    except (json.JSONDecodeError, ValueError):
+                        continue
+                    obj_type = obj.get("type", "")
+                    if obj_type == "result":
+                        response_text = obj.get("result", "")
+                    elif obj_type == "assistant":
+                        # Extract thinking blocks from assistant messages
+                        msg = obj.get("message", {})
+                        for block in msg.get("content", []):
+                            if isinstance(block, dict):
+                                if block.get("type") == "thinking" and block.get("thinking"):
+                                    thinking_parts.append(block["thinking"])
+                thinking_text = "\n\n".join(thinking_parts)
+                # Append turn summary from the result object
+                for line in stdout_text.strip().split("\n"):
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        obj = json.loads(line)
+                    except (json.JSONDecodeError, ValueError):
+                        continue
+                    if obj.get("type") == "result":
+                        num_turns = obj.get("num_turns", 0)
+                        cost = obj.get("total_cost_usd", 0)
+                        usage = obj.get("usage", {})
+                        out_tokens = usage.get("output_tokens", 0)
+                        summary_parts = []
+                        if num_turns:
+                            summary_parts.append(f"{num_turns} tool call(s)")
+                        if out_tokens:
+                            summary_parts.append(f"{out_tokens} output tokens")
+                        if cost:
+                            summary_parts.append(f"${cost:.4f}")
+                        if summary_parts:
+                            thinking_text = (
+                                (thinking_text + "\n\n---\n" + ", ".join(summary_parts))
+                                if thinking_text
+                                else ", ".join(summary_parts)
+                            )
+                        break
 
             if not success:
                 print(f"  {display_name}: exec exited with code {exit_code} ({format_duration(elapsed)})")
@@ -635,8 +689,10 @@ class ContainerPool:
 
             return {
                 "name": display_name,
+                "persona_key": persona_key,
                 "success": success,
                 "response_text": response_text,
+                "thinking_text": thinking_text,
                 "duration_seconds": elapsed,
                 "exit_code": exit_code,
             }
@@ -1083,6 +1139,11 @@ async def _run_loop(
 
                 if result["success"]:
                     print(f"  {display_name}: completed ({format_duration(result['duration_seconds'])})")
+                    # Post agent thoughts if captured
+                    thinking = result.get("thinking_text", "")
+                    response = result.get("response_text", "")
+                    if thinking or response:
+                        client.post_thoughts(pk, thinking, response)
                 else:
                     error = result.get("error", f"exit code {result.get('exit_code', '?')}")
                     print(f"  {display_name}: failed — {error} ({format_duration(result['duration_seconds'])})")

@@ -2,8 +2,8 @@
 
 from flask import Blueprint, jsonify, request
 
-from lib.webapp.state import _channels, _channel_members, _channel_lock
 from lib.webapp.helpers import _broadcast_channel_update
+from lib.webapp.state import _channel_lock, _channel_members, _channels
 
 bp = Blueprint("channels", __name__)
 

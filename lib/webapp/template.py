@@ -926,6 +926,7 @@ WEB_UI = """<!DOCTYPE html>
       <div id="gitlab-toggle-bar">
         <button class="gitlab-toggle-btn active" data-view="tree" id="gl-toggle-tree">Files</button>
         <button class="gitlab-toggle-btn" data-view="commits" id="gl-toggle-commits">Commits</button>
+        <button class="gitlab-toggle-btn" data-view="mrs" id="gl-toggle-mrs">Merge Requests</button>
       </div>
       <div id="gitlab-content">
         <div id="gitlab-empty">No repositories yet.</div>
@@ -2564,6 +2565,7 @@ async function loadRepos() {
   }
   if (glCurrentRepo) {
     if (glCurrentView === 'tree') loadTree(glCurrentRepo, glCurrentPath);
+    else if (glCurrentView === 'mrs') loadMergeRequests(glCurrentRepo);
     else loadCommits(glCurrentRepo);
   } else {
     renderRepoLanding();
@@ -2645,6 +2647,8 @@ function updateGlToggles() {
     'gitlab-toggle-btn' + (glCurrentView === 'tree' ? ' active' : '');
   document.getElementById('gl-toggle-commits').className =
     'gitlab-toggle-btn' + (glCurrentView === 'commits' ? ' active' : '');
+  document.getElementById('gl-toggle-mrs').className =
+    'gitlab-toggle-btn' + (glCurrentView === 'mrs' ? ' active' : '');
 }
 
 document.getElementById('gl-toggle-tree').addEventListener('click', () => {
@@ -2657,6 +2661,239 @@ document.getElementById('gl-toggle-commits').addEventListener('click', () => {
   glCurrentView = 'commits'; updateGlToggles();
   loadCommits(glCurrentRepo);
 });
+document.getElementById('gl-toggle-mrs').addEventListener('click', () => {
+  if (!glCurrentRepo) return;
+  glCurrentView = 'mrs'; updateGlToggles();
+  loadMergeRequests(glCurrentRepo);
+});
+
+let _currentMrId = null;
+
+async function loadMergeRequests(project) {
+  const content = document.getElementById('gitlab-content');
+  const resp = await fetch('/api/gitlab/repos/' + encodeURIComponent(project) + '/merge-requests');
+  const mrs = await resp.json();
+  let html = '<div style="display:flex;justify-content:flex-end;margin-bottom:12px">';
+  html += '<button onclick="showCreateMR()" style="background:var(--accent);color:var(--text-bright);border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600">+ New Merge Request</button>';
+  html += '</div>';
+  if (!mrs.length) {
+    content.innerHTML = html + '<div style="text-align:center;color:var(--text-dimmer);padding:20px">No merge requests yet.</div>';
+    return;
+  }
+  mrs.forEach(function(mr) {
+    const statusColors = {open: '#2ecc71', merged: '#9b59b6', closed: '#e94560'};
+    const statusColor = statusColors[mr.status] || 'var(--text-dim)';
+    const age = _memoTimeAgo(mr.created_at);
+    const approvals = (mr.approvals || []).length;
+    const comments = (mr.comments || []).length;
+    html += '<div class="commit-item" style="cursor:pointer;border-bottom:1px solid var(--border-dark);padding:12px" data-project="' + escapeHtml(project) + '" data-mr="' + escapeHtml(mr.id) + '" onclick="viewMergeRequest(this.dataset.project, this.dataset.mr)">';
+    html += '<div style="display:flex;align-items:center;gap:8px">';
+    html += '<span style="font-family:monospace;font-size:12px;color:var(--highlight)">' + escapeHtml(mr.id) + '</span>';
+    html += '<span style="font-size:14px;font-weight:700;color:var(--text);flex:1">' + escapeHtml(mr.title) + '</span>';
+    html += '<span style="font-size:10px;font-weight:600;padding:2px 8px;border-radius:4px;background:' + statusColor + ';color:var(--text-bright);text-transform:uppercase">' + escapeHtml(mr.status) + '</span>';
+    html += '</div>';
+    html += '<div style="font-size:12px;color:var(--text-dimmer);margin-top:4px">';
+    const adds = mr.additions || 0;
+    const dels = mr.deletions || 0;
+    html += escapeHtml(mr.author) + ' &middot; ' + age + ' &middot; <span style="color:#2ecc71">+' + adds + '</span> <span style="color:#e94560">-' + dels + '</span> &middot; ' + comments + ' comment' + (comments !== 1 ? 's' : '') + ' &middot; ' + approvals + ' approval' + (approvals !== 1 ? 's' : '');
+    html += '</div></div>';
+  });
+  content.innerHTML = html;
+}
+
+async function viewMergeRequest(project, mrId) {
+  _currentMrId = mrId;
+  const content = document.getElementById('gitlab-content');
+  const resp = await fetch('/api/gitlab/repos/' + encodeURIComponent(project) + '/merge-requests/' + encodeURIComponent(mrId));
+  if (!resp.ok) { content.innerHTML = '<div style="color:var(--accent);padding:20px">Merge request not found.</div>'; return; }
+  const mr = await resp.json();
+
+  const statusColors = {open: '#2ecc71', merged: '#9b59b6', closed: '#e94560'};
+  const statusColor = statusColors[mr.status] || 'var(--text-dim)';
+  const approvals = mr.approvals || [];
+
+  let html = '<div style="padding:4px 0">';
+  html += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">';
+  html += '<span style="font-family:monospace;color:var(--highlight)">' + escapeHtml(mr.id) + '</span>';
+  html += '<span style="font-size:18px;font-weight:700;color:var(--text)">' + escapeHtml(mr.title) + '</span>';
+  html += '<span style="font-size:10px;font-weight:600;padding:2px 8px;border-radius:4px;background:' + statusColor + ';color:var(--text-bright);text-transform:uppercase">' + escapeHtml(mr.status) + '</span>';
+  html += '</div>';
+  html += '<div style="font-size:12px;color:var(--text-dim);margin-bottom:12px">' + escapeHtml(mr.author) + ' &middot; ' + new Date(mr.created_at * 1000).toLocaleString() + '</div>';
+
+  if (mr.description) {
+    html += '<div style="font-size:13px;color:var(--text);margin-bottom:16px;white-space:pre-wrap">' + escapeHtml(mr.description) + '</div>';
+  }
+
+  // Approvals
+  html += '<div style="font-size:12px;color:var(--text-dim);margin-bottom:8px"><strong>Approvals:</strong> ';
+  html += approvals.length ? escapeHtml(approvals.join(', ')) : '<em>none</em>';
+  html += '</div>';
+
+  // Action buttons
+  if (mr.status === 'open') {
+    html += '<div style="display:flex;gap:6px;margin-bottom:16px">';
+    html += '<button data-project="' + escapeHtml(project) + '" data-mr="' + escapeHtml(mr.id) + '" onclick="approveMR(this.dataset.project,this.dataset.mr)" style="background:#2ecc71;color:var(--text-bright);border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600">Approve</button>';
+    html += '<button data-project="' + escapeHtml(project) + '" data-mr="' + escapeHtml(mr.id) + '" onclick="mergeMR(this.dataset.project,this.dataset.mr)" style="background:#9b59b6;color:var(--text-bright);border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600">Merge</button>';
+    html += '<button data-project="' + escapeHtml(project) + '" data-mr="' + escapeHtml(mr.id) + '" onclick="closeMR(this.dataset.project,this.dataset.mr)" style="background:transparent;color:var(--accent);border:1px solid var(--accent);padding:6px 14px;border-radius:6px;cursor:pointer;font-size:12px">Close</button>';
+    html += '</div>';
+  } else if (mr.status === 'closed') {
+    html += '<div style="display:flex;gap:6px;margin-bottom:16px">';
+    html += '<button data-project="' + escapeHtml(project) + '" data-mr="' + escapeHtml(mr.id) + '" onclick="reopenMR(this.dataset.project,this.dataset.mr)" style="background:#2ecc71;color:var(--text-bright);border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600">Reopen</button>';
+    html += '</div>';
+  }
+
+  // Diff
+  html += '<div style="font-size:14px;font-weight:700;color:var(--text);margin-bottom:8px;border-bottom:1px solid var(--border-dark);padding-bottom:4px">Diff</div>';
+  html += '<pre style="background:var(--input-bg);border:1px solid var(--border-dark);border-radius:6px;padding:12px;font-size:12px;overflow-x:auto;line-height:1.5">';
+  const diffLines = (mr.diff || '').split('\\n').length > 1 ? (mr.diff || '').split('\\n') : (mr.diff || '').split('\\n');
+  diffLines.forEach(function(line) {
+    if (line.startsWith('+') && !line.startsWith('+++')) {
+      html += '<span style="color:#2ecc71">' + escapeHtml(line) + '</span>\\n';
+    } else if (line.startsWith('-') && !line.startsWith('---')) {
+      html += '<span style="color:#e94560">' + escapeHtml(line) + '</span>\\n';
+    } else if (line.startsWith('@@')) {
+      html += '<span style="color:#3498db">' + escapeHtml(line) + '</span>\\n';
+    } else if (line.startsWith('diff ') || line.startsWith('index ') || line.startsWith('---') || line.startsWith('+++')) {
+      html += '<span style="color:var(--text-dim);font-weight:700">' + escapeHtml(line) + '</span>\\n';
+    } else {
+      html += escapeHtml(line) + '\\n';
+    }
+  });
+  html += '</pre>';
+
+  // Comments
+  const comments = mr.comments || [];
+  html += '<div style="font-size:14px;font-weight:700;color:var(--text);margin:16px 0 8px;border-bottom:1px solid var(--border-dark);padding-bottom:4px">' + comments.length + ' Comment' + (comments.length !== 1 ? 's' : '') + '</div>';
+  comments.forEach(function(c) {
+    html += '<div style="background:var(--bg);border:1px solid var(--border-dark);border-radius:6px;padding:10px;margin-bottom:8px">';
+    html += '<div style="font-size:12px;font-weight:700;color:var(--highlight)">' + escapeHtml(c.author) + ' <span style="color:var(--text-dimmer);font-weight:400">' + new Date(c.timestamp * 1000).toLocaleString() + '</span></div>';
+    html += '<div style="font-size:13px;color:var(--text);margin-top:6px;white-space:pre-wrap">' + escapeHtml(c.text) + '</div>';
+    html += '</div>';
+  });
+
+  // Add comment form
+  if (mr.status === 'open') {
+    html += '<div style="margin-top:12px">';
+    html += '<div style="display:flex;gap:8px;margin-bottom:8px"><input id="mr-comment-name" type="text" placeholder="Name" style="flex:1;background:var(--input-bg);color:var(--text);border:1px solid var(--border-dark);padding:6px 10px;border-radius:4px;font-size:12px" autocomplete="off" />';
+    html += '<select id="mr-comment-role" style="flex:1;background:var(--input-bg);color:var(--text);border:1px solid var(--border-dark);padding:6px 10px;border-radius:4px;font-size:12px"></select></div>';
+    html += '<textarea id="mr-comment-text" placeholder="Write a review comment..." style="width:100%;min-height:60px;background:var(--input-bg);color:var(--text);border:1px solid var(--border-dark);padding:10px;border-radius:6px;font-family:inherit;resize:vertical;font-size:13px;box-sizing:border-box"></textarea>';
+    html += '<div style="display:flex;justify-content:flex-end;margin-top:6px"><button data-project="' + escapeHtml(project) + '" data-mr="' + escapeHtml(mr.id) + '" onclick="commentOnMR(this.dataset.project,this.dataset.mr)" class="modal-btn-primary" style="font-size:12px">Comment</button></div>';
+    html += '</div>';
+  }
+
+  html += '</div>';
+  content.innerHTML = html;
+  // Populate role dropdown for comments
+  const cmtRole = document.getElementById('mr-comment-role');
+  if (cmtRole) { populateRoleSelect(cmtRole, HUMAN_ROLES, {empty: true, emptyLabel: 'No role', default: 'Scenario Director'}); }
+}
+
+function _getMrAuthor() {
+  const name = document.getElementById('mr-comment-name');
+  const role = document.getElementById('mr-comment-role');
+  if (!name || !role) return 'Scenario Director';
+  const n = name.value.trim() || 'Anonymous';
+  const r = role.value;
+  return r ? n + ' (' + r + ')' : n;
+}
+
+async function approveMR(project, mrId) {
+  const resp = await fetch('/api/gitlab/repos/' + project + '/merge-requests/' + mrId + '/approve', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({author: _getMrAuthor()})
+  });
+  const data = await resp.json();
+  if (data.error) { showNotice(data.error); return; }
+  showNotice('Approved ' + mrId);
+  viewMergeRequest(project, mrId);
+}
+
+async function mergeMR(project, mrId) {
+  const resp = await fetch('/api/gitlab/repos/' + project + '/merge-requests/' + mrId + '/merge', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({author: _getMrAuthor()})
+  });
+  const data = await resp.json();
+  if (data.error) { showNotice(data.error); return; }
+  showNotice('Merged ' + mrId);
+  viewMergeRequest(project, mrId);
+}
+
+async function closeMR(project, mrId) {
+  const resp = await fetch('/api/gitlab/repos/' + project + '/merge-requests/' + mrId, {
+    method: 'PUT', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({status: 'closed'})
+  });
+  const data = await resp.json();
+  if (data.error) { showNotice(data.error); return; }
+  showNotice('Closed ' + mrId);
+  viewMergeRequest(project, mrId);
+}
+
+async function reopenMR(project, mrId) {
+  const resp = await fetch('/api/gitlab/repos/' + project + '/merge-requests/' + mrId, {
+    method: 'PUT', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({status: 'open'})
+  });
+  const data = await resp.json();
+  if (data.error) { showNotice(data.error); return; }
+  showNotice('Reopened ' + mrId);
+  viewMergeRequest(project, mrId);
+}
+
+async function commentOnMR(project, mrId) {
+  const text = document.getElementById('mr-comment-text').value.trim();
+  if (!text) return;
+  await fetch('/api/gitlab/repos/' + project + '/merge-requests/' + mrId + '/comment', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({text: text, author: _getMrAuthor()})
+  });
+  viewMergeRequest(project, mrId);
+}
+
+function showCreateMR() {
+  const content = document.getElementById('gitlab-content');
+  let html = '<div style="max-width:700px">';
+  html += '<h3 style="color:var(--text);margin-bottom:12px">New Merge Request</h3>';
+  html += '<div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-dim);font-weight:600;display:block;margin-bottom:4px">Author</label>';
+  html += '<div style="display:flex;gap:8px"><input id="mr-create-name" type="text" placeholder="Name" style="flex:1;background:var(--input-bg);color:var(--text);border:1px solid var(--border-dark);padding:6px 10px;border-radius:4px;font-size:12px" autocomplete="off" />';
+  html += '<select id="mr-create-role" style="flex:1;background:var(--input-bg);color:var(--text);border:1px solid var(--border-dark);padding:6px 10px;border-radius:4px;font-size:12px"></select></div></div>';
+  html += '<div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-dim);font-weight:600;display:block;margin-bottom:4px">Title</label>';
+  html += '<input id="mr-create-title" type="text" placeholder="MR title..." style="width:100%;background:var(--input-bg);color:var(--text);border:1px solid var(--border-dark);padding:8px 12px;border-radius:6px;font-size:14px;box-sizing:border-box" autocomplete="off" /></div>';
+  html += '<div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-dim);font-weight:600;display:block;margin-bottom:4px">Description</label>';
+  html += '<textarea id="mr-create-desc" placeholder="What does this MR do?" style="width:100%;min-height:60px;background:var(--input-bg);color:var(--text);border:1px solid var(--border-dark);padding:8px 12px;border-radius:6px;font-size:13px;font-family:inherit;resize:vertical;box-sizing:border-box"></textarea></div>';
+  html += '<div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text-dim);font-weight:600;display:block;margin-bottom:4px">Diff (unified format)</label>';
+  html += '<textarea id="mr-create-diff" placeholder="Paste unified diff here..." style="width:100%;min-height:200px;background:var(--input-bg);color:var(--text);border:1px solid var(--border-dark);padding:8px 12px;border-radius:6px;font-size:12px;font-family:monospace;resize:vertical;box-sizing:border-box"></textarea></div>';
+  html += '<div style="display:flex;gap:8px;justify-content:flex-end">';
+  html += '<button onclick="loadMergeRequests(glCurrentRepo)" class="session-btn">Cancel</button>';
+  html += '<button onclick="submitCreateMR()" class="modal-btn-primary" style="font-size:12px">Create MR</button>';
+  html += '</div></div>';
+  content.innerHTML = html;
+  const roleSel = document.getElementById('mr-create-role');
+  if (roleSel) { populateRoleSelect(roleSel, HUMAN_ROLES, {empty: true, emptyLabel: 'No role', default: 'Scenario Director'}); }
+  document.getElementById('mr-create-title').focus();
+}
+
+async function submitCreateMR() {
+  const title = document.getElementById('mr-create-title').value.trim();
+  if (!title) { document.getElementById('mr-create-title').focus(); return; }
+  const description = document.getElementById('mr-create-desc').value.trim();
+  const diff = document.getElementById('mr-create-diff').value.trim();
+  if (!diff) { document.getElementById('mr-create-diff').focus(); return; }
+  const mrName = document.getElementById('mr-create-name').value.trim() || 'Anonymous';
+  const mrRole = document.getElementById('mr-create-role').value;
+  const author = mrRole ? mrName + ' (' + mrRole + ')' : mrName;
+  const resp = await fetch('/api/gitlab/repos/' + encodeURIComponent(glCurrentRepo) + '/merge-requests', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({title: title, description: description, diff: diff, author: author})
+  });
+  if (resp.ok) {
+    const mr = await resp.json();
+    showNotice('Created ' + mr.id + ': ' + title);
+    viewMergeRequest(glCurrentRepo, mr.id);
+  }
+}
 
 async function loadTree(project, path) {
   let url = '/api/gitlab/repos/' + encodeURIComponent(project) + '/tree';
@@ -3372,9 +3609,31 @@ function renderThoughtsList(filter) {
     const ts = new Date(t.timestamp * 1000);
     const timeStr = ts.toLocaleTimeString();
     const dateStr = ts.toLocaleDateString();
-    const preview = (t.thinking || t.response || '').substring(0, 60).replace(/[\\n\\r]+/g, ' ');
+    const raw = t.thinking || t.response || '';
+    const dashIdx = raw.indexOf('\\n---\\n');
+    const thinkPart = dashIdx > -1 ? raw.substring(0, dashIdx) : raw;
+    const statsPart = dashIdx > -1 ? raw.substring(dashIdx + 5).trim() : '';
+    const preview = thinkPart.substring(0, 80).replace(/[\\n\\r]+/g, ' ');
+    let statsHtml = '';
+    if (statsPart) {
+      const costMatch = statsPart.match(/\\$(\\d+\\.\\d+)/);
+      let coloredStats = escapeHtml(statsPart);
+      if (costMatch) {
+        const cost = parseFloat(costMatch[1]);
+        let costColor = '#2ecc71';
+        let prefix = '';
+        if (cost >= 10.0) { costColor = '#e94560'; prefix = '🔥 '; }
+        else if (cost >= 5.0) costColor = '#e94560';
+        else if (cost > 2.50) costColor = '#f39c12';
+        coloredStats = escapeHtml(statsPart).replace(
+          escapeHtml(costMatch[0]),
+          prefix + '<span style="color:' + costColor + '">' + escapeHtml(costMatch[0]) + '</span>'
+        );
+      }
+      statsHtml = '<div style="font-size:9px;margin-top:3px;color:var(--text-dimmer)">' + coloredStats + '</div>';
+    }
     item.innerHTML = '<div class="thought-item-time">' + dateStr + ' ' + timeStr + '</div>' +
-      '<div class="thought-item-preview">' + escapeHtml(preview) + '</div>';
+      '<div class="thought-item-preview">' + escapeHtml(preview) + '</div>' + statsHtml;
     item.addEventListener('click', () => selectThought(idx));
     list.appendChild(item);
   });

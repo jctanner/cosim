@@ -1,12 +1,11 @@
 """Blog — internal + external company blog with authored posts and replies."""
 
 import re
-import time
 import threading
+import time
 
-
-_blog_posts: dict[str, dict] = {}    # slug -> post metadata
-_blog_replies: list[dict] = []       # all replies across all posts
+_blog_posts: dict[str, dict] = {}  # slug -> post metadata
+_blog_replies: list[dict] = []  # all replies across all posts
 _blog_lock = threading.Lock()
 
 
@@ -16,9 +15,14 @@ def _slugify(text: str) -> str:
     return slug[:60] if slug else "post"
 
 
-def create_post(title: str, body: str, author: str,
-                is_external: bool = False, tags: list[str] | None = None,
-                status: str = "published") -> dict:
+def create_post(
+    title: str,
+    body: str,
+    author: str,
+    is_external: bool = False,
+    tags: list[str] | None = None,
+    status: str = "published",
+) -> dict:
     """Create a new blog post. Status: draft, published, unpublished."""
     ts = time.time()
     slug = f"{_slugify(title)}-{int(ts)}"

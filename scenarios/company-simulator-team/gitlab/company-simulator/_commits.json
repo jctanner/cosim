@@ -190,5 +190,30 @@
       "scenarios/tech-startup/characters/*.CS.md",
       "docs/subsystem-architecture.md"
     ]
+  },
+  {
+    "id": "cdb9af81",
+    "message": "Add unit test infrastructure (94 tests), ruff linting, GitHub Actions CI",
+    "author": "T4NN3R (Maintainer)",
+    "timestamp": 1776038400.0,
+    "files": [
+      "tests/*.py",
+      ".github/workflows/ci.yml",
+      "pyproject.toml",
+      "lib/*.py"
+    ]
+  },
+  {
+    "id": "d2386381",
+    "message": "Add MIT license, GETTING_STARTED.md, sync codebase to seeded gitlab",
+    "author": "1.z3r0 (Collaborator)",
+    "timestamp": 1776124800.0,
+    "files": [
+      "LICENSE",
+      "GETTING_STARTED.md",
+      "README.md",
+      "lib/*.py",
+      "lib/webapp/*.py"
+    ]
   }
 ]

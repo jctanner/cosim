@@ -5,13 +5,16 @@ import time
 
 from flask import Blueprint, Response, jsonify, request
 
+from lib.webapp.helpers import _broadcast, _persist_message
 from lib.webapp.state import (
     CHAT_LOG,
-    _messages, _lock,
-    _subscribers, _sub_lock,
-    _channels, _channel_lock,
+    _channel_lock,
+    _channels,
+    _lock,
+    _messages,
+    _sub_lock,
+    _subscribers,
 )
-from lib.webapp.helpers import _persist_message, _broadcast
 
 bp = Blueprint("messages", __name__)
 
@@ -87,5 +90,6 @@ def stream():
                 if q in _subscribers:
                     _subscribers.remove(q)
 
-    return Response(generate(), mimetype="text/event-stream",
-                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+    return Response(
+        generate(), mimetype="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+    )

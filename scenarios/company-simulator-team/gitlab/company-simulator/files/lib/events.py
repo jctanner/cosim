@@ -1,9 +1,8 @@
 """Events — scenario event pool and event log for injecting chaos into simulations."""
 
 import copy
-import time
 import threading
-
+import time
 
 # Default event pool from scenario config (set by scenario_loader)
 SCENARIO_EVENTS: list[dict] = []

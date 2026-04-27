@@ -1,6 +1,7 @@
 import re
 
-from lib.gitlab import DEFAULT_REPO_ACCESS, generate_commit_id, get_accessible_repos
+from lib.gitlab import DEFAULT_REPO_ACCESS, generate_commit_id, get_accessible_repos, next_mr_id
+from lib.webapp.routes.gitlab import _normalize_mr_id
 
 
 class TestGenerateCommitId:
@@ -52,3 +53,40 @@ class TestGetAccessibleRepos:
         names = {r["name"] for r in result}
         assert "frontend" in names
         assert "backend" in names
+
+
+class TestNormalizeMrId:
+    def test_bare_number(self):
+        assert _normalize_mr_id("1") == "!1"
+
+    def test_with_bang(self):
+        assert _normalize_mr_id("!1") == "!1"
+
+    def test_url_encoded(self):
+        assert _normalize_mr_id("%211") == "!1"
+
+    def test_url_encoded_double_digit(self):
+        assert _normalize_mr_id("%2142") == "!42"
+
+    def test_with_whitespace(self):
+        assert _normalize_mr_id("  !3  ") == "!3"
+
+    def test_bare_number_double_digit(self):
+        assert _normalize_mr_id("99") == "!99"
+
+    def test_url_encoded_with_bang(self):
+        assert _normalize_mr_id("%21!1") == "!1"
+
+
+class TestNextMrId:
+    def test_empty_list(self):
+        assert next_mr_id([]) == "!1"
+
+    def test_single_mr(self):
+        assert next_mr_id([{"id": "!1"}]) == "!2"
+
+    def test_multiple_mrs(self):
+        assert next_mr_id([{"id": "!1"}, {"id": "!2"}, {"id": "!3"}]) == "!4"
+
+    def test_non_sequential(self):
+        assert next_mr_id([{"id": "!1"}, {"id": "!5"}]) == "!6"

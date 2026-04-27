@@ -47,9 +47,10 @@ _folders: dict[str, dict] = {}
 _folder_access: dict[str, set[str]] = {}
 _folder_lock = threading.Lock()
 
-# GitLab state: repo_name -> metadata, repo_name -> commit list
+# GitLab state: repo_name -> metadata, repo_name -> commit list, repo_name -> MR list
 _gitlab_repos: dict[str, dict] = {}
 _gitlab_commits: dict[str, list[dict]] = {}
+_gitlab_merge_requests: dict[str, list[dict]] = {}
 _gitlab_lock = threading.Lock()
 
 # Tickets state: ticket_id -> full ticket dict

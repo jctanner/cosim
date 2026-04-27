@@ -1,6 +1,5 @@
 """Single-page HTML/CSS/JS template for the web UI."""
 
-
 WEB_UI = """<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -470,6 +469,51 @@ WEB_UI = """<!DOCTYPE html>
                 font-size: 13px; cursor: pointer; transition: all 0.1s ease; }
   .folder-btn:hover { background: var(--border-mid); color: var(--text); }
   .folder-btn.active { background: var(--border-mid); color: var(--text-bright); font-weight: 700; }
+  .folder-tree-node { padding-left: 0; }
+  .folder-tree-node .folder-tree-node { padding-left: 12px; }
+  .folder-tree-toggle { display: inline-flex; align-items: center; gap: 4px; width: 100%; text-align: left;
+                        background: transparent; border: none; color: var(--text-dim); padding: 4px 14px;
+                        font-size: 13px; cursor: pointer; }
+  .folder-tree-toggle:hover { background: var(--border-mid); color: var(--text); }
+  .folder-tree-toggle .arrow { display: inline-block; width: 12px; font-size: 10px; transition: transform 0.15s; }
+  .folder-tree-toggle .arrow.open { transform: rotate(90deg); }
+  .folder-tree-children { overflow: hidden; }
+  .folder-tree-children.collapsed { display: none; }
+  #new-folder-btn { background: transparent; color: var(--text-dimmer); border: 1px dashed var(--border-dark);
+                    padding: 4px 14px; font-size: 12px; cursor: pointer; margin: 4px 14px; border-radius: 6px;
+                    width: calc(100% - 28px); text-align: center; }
+  #new-folder-btn:hover { color: var(--text); border-color: var(--text-dim); }
+  #new-folder-dialog { padding: 8px 14px; display: none; flex-direction: column; gap: 6px; }
+  #new-folder-dialog input { background: var(--bg); color: var(--text); border: 1px solid var(--border-dark);
+                             padding: 6px 10px; border-radius: 6px; font-size: 12px; outline: none; }
+  #new-folder-dialog input:focus { border-color: var(--accent); }
+  .new-folder-actions { display: flex; gap: 4px; }
+  .new-folder-actions button { flex: 1; padding: 5px; border-radius: 6px; border: 1px solid var(--border-dark);
+                               background: transparent; color: var(--text-dim); font-size: 12px; cursor: pointer; }
+  .new-folder-actions button.save { background: var(--accent); color: var(--text-bright); border-color: var(--accent); }
+  .folder-btn-wrap { display: flex; align-items: center; width: 100%; }
+  .folder-btn-wrap .folder-btn { flex: 1; text-align: left; }
+  .folder-perms-btn { background: transparent; border: none; color: var(--text-dimmer); cursor: pointer;
+                      padding: 2px 6px; font-size: 13px; line-height: 1; flex-shrink: 0; opacity: 0; transition: opacity 0.15s; }
+  .folder-btn-wrap:hover .folder-perms-btn { opacity: 1; }
+  .folder-perms-btn:hover { color: var(--text); }
+  #folder-perms-panel { display: none; padding: 10px 14px; border-top: 1px solid var(--border-dark);
+                        max-height: 300px; overflow-y: auto; }
+  #folder-perms-panel.open { display: block; }
+  .folder-perms-title { font-size: 12px; font-weight: 700; color: var(--text-bright); margin-bottom: 6px;
+                        display: flex; justify-content: space-between; align-items: center; }
+  .folder-perms-title span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .folder-perms-list { display: flex; flex-direction: column; gap: 2px; margin-bottom: 8px; }
+  .folder-perms-list label { font-size: 12px; color: var(--text-dim); display: flex; align-items: center; gap: 6px;
+                             padding: 2px 0; cursor: pointer; }
+  .folder-perms-list label:hover { color: var(--text); }
+  .folder-perms-list input[type="checkbox"] { accent-color: var(--accent); }
+  .folder-perms-actions { display: flex; gap: 4px; }
+  .folder-perms-actions button { flex: 1; padding: 4px; border-radius: 6px; border: 1px solid var(--border-dark);
+                                 background: transparent; color: var(--text-dim); font-size: 11px; cursor: pointer; }
+  .folder-perms-actions button.save { background: var(--accent); color: var(--text-bright); border-color: var(--accent); }
+  .folder-perms-select-all { font-size: 11px; color: var(--accent); background: none; border: none;
+                             cursor: pointer; padding: 0; text-decoration: underline; }
   #docs-main { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
   #docs-toolbar { padding: 12px 20px; border-bottom: 1px solid var(--border); background: var(--panel);
                   display: flex; align-items: center; }
@@ -556,6 +600,18 @@ WEB_UI = """<!DOCTYPE html>
                        display: flex; gap: 6px; }
   #gitlab-content { flex: 1; overflow-y: auto; padding: 16px 20px; }
   #gitlab-empty { color: var(--text-dimmer); font-size: 14px; text-align: center; padding: 40px 20px; }
+  #gitlab-landing { padding: 0; }
+  #gitlab-landing-filter { width: 100%; background: var(--input-bg); color: var(--text); border: 1px solid var(--border-dark);
+             padding: 8px 12px; border-radius: 6px; font-size: 13px; box-sizing: border-box; margin-bottom: 12px; }
+  .gl-landing-card { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px;
+             border: 1px solid var(--border-dark); border-radius: 6px; margin-bottom: 6px; cursor: pointer; }
+  .gl-landing-card:hover { background: var(--border-mid); border-color: var(--accent); }
+  .gl-landing-name { font-size: 14px; font-weight: 600; color: var(--highlight); }
+  .gl-landing-desc { font-size: 12px; color: var(--text-dim); margin-top: 2px; }
+  .gl-landing-meta { font-size: 11px; color: var(--text-dimmer); white-space: nowrap; margin-left: 16px; }
+  .gl-download-btn { background: transparent; border: 1px solid var(--border-dark); color: var(--text-dim); padding: 4px 10px;
+             border-radius: 4px; cursor: pointer; font-size: 11px; white-space: nowrap; }
+  .gl-download-btn:hover { border-color: var(--accent); color: var(--accent); }
   .gitlab-breadcrumbs { font-size: 13px; color: var(--text-dim); margin-bottom: 12px; }
   .gitlab-breadcrumbs a { color: var(--highlight); cursor: pointer; text-decoration: none; }
   .gitlab-breadcrumbs a:hover { text-decoration: underline; }
@@ -753,14 +809,34 @@ WEB_UI = """<!DOCTYPE html>
       <div class="docs-sidebar-section">All</div>
       <button class="folder-btn active" data-folder="" id="folder-all">All Folders</button>
       <hr class="docs-sidebar-divider">
-      <div class="docs-sidebar-section">Shared</div>
-      <div id="shared-folders"></div>
+      <div id="folder-tree-container"></div>
       <hr class="docs-sidebar-divider">
-      <div class="docs-sidebar-section">Departments</div>
-      <div id="dept-folders"></div>
-      <hr class="docs-sidebar-divider">
-      <div class="docs-sidebar-section">Personal</div>
-      <div id="personal-folders"></div>
+      <button id="new-folder-btn">+ New Folder</button>
+      <div id="new-folder-dialog">
+        <input id="new-folder-name" type="text" placeholder="folder name (e.g. projects/my-project)" />
+        <input id="new-folder-desc" type="text" placeholder="description (optional)" />
+        <div style="display:flex;align-items:center;gap:6px">
+          <label style="font-size:11px;color:var(--text-dim);cursor:pointer;display:flex;align-items:center;gap:4px">
+            <input type="checkbox" id="new-folder-all-access" checked> Grant all agents access
+          </label>
+        </div>
+        <div id="new-folder-access-list" class="folder-perms-list" style="display:none;max-height:150px;overflow-y:auto"></div>
+        <div class="new-folder-actions">
+          <button id="new-folder-cancel">Cancel</button>
+          <button id="new-folder-save" class="save">Create</button>
+        </div>
+      </div>
+      <div id="folder-perms-panel">
+        <div class="folder-perms-title">
+          <span id="folder-perms-name"></span>
+          <button class="folder-perms-select-all" id="folder-perms-toggle-all">all</button>
+        </div>
+        <div class="folder-perms-list" id="folder-perms-list"></div>
+        <div class="folder-perms-actions">
+          <button id="folder-perms-cancel">Cancel</button>
+          <button id="folder-perms-save" class="save">Save</button>
+        </div>
+      </div>
     </div>
     <div id="docs-main">
       <div id="docs-toolbar">
@@ -793,6 +869,7 @@ WEB_UI = """<!DOCTYPE html>
           <button id="doc-back-btn">Back</button>
           <span id="doc-viewer-title"></span>
           <div style="margin-left:auto;display:flex;gap:6px">
+            <button id="doc-download-btn" class="session-btn" style="font-size:11px">Download</button>
             <button id="doc-history-btn" class="session-btn" style="font-size:11px">History</button>
             <button id="doc-edit-btn" class="session-btn" style="font-size:11px">Edit Latest Version</button>
           </div>
@@ -822,7 +899,7 @@ WEB_UI = """<!DOCTYPE html>
   <!-- GitLab tab -->
   <div id="gitlab-pane" class="tab-pane">
     <div id="gitlab-sidebar">
-      <div class="gitlab-sidebar-section">Repositories</div>
+      <div class="gitlab-sidebar-section" style="cursor:pointer" onclick="glCurrentRepo=null;glCurrentPath='';renderRepoSidebar();renderRepoLanding()">Repositories</div>
       <div id="gitlab-repo-list"></div>
       <div style="padding:8px 10px">
         <button id="gl-new-repo-btn" class="session-btn" style="width:100%;font-size:11px">+ New Repo</button>
@@ -839,9 +916,12 @@ WEB_UI = """<!DOCTYPE html>
       </div>
     </div>
     <div id="gitlab-main">
-      <div id="gitlab-header">
-        <span id="gitlab-repo-title">Select a repository</span>
-        <span id="gitlab-repo-desc"></span>
+      <div id="gitlab-header" style="display:flex;align-items:center;justify-content:space-between">
+        <div>
+          <span id="gitlab-repo-title">Select a repository</span>
+          <span id="gitlab-repo-desc"></span>
+        </div>
+        <button id="gl-repo-download-btn" class="gl-download-btn" style="display:none" onclick="glDownloadRepo(glCurrentRepo)">Download .tar.gz</button>
       </div>
       <div id="gitlab-toggle-bar">
         <button class="gitlab-toggle-btn active" data-view="tree" id="gl-toggle-tree">Files</button>
@@ -1118,6 +1198,7 @@ WEB_UI = """<!DOCTYPE html>
           <div style="display:flex;gap:4px">
             <button id="blog-publish-btn" style="background:#2ecc71;border:none;color:var(--text-bright);padding:4px 10px;border-radius:4px;font-size:11px;cursor:pointer;display:none" title="Publish">Publish</button>
             <button id="blog-unpublish-btn" style="background:transparent;border:1px solid #f39c12;color:#f39c12;padding:4px 10px;border-radius:4px;font-size:11px;cursor:pointer;display:none" title="Unpublish">Unpublish</button>
+            <button id="blog-download-btn" style="background:transparent;border:1px solid var(--text-dim);color:var(--text-dim);padding:4px 10px;border-radius:4px;font-size:11px;cursor:pointer" title="Download raw content">Download</button>
             <button id="blog-delete-btn" style="background:transparent;border:1px solid var(--accent);color:var(--accent);padding:4px 10px;border-radius:4px;font-size:11px;cursor:pointer" title="Delete post">Delete</button>
           </div>
         </div>
@@ -1900,7 +1981,9 @@ function connectSSE() {
         if (data.channel === currentChannel) updateChannelHeader();
       }
     } else if (data.type === 'doc_event') {
-      if (currentTab === 'docs') loadDocs();
+      if (currentTab === 'docs') { loadFolders(); loadDocs(); }
+    } else if (data.type === 'folder_event') {
+      if (currentTab === 'docs') loadFolders();
     } else if (data.type === 'gitlab_event') {
       if (currentTab === 'gitlab') loadRepos();
     } else if (data.type === 'tickets_event') {
@@ -1964,24 +2047,123 @@ async function loadFolders() {
   renderFolderSidebar();
 }
 
+const _expandedNodes = new Set();
+
+function _buildFolderTree(folders) {
+  const tree = {};
+  folders.forEach(f => {
+    const parts = f.name.split('/');
+    let node = tree;
+    parts.forEach((part, i) => {
+      if (!node[part]) node[part] = { _children: {}, _folder: null };
+      if (i === parts.length - 1) node[part]._folder = f;
+      node = node[part]._children;
+    });
+  });
+  return tree;
+}
+
+function _makeFolderBtn(folder, label, extraClass) {
+  const wrap = document.createElement('div');
+  wrap.className = 'folder-btn-wrap';
+  const btn = document.createElement('button');
+  btn.className = 'folder-btn' + (currentFolder === folder.name ? ' active' : '') + (extraClass || '');
+  btn.dataset.folder = folder.name;
+  btn.textContent = label;
+  btn.addEventListener('click', () => switchFolder(folder.name));
+  wrap.appendChild(btn);
+  const gear = document.createElement('button');
+  gear.className = 'folder-perms-btn';
+  gear.textContent = '⚙';
+  gear.title = 'Permissions';
+  gear.addEventListener('click', (e) => { e.stopPropagation(); openFolderPerms(folder.name); });
+  wrap.appendChild(gear);
+  return wrap;
+}
+
+function _renderTreeNode(container, tree, pathPrefix) {
+  const keys = Object.keys(tree).sort();
+  keys.forEach(key => {
+    const entry = tree[key];
+    const fullPath = pathPrefix ? pathPrefix + '/' + key : key;
+    const hasChildren = Object.keys(entry._children).length > 0;
+    const folder = entry._folder;
+    const nodeDiv = document.createElement('div');
+    nodeDiv.className = 'folder-tree-node';
+
+    if (hasChildren) {
+      const isOpen = _expandedNodes.has(fullPath);
+      const toggle = document.createElement('button');
+      toggle.className = 'folder-tree-toggle';
+      toggle.innerHTML = '<span class="arrow ' + (isOpen ? 'open' : '') + '">▶</span> ' + key;
+      toggle.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (_expandedNodes.has(fullPath)) _expandedNodes.delete(fullPath);
+        else _expandedNodes.add(fullPath);
+        renderFolderSidebar();
+      });
+      nodeDiv.appendChild(toggle);
+
+      if (folder) {
+        const w = _makeFolderBtn(folder, folder.name, '');
+        w.querySelector('.folder-btn').style.paddingLeft = '30px';
+        w.querySelector('.folder-btn').style.fontSize = '12px';
+        nodeDiv.appendChild(w);
+      }
+
+      const childDiv = document.createElement('div');
+      childDiv.className = 'folder-tree-children' + (isOpen ? '' : ' collapsed');
+      _renderTreeNode(childDiv, entry._children, fullPath);
+      nodeDiv.appendChild(childDiv);
+    } else if (folder) {
+      nodeDiv.appendChild(_makeFolderBtn(folder, key, ''));
+    }
+
+    container.appendChild(nodeDiv);
+  });
+}
+
 function renderFolderSidebar() {
-  const sharedC = document.getElementById('shared-folders');
-  const deptC = document.getElementById('dept-folders');
-  const persC = document.getElementById('personal-folders');
-  sharedC.innerHTML = ''; deptC.innerHTML = ''; persC.innerHTML = '';
+  const container = document.getElementById('folder-tree-container');
+  container.innerHTML = '';
+
+  const groups = {
+    shared: { label: 'Shared', folders: [] },
+    dept: { label: 'Departments', folders: [] },
+    project: { label: 'Projects', folders: [] },
+    personal: { label: 'Personal', folders: [] },
+  };
 
   foldersData.forEach(f => {
-    const btn = document.createElement('button');
-    btn.className = 'folder-btn' + (currentFolder === f.name ? ' active' : '');
-    btn.dataset.folder = f.name;
-    btn.textContent = f.name;
-    btn.addEventListener('click', () => switchFolder(f.name));
-    if (f.type === 'shared' || f.type === 'public') sharedC.appendChild(btn);
-    else if (f.type === 'department') deptC.appendChild(btn);
-    else if (f.type === 'personal') persC.appendChild(btn);
+    if (f.type === 'shared' || f.type === 'public') groups.shared.folders.push(f);
+    else if (f.type === 'department') groups.dept.folders.push(f);
+    else if (f.type === 'project') groups.project.folders.push(f);
+    else if (f.type === 'personal') groups.personal.folders.push(f);
   });
 
-  // Update "All" button
+  Object.values(groups).forEach(group => {
+    if (group.folders.length === 0) return;
+    const label = document.createElement('div');
+    label.className = 'docs-sidebar-section';
+    label.textContent = group.label;
+    container.appendChild(label);
+
+    const hasNested = group.folders.some(f => f.name.includes('/'));
+    if (hasNested) {
+      const tree = _buildFolderTree(group.folders);
+      _renderTreeNode(container, tree, '');
+    } else {
+      group.folders.sort((a, b) => a.name.localeCompare(b.name));
+      group.folders.forEach(f => {
+        container.appendChild(_makeFolderBtn(f, f.name, ''));
+      });
+    }
+
+    const hr = document.createElement('hr');
+    hr.className = 'docs-sidebar-divider';
+    container.appendChild(hr);
+  });
+
   const allBtn = document.getElementById('folder-all');
   allBtn.className = 'folder-btn' + (currentFolder === '' ? ' active' : '');
 }
@@ -1993,6 +2175,129 @@ function switchFolder(folderName) {
 }
 
 document.getElementById('folder-all').addEventListener('click', () => switchFolder(''));
+
+// -- New Folder dialog --
+document.getElementById('new-folder-btn').addEventListener('click', () => {
+  const dialog = document.getElementById('new-folder-dialog');
+  dialog.style.display = dialog.style.display === 'flex' ? 'none' : 'flex';
+  if (dialog.style.display === 'flex') {
+    document.getElementById('new-folder-name').focus();
+    const listEl = document.getElementById('new-folder-access-list');
+    listEl.innerHTML = '';
+    Object.keys(PERSONA_DISPLAY).sort().forEach(key => {
+      const label = document.createElement('label');
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.value = key;
+      cb.checked = true;
+      label.appendChild(cb);
+      label.appendChild(document.createTextNode(PERSONA_DISPLAY[key] + ' (' + key + ')'));
+      listEl.appendChild(label);
+    });
+  }
+});
+document.getElementById('new-folder-all-access').addEventListener('change', (e) => {
+  const listEl = document.getElementById('new-folder-access-list');
+  if (e.target.checked) {
+    listEl.style.display = 'none';
+    listEl.querySelectorAll('input[type="checkbox"]').forEach(cb => { cb.checked = true; });
+  } else {
+    listEl.style.display = 'flex';
+  }
+});
+document.getElementById('new-folder-cancel').addEventListener('click', () => {
+  document.getElementById('new-folder-dialog').style.display = 'none';
+  document.getElementById('new-folder-name').value = '';
+  document.getElementById('new-folder-desc').value = '';
+});
+document.getElementById('new-folder-save').addEventListener('click', async () => {
+  const name = document.getElementById('new-folder-name').value.trim();
+  const desc = document.getElementById('new-folder-desc').value.trim();
+  if (!name) return;
+  const allAccess = document.getElementById('new-folder-all-access').checked;
+  let access = [];
+  if (allAccess) {
+    access = Object.keys(PERSONA_DISPLAY);
+  } else {
+    access = Array.from(document.querySelectorAll('#new-folder-access-list input[type="checkbox"]'))
+      .filter(cb => cb.checked).map(cb => cb.value);
+  }
+  const resp = await fetch('/api/folders', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, description: desc, type: 'project', access }),
+  });
+  if (resp.ok) {
+    document.getElementById('new-folder-dialog').style.display = 'none';
+    document.getElementById('new-folder-name').value = '';
+    document.getElementById('new-folder-desc').value = '';
+    await loadFolders();
+    switchFolder(name);
+  } else {
+    const err = await resp.json();
+    alert(err.error || 'Failed to create folder');
+  }
+});
+document.getElementById('new-folder-name').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') document.getElementById('new-folder-save').click();
+  if (e.key === 'Escape') document.getElementById('new-folder-cancel').click();
+});
+
+// -- Folder permissions panel --
+let _permsFolderName = '';
+
+function openFolderPerms(folderName) {
+  const panel = document.getElementById('folder-perms-panel');
+  if (panel.classList.contains('open') && _permsFolderName === folderName) {
+    panel.classList.remove('open');
+    return;
+  }
+  _permsFolderName = folderName;
+  document.getElementById('folder-perms-name').textContent = folderName;
+  const folder = foldersData.find(f => f.name === folderName);
+  const currentAccess = new Set(folder ? folder.access : []);
+  const listEl = document.getElementById('folder-perms-list');
+  listEl.innerHTML = '';
+  const personaKeys = Object.keys(PERSONA_DISPLAY).sort();
+  personaKeys.forEach(key => {
+    const label = document.createElement('label');
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.value = key;
+    cb.checked = currentAccess.has(key);
+    label.appendChild(cb);
+    label.appendChild(document.createTextNode(PERSONA_DISPLAY[key] + ' (' + key + ')'));
+    listEl.appendChild(label);
+  });
+  panel.classList.add('open');
+}
+
+document.getElementById('folder-perms-toggle-all').addEventListener('click', () => {
+  const boxes = document.querySelectorAll('#folder-perms-list input[type="checkbox"]');
+  const allChecked = Array.from(boxes).every(cb => cb.checked);
+  boxes.forEach(cb => { cb.checked = !allChecked; });
+});
+
+document.getElementById('folder-perms-cancel').addEventListener('click', () => {
+  document.getElementById('folder-perms-panel').classList.remove('open');
+});
+
+document.getElementById('folder-perms-save').addEventListener('click', async () => {
+  const boxes = document.querySelectorAll('#folder-perms-list input[type="checkbox"]');
+  const access = Array.from(boxes).filter(cb => cb.checked).map(cb => cb.value);
+  const resp = await fetch('/api/folders/' + encodeURI(_permsFolderName) + '/access', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ access }),
+  });
+  if (resp.ok) {
+    document.getElementById('folder-perms-panel').classList.remove('open');
+    await loadFolders();
+  } else {
+    const err = await resp.json();
+    alert(err.error || 'Failed to update permissions');
+  }
+});
 
 async function loadDocs(query) {
   let url = '/api/docs';
@@ -2156,6 +2461,16 @@ async function loadDocHistory() {
   });
 }
 
+document.getElementById('doc-download-btn').addEventListener('click', () => {
+  if (!_currentDoc) return;
+  const blob = new Blob([_currentDoc.content || ''], {type: 'text/plain'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = (_currentDoc.slug || 'document') + '.md';
+  a.click();
+  URL.revokeObjectURL(a.href);
+});
+
 document.getElementById('doc-history-btn').addEventListener('click', () => {
   const panel = document.getElementById('doc-history-panel');
   if (panel.style.display !== 'none') {
@@ -2251,11 +2566,52 @@ async function loadRepos() {
     if (glCurrentView === 'tree') loadTree(glCurrentRepo, glCurrentPath);
     else loadCommits(glCurrentRepo);
   } else {
-    document.getElementById('gitlab-content').innerHTML =
-      '<div id="gitlab-empty">No repositories yet.</div>';
-    document.getElementById('gitlab-repo-title').textContent = 'Select a repository';
-    document.getElementById('gitlab-repo-desc').textContent = '';
+    renderRepoLanding();
   }
+}
+
+function renderRepoLanding(filter) {
+  document.getElementById('gitlab-repo-title').textContent = 'Repositories';
+  document.getElementById('gitlab-repo-desc').textContent = glRepos.length + ' repositories';
+  document.getElementById('gl-repo-download-btn').style.display = 'none';
+  document.getElementById('gitlab-toggle-bar').style.display = 'none';
+  const content = document.getElementById('gitlab-content');
+  if (glRepos.length === 0) {
+    content.innerHTML = '<div id="gitlab-empty">No repositories yet.</div>';
+    return;
+  }
+  const filterVal = (filter || '').toLowerCase();
+  const filtered = filterVal
+    ? glRepos.filter(r => r.name.toLowerCase().includes(filterVal) || (r.description || '').toLowerCase().includes(filterVal))
+    : glRepos;
+  let html = '<div id="gitlab-landing">';
+  html += '<input id="gitlab-landing-filter" type="text" placeholder="Filter repositories..." autocomplete="off"'
+    + (filterVal ? ' value="' + escapeHtml(filter) + '"' : '') + ' />';
+  if (filtered.length === 0) {
+    html += '<div id="gitlab-empty">No matching repositories.</div>';
+  }
+  filtered.forEach(r => {
+    const desc = r.description ? '<div class="gl-landing-desc">' + escapeHtml(r.description) + '</div>' : '';
+    const created = r.created_at ? new Date(r.created_at * 1000).toLocaleDateString() : '';
+    html += '<div class="gl-landing-card" data-repo="' + escapeHtml(r.name) + '">'
+      + '<div><div class="gl-landing-name">' + escapeHtml(r.name) + '</div>' + desc + '</div>'
+      + '<div style="display:flex;align-items:center;gap:8px">'
+      + '<span class="gl-landing-meta">' + escapeHtml(created) + '</span>'
+      + '<button class="gl-download-btn" data-repo="' + escapeHtml(r.name) + '" title="Download as .tar.gz" onclick="event.stopPropagation();glDownloadRepo(this.dataset.repo)">Download</button>'
+      + '</div></div>';
+  });
+  html += '</div>';
+  content.innerHTML = html;
+  const filterInput = document.getElementById('gitlab-landing-filter');
+  filterInput.addEventListener('input', () => renderRepoLanding(filterInput.value));
+  if (filterVal) { filterInput.focus(); filterInput.selectionStart = filterInput.selectionEnd = filterVal.length; }
+  content.querySelectorAll('.gl-landing-card').forEach(card => {
+    card.addEventListener('click', () => switchRepo(card.dataset.repo));
+  });
+}
+
+function glDownloadRepo(name) {
+  window.open('/api/gitlab/repos/' + encodeURIComponent(name) + '/download', '_blank');
 }
 
 function renderRepoSidebar() {
@@ -2276,6 +2632,8 @@ function switchRepo(name) {
   glCurrentView = 'tree';
   renderRepoSidebar();
   updateGlToggles();
+  document.getElementById('gitlab-toggle-bar').style.display = '';
+  document.getElementById('gl-repo-download-btn').style.display = '';
   const repo = glRepos.find(r => r.name === name);
   document.getElementById('gitlab-repo-title').textContent = name;
   document.getElementById('gitlab-repo-desc').textContent = repo ? (repo.description || '') : '';
@@ -3611,6 +3969,7 @@ async function _smLoad(instance) {
     });
     if (resp.ok) {
       await reloadAllState();
+      pollStatus();
       showNotice('Session loaded.');
     } else {
       const err = await resp.json();
@@ -4174,6 +4533,19 @@ document.getElementById('blog-unpublish-btn').addEventListener('click', async ()
     loadBlogPosts();
     showNotice('Post unpublished');
   }
+});
+
+document.getElementById('blog-download-btn').addEventListener('click', async () => {
+  if (!_currentBlogPost) return;
+  const resp = await fetch('/api/blog/posts/' + _currentBlogPost);
+  if (!resp.ok) return;
+  const post = await resp.json();
+  const blob = new Blob([post.body || ''], {type: 'text/plain'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = (_currentBlogPost || 'blog-post') + '.md';
+  a.click();
+  URL.revokeObjectURL(a.href);
 });
 
 document.getElementById('blog-delete-btn').addEventListener('click', async () => {
@@ -4789,7 +5161,10 @@ document.getElementById('load-session-confirm').addEventListener('click', async 
       body: JSON.stringify({instance: _lmSelected}),
     });
     if (resp.ok) {
+      const meta = await resp.json();
       await reloadAllState();
+      pollStatus();
+      showNotice('Session loaded: ' + (meta.name || _lmSelected));
     } else {
       const err = await resp.json();
       hideLoading();
@@ -4798,6 +5173,8 @@ document.getElementById('load-session-confirm').addEventListener('click', async 
       status.style.color = 'var(--accent)';
       return;
     }
+  } catch (e) {
+    showNotice('Session load error: ' + e.message);
   } finally {
     hideLoading();
     document.getElementById('load-session-confirm').disabled = false;

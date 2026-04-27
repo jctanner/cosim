@@ -13,6 +13,7 @@ import json
 import logging
 import threading
 import time
+import urllib.parse
 from collections import deque
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -605,6 +606,137 @@ def _register_gitlab_tools(
         result = await _flask("GET", f"/api/gitlab/repos/{project}/log", flask_url)
         _record_audit(
             agent_key, "get_repo_log", {"project": project}, f"{len(result)} commits", (time.time() - t0) * 1000
+        )
+        return json.dumps(result)
+
+    # --- Merge Requests ---
+
+    @server.tool(
+        name="create_merge_request",
+        description="Create a merge request with a unified diff for code review.",
+    )
+    async def create_merge_request(
+        project: str, title: str, description: str, diff: str, reviewers: list[str] | None = None
+    ) -> str:
+        if not _can_access_repo(project):
+            return f"Error: you don't have access to repository '{project}'."
+        t0 = time.time()
+        payload = {"title": title, "description": description, "diff": diff, "author": display_name}
+        if reviewers:
+            payload["reviewers"] = reviewers
+        result = await _flask("POST", f"/api/gitlab/repos/{project}/merge-requests", flask_url, json=payload)
+        _record_audit(
+            agent_key,
+            "create_merge_request",
+            {"project": project, "title": title},
+            f"created {result.get('id', '?')}",
+            (time.time() - t0) * 1000,
+        )
+        return json.dumps(result)
+
+    @server.tool(
+        name="list_merge_requests",
+        description="List merge requests for a GitLab repository. Optional status filter: open, merged, closed.",
+    )
+    async def list_merge_requests(project: str, status: str | None = None) -> str:
+        if not _can_access_repo(project):
+            return f"Error: you don't have access to repository '{project}'."
+        t0 = time.time()
+        params = {}
+        if status:
+            params["status"] = status
+        result = await _flask("GET", f"/api/gitlab/repos/{project}/merge-requests", flask_url, params=params)
+        _record_audit(
+            agent_key, "list_merge_requests", {"project": project}, f"{len(result)} MRs", (time.time() - t0) * 1000
+        )
+        return json.dumps(result)
+
+    @server.tool(
+        name="get_merge_request",
+        description="Get a merge request's details including diff and review comments.",
+    )
+    async def get_merge_request(project: str, mr_id: str) -> str:
+        if not _can_access_repo(project):
+            return f"Error: you don't have access to repository '{project}'."
+        t0 = time.time()
+        result = await _flask(
+            "GET", f"/api/gitlab/repos/{project}/merge-requests/{urllib.parse.quote(mr_id, safe='')}", flask_url
+        )
+        _record_audit(
+            agent_key,
+            "get_merge_request",
+            {"project": project, "mr_id": mr_id},
+            result.get("title", "?"),
+            (time.time() - t0) * 1000,
+        )
+        return json.dumps(result)
+
+    @server.tool(
+        name="comment_on_merge_request",
+        description="Add a review comment to a merge request.",
+    )
+    async def comment_on_merge_request(project: str, mr_id: str, text: str) -> str:
+        if not _can_access_repo(project):
+            return f"Error: you don't have access to repository '{project}'."
+        t0 = time.time()
+        result = await _flask(
+            "POST",
+            f"/api/gitlab/repos/{project}/merge-requests/{urllib.parse.quote(mr_id, safe='')}/comment",
+            flask_url,
+            json={"text": text, "author": display_name},
+        )
+        _record_audit(
+            agent_key,
+            "comment_on_merge_request",
+            {"project": project, "mr_id": mr_id},
+            "commented",
+            (time.time() - t0) * 1000,
+        )
+        return json.dumps(result)
+
+    @server.tool(
+        name="approve_merge_request",
+        description="Approve a merge request. You cannot approve your own MR. At least one approval is required before merging.",
+    )
+    async def approve_merge_request(project: str, mr_id: str) -> str:
+        if not _can_access_repo(project):
+            return f"Error: you don't have access to repository '{project}'."
+        t0 = time.time()
+        result = await _flask(
+            "POST",
+            f"/api/gitlab/repos/{project}/merge-requests/{urllib.parse.quote(mr_id, safe='')}/approve",
+            flask_url,
+            json={"author": display_name},
+        )
+        _record_audit(
+            agent_key,
+            "approve_merge_request",
+            {"project": project, "mr_id": mr_id},
+            "approved",
+            (time.time() - t0) * 1000,
+        )
+        return json.dumps(result)
+
+    @server.tool(
+        name="merge_merge_request",
+        description="Merge an open merge request. Requires at least one non-author approval.",
+    )
+    async def merge_merge_request(project: str, mr_id: str) -> str:
+        if not _can_access_repo(project):
+            return f"Error: you don't have access to repository '{project}'."
+        t0 = time.time()
+        result = await _flask(
+            "POST",
+            f"/api/gitlab/repos/{project}/merge-requests/{urllib.parse.quote(mr_id, safe='')}/merge",
+            flask_url,
+            json={"author": display_name},
+        )
+        _record_audit(
+            agent_key,
+            "merge_merge_request",
+            {"project": project, "mr_id": mr_id},
+            "merged",
+            (time.time() - t0) * 1000,
         )
         return json.dumps(result)
 

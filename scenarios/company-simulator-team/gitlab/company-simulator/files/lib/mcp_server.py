@@ -112,6 +112,7 @@ async def _flask(method: str, path: str, flask_url: str, **kwargs) -> dict | lis
 # Tool registration helpers
 # ---------------------------------------------------------------------------
 
+
 def _register_communication_tools(
     server: FastMCP,
     agent_key: str,
@@ -142,10 +143,19 @@ def _register_communication_tools(
         if channel not in my_channels:
             return f"Error: you are not a member of {channel}. Your channels: {sorted(my_channels)}"
         t0 = time.time()
-        result = await _flask("POST", "/api/messages", flask_url, json={
-            "sender": display_name, "content": content, "channel": channel,
-        })
-        _record_audit(agent_key, "post_message", {"channel": channel}, str(result.get("id", "")), (time.time() - t0) * 1000)
+        result = await _flask(
+            "POST",
+            "/api/messages",
+            flask_url,
+            json={
+                "sender": display_name,
+                "content": content,
+                "channel": channel,
+            },
+        )
+        _record_audit(
+            agent_key, "post_message", {"channel": channel}, str(result.get("id", "")), (time.time() - t0) * 1000
+        )
         return json.dumps(result)
 
     @server.tool(
@@ -162,7 +172,13 @@ def _register_communication_tools(
         result = await _flask("GET", "/api/messages", flask_url, params=params)
         if isinstance(result, list):
             result = result[-limit:]
-        _record_audit(agent_key, "get_messages", {"channel": channel, "since_id": since_id}, f"{len(result)} msgs", (time.time() - t0) * 1000)
+        _record_audit(
+            agent_key,
+            "get_messages",
+            {"channel": channel, "since_id": since_id},
+            f"{len(result)} msgs",
+            (time.time() - t0) * 1000,
+        )
         return json.dumps(result)
 
     @server.tool(
@@ -173,10 +189,19 @@ def _register_communication_tools(
         # Phase 1: use the existing #dms system channel with structured prefix
         t0 = time.time()
         dm_content = f"[DM to {recipient_key}] {content}"
-        result = await _flask("POST", "/api/messages", flask_url, json={
-            "sender": display_name, "content": dm_content, "channel": "#dms",
-        })
-        _record_audit(agent_key, "send_dm", {"recipient": recipient_key}, str(result.get("id", "")), (time.time() - t0) * 1000)
+        result = await _flask(
+            "POST",
+            "/api/messages",
+            flask_url,
+            json={
+                "sender": display_name,
+                "content": dm_content,
+                "channel": "#dms",
+            },
+        )
+        _record_audit(
+            agent_key, "send_dm", {"recipient": recipient_key}, str(result.get("id", "")), (time.time() - t0) * 1000
+        )
         return json.dumps({"sent": True, "channel": "#dms", "message_id": result.get("id")})
 
     @server.tool(
@@ -202,9 +227,14 @@ def _register_communication_tools(
     async def join_channel(channel: str) -> str:
         t0 = time.time()
         encoded = channel.lstrip("#")
-        result = await _flask("POST", f"/api/channels/{encoded}/join", flask_url, json={
-            "persona": agent_key,
-        })
+        result = await _flask(
+            "POST",
+            f"/api/channels/{encoded}/join",
+            flask_url,
+            json={
+                "persona": agent_key,
+            },
+        )
         # Update local membership cache
         my_channels.add(channel)
         _record_audit(agent_key, "join_channel", {"channel": channel}, "joined", (time.time() - t0) * 1000)
@@ -219,7 +249,13 @@ def _register_communication_tools(
         channels_list = await _flask("GET", "/api/channels", flask_url)
         for ch in channels_list:
             if ch.get("name") == channel:
-                _record_audit(agent_key, "get_channel_members", {"channel": channel}, f"{len(ch.get('members', []))} members", (time.time() - t0) * 1000)
+                _record_audit(
+                    agent_key,
+                    "get_channel_members",
+                    {"channel": channel},
+                    f"{len(ch.get('members', []))} members",
+                    (time.time() - t0) * 1000,
+                )
                 return json.dumps({"channel": channel, "members": ch.get("members", [])})
         _record_audit(agent_key, "get_channel_members", {"channel": channel}, "not found", (time.time() - t0) * 1000)
         return json.dumps({"error": f"Channel {channel} not found"})
@@ -232,37 +268,73 @@ def _register_document_tools(
     flask_url: str,
     config: dict,
 ):
-    """Register 7 document tools with folder access control."""
-    my_folders = {
-        folder for folder, members in config.get("folder_access", {}).items()
-        if agent_key in members
-    }
+    """Register 9 document tools with folder access control."""
+    my_folders = {folder for folder, members in config.get("folder_access", {}).items() if agent_key in members}
+
+    async def _refresh_my_folders():
+        """Refresh folder access from the server (picks up dynamically created folders)."""
+        try:
+            folders = await _flask("GET", "/api/folders", flask_url)
+            my_folders.clear()
+            for f in folders:
+                if agent_key in f.get("access", []):
+                    my_folders.add(f["name"])
+        except Exception:
+            pass
+
+    async def _check_folder_access(folder: str) -> str | None:
+        """Check folder access, refreshing from server on miss. Returns error string or None."""
+        if folder in my_folders:
+            return None
+        await _refresh_my_folders()
+        if folder in my_folders:
+            return None
+        return f"Error: you don't have access to folder '{folder}'. Your folders: {sorted(my_folders)}"
 
     @server.tool(
         name="create_doc",
         description="Create a new document in a folder you have access to.",
     )
     async def create_doc(title: str, folder: str, content: str) -> str:
-        if folder not in my_folders:
-            return f"Error: you don't have access to folder '{folder}'. Your folders: {sorted(my_folders)}"
+        err = await _check_folder_access(folder)
+        if err:
+            return err
         t0 = time.time()
-        result = await _flask("POST", "/api/docs", flask_url, json={
-            "title": title, "content": content, "author": display_name, "folder": folder,
-        })
-        _record_audit(agent_key, "create_doc", {"title": title, "folder": folder}, result.get("slug", ""), (time.time() - t0) * 1000)
+        result = await _flask(
+            "POST",
+            "/api/docs",
+            flask_url,
+            json={
+                "title": title,
+                "content": content,
+                "author": display_name,
+                "folder": folder,
+            },
+        )
+        _record_audit(
+            agent_key,
+            "create_doc",
+            {"title": title, "folder": folder},
+            result.get("slug", ""),
+            (time.time() - t0) * 1000,
+        )
         return json.dumps(result)
 
     @server.tool(
         name="update_doc",
-        description="Replace the content of an existing document.",
+        description="Replace the content of an existing document. Optionally rename the title and/or slug.",
     )
-    async def update_doc(folder: str, slug: str, content: str) -> str:
-        if folder not in my_folders:
-            return f"Error: you don't have access to folder '{folder}'. Your folders: {sorted(my_folders)}"
+    async def update_doc(folder: str, slug: str, content: str, title: str = "", new_slug: str = "") -> str:
+        err = await _check_folder_access(folder)
+        if err:
+            return err
         t0 = time.time()
-        result = await _flask("PUT", f"/api/docs/{folder}/{slug}", flask_url, json={
-            "content": content, "author": display_name,
-        })
+        payload: dict[str, str] = {"content": content, "author": display_name}
+        if title:
+            payload["title"] = title
+        if new_slug:
+            payload["new_slug"] = new_slug
+        result = await _flask("PUT", f"/api/docs/{folder}/{slug}", flask_url, json=payload)
         _record_audit(agent_key, "update_doc", {"folder": folder, "slug": slug}, "updated", (time.time() - t0) * 1000)
         return json.dumps(result)
 
@@ -271,8 +343,9 @@ def _register_document_tools(
         description="Read a document's full content by folder and slug.",
     )
     async def read_doc(folder: str, slug: str) -> str:
-        if folder not in my_folders:
-            return f"Error: you don't have access to folder '{folder}'. Your folders: {sorted(my_folders)}"
+        err = await _check_folder_access(folder)
+        if err:
+            return err
         t0 = time.time()
         result = await _flask("GET", f"/api/docs/{folder}/{slug}", flask_url)
         _record_audit(agent_key, "read_doc", {"folder": folder, "slug": slug}, "read", (time.time() - t0) * 1000)
@@ -283,6 +356,7 @@ def _register_document_tools(
         description="Search documents by query string. Only searches folders you have access to.",
     )
     async def search_docs(query: str) -> str:
+        await _refresh_my_folders()
         t0 = time.time()
         params: dict[str, str] = {"q": query}
         if my_folders:
@@ -296,14 +370,17 @@ def _register_document_tools(
         description="List documents, optionally filtered by folder.",
     )
     async def list_docs(folder: str | None = None) -> str:
-        if folder and folder not in my_folders:
-            return f"Error: you don't have access to folder '{folder}'. Your folders: {sorted(my_folders)}"
+        if folder:
+            err = await _check_folder_access(folder)
+            if err:
+                return err
+        else:
+            await _refresh_my_folders()
         t0 = time.time()
         params: dict[str, str] = {}
         if folder:
             params["folder"] = folder
         result = await _flask("GET", "/api/docs", flask_url, params=params)
-        # Filter to accessible folders
         if not folder:
             result = [d for d in result if d.get("folder", "") in my_folders]
         _record_audit(agent_key, "list_docs", {"folder": folder}, f"{len(result)} docs", (time.time() - t0) * 1000)
@@ -314,8 +391,9 @@ def _register_document_tools(
         description="Delete a document by folder and slug. Only works in folders you have access to.",
     )
     async def delete_doc(folder: str, slug: str) -> str:
-        if folder not in my_folders:
-            return f"Error: you don't have access to folder '{folder}'. Your folders: {sorted(my_folders)}"
+        err = await _check_folder_access(folder)
+        if err:
+            return err
         t0 = time.time()
         result = await _flask("DELETE", f"/api/docs/{folder}/{slug}", flask_url)
         _record_audit(agent_key, "delete_doc", {"folder": folder, "slug": slug}, "deleted", (time.time() - t0) * 1000)
@@ -326,13 +404,87 @@ def _register_document_tools(
         description="Append content to an existing document without replacing it. Only works in folders you have access to.",
     )
     async def append_doc(folder: str, slug: str, content: str) -> str:
-        if folder not in my_folders:
-            return f"Error: you don't have access to folder '{folder}'. Your folders: {sorted(my_folders)}"
+        err = await _check_folder_access(folder)
+        if err:
+            return err
         t0 = time.time()
-        result = await _flask("POST", f"/api/docs/{folder}/{slug}/append", flask_url, json={
-            "content": content, "author": display_name,
-        })
+        result = await _flask(
+            "POST",
+            f"/api/docs/{folder}/{slug}/append",
+            flask_url,
+            json={
+                "content": content,
+                "author": display_name,
+            },
+        )
         _record_audit(agent_key, "append_doc", {"folder": folder, "slug": slug}, "appended", (time.time() - t0) * 1000)
+        return json.dumps(result)
+
+    all_persona_keys = sorted(config.get("characters", {}).keys())
+
+    @server.tool(
+        name="create_folder",
+        description=(
+            'Create a new folder (or nested folder like "projects/my-project"). '
+            'You automatically get access. Pass access=["all"] to grant access to '
+            "all team members, or a list of persona keys."
+        ),
+    )
+    async def create_folder(name: str, description: str = "", access: list[str] | None = None) -> str:
+        t0 = time.time()
+        access_list = list(access) if access else []
+        if "all" in access_list:
+            access_list = list(all_persona_keys)
+        if agent_key not in access_list:
+            access_list.append(agent_key)
+        result = await _flask(
+            "POST",
+            "/api/folders",
+            flask_url,
+            json={
+                "name": name,
+                "description": description,
+                "type": "project",
+                "created_by": display_name,
+                "access": access_list,
+            },
+        )
+        if "error" not in result:
+            my_folders.add(name)
+        _record_audit(agent_key, "create_folder", {"name": name}, result.get("name", ""), (time.time() - t0) * 1000)
+        return json.dumps(result)
+
+    @server.tool(
+        name="update_folder_access",
+        description=(
+            'Update who can access a folder. Pass access=["all"] to grant access '
+            "to all team members, or a list of persona keys. You must already have "
+            "access to the folder."
+        ),
+    )
+    async def update_folder_access(folder: str, access: list[str]) -> str:
+        err = await _check_folder_access(folder)
+        if err:
+            return err
+        t0 = time.time()
+        access_list = list(access)
+        if "all" in access_list:
+            access_list = list(all_persona_keys)
+        if agent_key not in access_list:
+            access_list.append(agent_key)
+        result = await _flask(
+            "PUT",
+            f"/api/folders/{folder}/access",
+            flask_url,
+            json={"access": access_list},
+        )
+        _record_audit(
+            agent_key,
+            "update_folder_access",
+            {"folder": folder},
+            f"{len(access_list)} members",
+            (time.time() - t0) * 1000,
+        )
         return json.dumps(result)
 
 
@@ -369,9 +521,16 @@ def _register_gitlab_tools(
     )
     async def create_repo(name: str, description: str) -> str:
         t0 = time.time()
-        result = await _flask("POST", "/api/gitlab/repos", flask_url, json={
-            "name": name, "description": description, "author": display_name,
-        })
+        result = await _flask(
+            "POST",
+            "/api/gitlab/repos",
+            flask_url,
+            json={
+                "name": name,
+                "description": description,
+                "author": display_name,
+            },
+        )
         _record_audit(agent_key, "create_repo", {"name": name}, result.get("name", ""), (time.time() - t0) * 1000)
         return json.dumps(result)
 
@@ -383,10 +542,23 @@ def _register_gitlab_tools(
         if not _can_access_repo(project):
             return f"Error: you don't have access to repository '{project}'."
         t0 = time.time()
-        result = await _flask("POST", f"/api/gitlab/repos/{project}/commit", flask_url, json={
-            "message": message, "files": files, "author": display_name,
-        })
-        _record_audit(agent_key, "commit_files", {"project": project, "message": message}, result.get("commit_id", ""), (time.time() - t0) * 1000)
+        result = await _flask(
+            "POST",
+            f"/api/gitlab/repos/{project}/commit",
+            flask_url,
+            json={
+                "message": message,
+                "files": files,
+                "author": display_name,
+            },
+        )
+        _record_audit(
+            agent_key,
+            "commit_files",
+            {"project": project, "message": message},
+            result.get("commit_id", ""),
+            (time.time() - t0) * 1000,
+        )
         return json.dumps(result)
 
     @server.tool(
@@ -413,7 +585,13 @@ def _register_gitlab_tools(
         if path:
             params["path"] = path
         result = await _flask("GET", f"/api/gitlab/repos/{project}/tree", flask_url, params=params)
-        _record_audit(agent_key, "list_repo_tree", {"project": project, "path": path}, f"{len(result)} entries", (time.time() - t0) * 1000)
+        _record_audit(
+            agent_key,
+            "list_repo_tree",
+            {"project": project, "path": path},
+            f"{len(result)} entries",
+            (time.time() - t0) * 1000,
+        )
         return json.dumps(result)
 
     @server.tool(
@@ -425,7 +603,9 @@ def _register_gitlab_tools(
             return f"Error: you don't have access to repository '{project}'."
         t0 = time.time()
         result = await _flask("GET", f"/api/gitlab/repos/{project}/log", flask_url)
-        _record_audit(agent_key, "get_repo_log", {"project": project}, f"{len(result)} commits", (time.time() - t0) * 1000)
+        _record_audit(
+            agent_key, "get_repo_log", {"project": project}, f"{len(result)} commits", (time.time() - t0) * 1000
+        )
         return json.dumps(result)
 
 
@@ -453,19 +633,30 @@ def _register_ticket_tools(
         description="Create a new ticket with title, description, priority (low/medium/high/critical), and assignee persona key.",
     )
     async def create_ticket(
-        title: str, description: str, priority: str, assignee: str,
+        title: str,
+        description: str,
+        priority: str,
+        assignee: str,
         blocked_by: list[str] | None = None,
     ) -> str:
         t0 = time.time()
         payload: dict[str, Any] = {
-            "title": title, "description": description,
-            "priority": priority, "assignee": assignee,
+            "title": title,
+            "description": description,
+            "priority": priority,
+            "assignee": assignee,
             "author": display_name,
         }
         if blocked_by:
             payload["blocked_by"] = blocked_by
         result = await _flask("POST", "/api/tickets", flask_url, json=payload)
-        _record_audit(agent_key, "create_ticket", {"title": title, "priority": priority}, result.get("id", ""), (time.time() - t0) * 1000)
+        _record_audit(
+            agent_key,
+            "create_ticket",
+            {"title": title, "priority": priority},
+            result.get("id", ""),
+            (time.time() - t0) * 1000,
+        )
         return json.dumps(result)
 
     @server.tool(
@@ -473,7 +664,9 @@ def _register_ticket_tools(
         description="Update a ticket's status or assignee. Status values: open, in-progress, resolved, closed.",
     )
     async def update_ticket(
-        ticket_id: str, status: str | None = None, assignee: str | None = None,
+        ticket_id: str,
+        status: str | None = None,
+        assignee: str | None = None,
     ) -> str:
         t0 = time.time()
         payload: dict[str, Any] = {"author": display_name}
@@ -482,7 +675,9 @@ def _register_ticket_tools(
         if assignee is not None:
             payload["assignee"] = assignee
         result = await _flask("PUT", f"/api/tickets/{ticket_id}", flask_url, json=payload)
-        _record_audit(agent_key, "update_ticket", {"ticket_id": ticket_id, "status": status}, "updated", (time.time() - t0) * 1000)
+        _record_audit(
+            agent_key, "update_ticket", {"ticket_id": ticket_id, "status": status}, "updated", (time.time() - t0) * 1000
+        )
         return json.dumps(result)
 
     @server.tool(
@@ -491,9 +686,15 @@ def _register_ticket_tools(
     )
     async def comment_on_ticket(ticket_id: str, text: str) -> str:
         t0 = time.time()
-        result = await _flask("POST", f"/api/tickets/{ticket_id}/comment", flask_url, json={
-            "text": text, "author": display_name,
-        })
+        result = await _flask(
+            "POST",
+            f"/api/tickets/{ticket_id}/comment",
+            flask_url,
+            json={
+                "text": text,
+                "author": display_name,
+            },
+        )
         _record_audit(agent_key, "comment_on_ticket", {"ticket_id": ticket_id}, "commented", (time.time() - t0) * 1000)
         return json.dumps(result)
 
@@ -509,7 +710,13 @@ def _register_ticket_tools(
         if assignee:
             params["assignee"] = assignee
         result = await _flask("GET", "/api/tickets", flask_url, params=params)
-        _record_audit(agent_key, "list_tickets", {"status": status, "assignee": assignee}, f"{len(result)} tickets", (time.time() - t0) * 1000)
+        _record_audit(
+            agent_key,
+            "list_tickets",
+            {"status": status, "assignee": assignee},
+            f"{len(result)} tickets",
+            (time.time() - t0) * 1000,
+        )
         return json.dumps(result)
 
 
@@ -541,7 +748,9 @@ def _register_memo_tools(
         thread = await _flask("GET", f"/api/memos/threads/{thread_id}", flask_url)
         posts = await _flask("GET", f"/api/memos/threads/{thread_id}/posts", flask_url)
         thread["posts"] = posts
-        _record_audit(agent_key, "get_memo_thread", {"thread_id": thread_id}, f"{len(posts)} posts", (time.time() - t0) * 1000)
+        _record_audit(
+            agent_key, "get_memo_thread", {"thread_id": thread_id}, f"{len(posts)} posts", (time.time() - t0) * 1000
+        )
         return json.dumps(thread)
 
     @server.tool(
@@ -550,9 +759,16 @@ def _register_memo_tools(
     )
     async def create_memo(title: str, description: str = "") -> str:
         t0 = time.time()
-        result = await _flask("POST", "/api/memos/threads", flask_url, json={
-            "title": title, "creator": display_name, "description": description,
-        })
+        result = await _flask(
+            "POST",
+            "/api/memos/threads",
+            flask_url,
+            json={
+                "title": title,
+                "creator": display_name,
+                "description": description,
+            },
+        )
         _record_audit(agent_key, "create_memo", {"title": title}, result.get("id", ""), (time.time() - t0) * 1000)
         return json.dumps(result)
 
@@ -562,9 +778,15 @@ def _register_memo_tools(
     )
     async def reply_to_memo(thread_id: str, text: str) -> str:
         t0 = time.time()
-        result = await _flask("POST", f"/api/memos/threads/{thread_id}/posts", flask_url, json={
-            "text": text, "author": display_name,
-        })
+        result = await _flask(
+            "POST",
+            f"/api/memos/threads/{thread_id}/posts",
+            flask_url,
+            json={
+                "text": text,
+                "author": display_name,
+            },
+        )
         _record_audit(agent_key, "reply_to_memo", {"thread_id": thread_id}, "replied", (time.time() - t0) * 1000)
         return json.dumps(result)
 
@@ -607,7 +829,9 @@ def _register_blog_tools(
         post = await _flask("GET", f"/api/blog/posts/{post_slug}", flask_url)
         replies = await _flask("GET", f"/api/blog/posts/{post_slug}/replies", flask_url)
         post["replies"] = replies
-        _record_audit(agent_key, "read_blog_post", {"post_slug": post_slug}, f"{len(replies)} replies", (time.time() - t0) * 1000)
+        _record_audit(
+            agent_key, "read_blog_post", {"post_slug": post_slug}, f"{len(replies)} replies", (time.time() - t0) * 1000
+        )
         return json.dumps(post)
 
     @server.tool(
@@ -615,17 +839,24 @@ def _register_blog_tools(
         description="Create a new blog post. Set is_external=true for customer-facing posts.",
     )
     async def create_blog_post(
-        title: str, body: str, is_external: bool = False, tags: list[str] | None = None,
+        title: str,
+        body: str,
+        is_external: bool = False,
+        tags: list[str] | None = None,
     ) -> str:
         t0 = time.time()
         payload: dict[str, Any] = {
-            "title": title, "body": body, "author": display_name,
+            "title": title,
+            "body": body,
+            "author": display_name,
             "is_external": is_external,
         }
         if tags:
             payload["tags"] = tags
         result = await _flask("POST", "/api/blog/posts", flask_url, json=payload)
-        _record_audit(agent_key, "create_blog_post", {"title": title}, result.get("slug", ""), (time.time() - t0) * 1000)
+        _record_audit(
+            agent_key, "create_blog_post", {"title": title}, result.get("slug", ""), (time.time() - t0) * 1000
+        )
         return json.dumps(result)
 
     @server.tool(
@@ -634,9 +865,15 @@ def _register_blog_tools(
     )
     async def reply_to_blog(post_slug: str, text: str) -> str:
         t0 = time.time()
-        result = await _flask("POST", f"/api/blog/posts/{post_slug}/replies", flask_url, json={
-            "text": text, "author": display_name,
-        })
+        result = await _flask(
+            "POST",
+            f"/api/blog/posts/{post_slug}/replies",
+            flask_url,
+            json={
+                "text": text,
+                "author": display_name,
+            },
+        )
         _record_audit(agent_key, "reply_to_blog", {"post_slug": post_slug}, "replied", (time.time() - t0) * 1000)
         return json.dumps(result)
 
@@ -645,8 +882,11 @@ def _register_blog_tools(
         description="Update an existing blog post. You can change title, body, status (draft/published/unpublished), is_external, or tags.",
     )
     async def update_blog_post(
-        post_slug: str, title: str | None = None, body: str | None = None,
-        status: str | None = None, is_external: bool | None = None,
+        post_slug: str,
+        title: str | None = None,
+        body: str | None = None,
+        status: str | None = None,
+        is_external: bool | None = None,
         tags: list[str] | None = None,
     ) -> str:
         t0 = time.time()
@@ -693,10 +933,19 @@ def _register_email_tools(
     )
     async def send_email(subject: str, body: str) -> str:
         t0 = time.time()
-        result = await _flask("POST", "/api/emails", flask_url, json={
-            "sender": display_name, "subject": subject, "body": body,
-        })
-        _record_audit(agent_key, "send_email", {"subject": subject}, str(result.get("id", "")), (time.time() - t0) * 1000)
+        result = await _flask(
+            "POST",
+            "/api/emails",
+            flask_url,
+            json={
+                "sender": display_name,
+                "subject": subject,
+                "body": body,
+            },
+        )
+        _record_audit(
+            agent_key, "send_email", {"subject": subject}, str(result.get("id", "")), (time.time() - t0) * 1000
+        )
         return json.dumps(result)
 
     @server.tool(
@@ -728,8 +977,7 @@ def _register_meta_tools(
     )
     async def whoami() -> str:
         my_folders = sorted(
-            folder for folder, members in config.get("folder_access", {}).items()
-            if agent_key in members
+            folder for folder, members in config.get("folder_access", {}).items() if agent_key in members
         )
         char_info = characters.get(agent_key, {})
         result = {
@@ -796,9 +1044,14 @@ def _register_meta_tools(
         cutoff = time.time() - (since_minutes * 60)
 
         # Fetch recent messages from my channels
-        all_msgs = await _flask("GET", "/api/messages", flask_url, params={
-            "channels": ",".join(my_channels),
-        })
+        all_msgs = await _flask(
+            "GET",
+            "/api/messages",
+            flask_url,
+            params={
+                "channels": ",".join(my_channels),
+            },
+        )
         recent_msgs = [m for m in all_msgs if m.get("timestamp", 0) > cutoff]
 
         # Fetch recent tickets
@@ -819,7 +1072,13 @@ def _register_meta_tools(
             ch = m.get("channel", "?")
             summary["messages_by_channel"][ch] = summary["messages_by_channel"].get(ch, 0) + 1
 
-        _record_audit(agent_key, "get_recent_activity", {"since_minutes": since_minutes}, f"{len(recent_msgs)} msgs", (time.time() - t0) * 1000)
+        _record_audit(
+            agent_key,
+            "get_recent_activity",
+            {"since_minutes": since_minutes},
+            f"{len(recent_msgs)} msgs",
+            (time.time() - t0) * 1000,
+        )
         return json.dumps(summary)
 
     @server.tool(
@@ -833,17 +1092,23 @@ def _register_meta_tools(
         # Append to done event queue for tier advancement tracking
         with _done_lock:
             _done_event_counter += 1
-            _done_events.append({
-                "id": _done_event_counter,
-                "agent_key": agent_key,
-                "summary": summary,
-                "timestamp": time.time(),
-            })
+            _done_events.append(
+                {
+                    "id": _done_event_counter,
+                    "agent_key": agent_key,
+                    "summary": summary,
+                    "timestamp": time.time(),
+                }
+            )
         # Forward summary to Flask thoughts API so it appears in UI
         if summary:
             try:
-                await _flask("POST", f"/api/npcs/{agent_key}/thoughts", flask_url,
-                             json={"thinking": "", "response": f"[Done] {summary}"})
+                await _flask(
+                    "POST",
+                    f"/api/npcs/{agent_key}/thoughts",
+                    flask_url,
+                    json={"thinking": "", "response": f"[Done] {summary}"},
+                )
             except Exception:
                 pass
         return json.dumps({"status": "acknowledged", "agent_key": agent_key})
@@ -852,6 +1117,7 @@ def _register_meta_tools(
 # ---------------------------------------------------------------------------
 # Per-agent MCP instance factory
 # ---------------------------------------------------------------------------
+
 
 def create_agent_mcp(
     agent_key: str,
@@ -885,14 +1151,17 @@ def create_agent_mcp(
 # Telemetry + health + audit HTTP endpoints
 # ---------------------------------------------------------------------------
 
+
 async def _health(request: Request) -> JSONResponse:
     scenario = getattr(request.app.state, "scenario_name", None)
     agent_keys = getattr(request.app.state, "agent_keys", [])
-    return JSONResponse({
-        "status": "ok",
-        "scenario": scenario,
-        "agents": agent_keys,
-    })
+    return JSONResponse(
+        {
+            "status": "ok",
+            "scenario": scenario,
+            "agents": agent_keys,
+        }
+    )
 
 
 async def _forward_activity(flask_url: str, agent_key: str, event_type: str, detail: str = "") -> None:
@@ -916,10 +1185,16 @@ async def _telemetry_model_end(request: Request) -> JSONResponse:
     except Exception:
         return JSONResponse({"error": "invalid json"}, status_code=400)
 
-    stats = _telemetry.setdefault(agent_key, {
-        "api_calls": 0, "input_tokens": 0, "output_tokens": 0,
-        "total_cost_usd": 0.0, "last_model": "",
-    })
+    stats = _telemetry.setdefault(
+        agent_key,
+        {
+            "api_calls": 0,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_cost_usd": 0.0,
+            "last_model": "",
+        },
+    )
     stats["api_calls"] += 1
     stats["last_model"] = data.get("model", "")
 
@@ -962,10 +1237,17 @@ async def _telemetry_tool_start(request: Request) -> JSONResponse:
         return JSONResponse({"error": "invalid json"}, status_code=400)
 
     tool_name = data.get("tool_name", "unknown")
-    stats = _telemetry.setdefault(agent_key, {
-        "api_calls": 0, "input_tokens": 0, "output_tokens": 0,
-        "total_cost_usd": 0.0, "last_model": "", "tool_calls": {},
-    })
+    stats = _telemetry.setdefault(
+        agent_key,
+        {
+            "api_calls": 0,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_cost_usd": 0.0,
+            "last_model": "",
+            "tool_calls": {},
+        },
+    )
     tool_calls = stats.setdefault("tool_calls", {})
     tool_calls[tool_name] = tool_calls.get(tool_name, 0) + 1
 
@@ -1002,6 +1284,12 @@ async def _done_events_endpoint(request: Request) -> JSONResponse:
     return JSONResponse(events)
 
 
+async def _done_events_cursor_endpoint(request: Request) -> JSONResponse:
+    """GET: return the current done-event high-water mark without event data."""
+    with _done_lock:
+        return JSONResponse({"cursor": _done_event_counter})
+
+
 async def _load_scenario_endpoint(request: Request) -> JSONResponse:
     """POST /api/load-scenario — dynamically load (or reload) a scenario.
 
@@ -1026,8 +1314,7 @@ async def _load_scenario_endpoint(request: Request) -> JSONResponse:
 
     # Remove any previously mounted agent routes
     request.app.routes[:] = [
-        r for r in request.app.routes
-        if not (isinstance(r, Mount) and r.path.startswith("/agents/"))
+        r for r in request.app.routes if not (isinstance(r, Mount) and r.path.startswith("/agents/"))
     ]
 
     # Mount new per-agent MCP sub-apps
@@ -1043,16 +1330,19 @@ async def _load_scenario_endpoint(request: Request) -> JSONResponse:
     request.app.state.agent_keys = agent_keys
 
     logger.info(f"Loaded scenario '{scenario_name}' with {len(agent_keys)} agents: {agent_keys}")
-    return JSONResponse({
-        "status": "ok",
-        "scenario": scenario_name,
-        "agents": agent_keys,
-    })
+    return JSONResponse(
+        {
+            "status": "ok",
+            "scenario": scenario_name,
+            "agents": agent_keys,
+        }
+    )
 
 
 # ---------------------------------------------------------------------------
 # App builder
 # ---------------------------------------------------------------------------
+
 
 def build_app(scenario_name: str | None, flask_url: str) -> Starlette:
     """Build the parent Starlette app with per-agent MCP mounts.
@@ -1062,6 +1352,7 @@ def build_app(scenario_name: str | None, flask_url: str) -> Starlette:
 
     Returns a Starlette app ready for uvicorn.
     """
+
     @asynccontextmanager
     async def lifespan(app: Starlette):
         global _http_client
@@ -1088,15 +1379,18 @@ def build_app(scenario_name: str | None, flask_url: str) -> Starlette:
             logger.info(f"Mounted MCP endpoint: /agents/{agent_key}/sse")
 
     # Add management endpoints
-    routes.extend([
-        Route("/health", _health, methods=["GET"]),
-        Route("/api/load-scenario", _load_scenario_endpoint, methods=["POST"]),
-        Route("/api/telemetry/model-end", _telemetry_model_end, methods=["POST"]),
-        Route("/api/telemetry/tool-start", _telemetry_tool_start, methods=["POST"]),
-        Route("/api/telemetry", _get_telemetry, methods=["GET"]),
-        Route("/api/audit", _get_audit, methods=["GET"]),
-        Route("/api/agents/done-events", _done_events_endpoint, methods=["GET", "DELETE"]),
-    ])
+    routes.extend(
+        [
+            Route("/health", _health, methods=["GET"]),
+            Route("/api/load-scenario", _load_scenario_endpoint, methods=["POST"]),
+            Route("/api/telemetry/model-end", _telemetry_model_end, methods=["POST"]),
+            Route("/api/telemetry/tool-start", _telemetry_tool_start, methods=["POST"]),
+            Route("/api/telemetry", _get_telemetry, methods=["GET"]),
+            Route("/api/audit", _get_audit, methods=["GET"]),
+            Route("/api/agents/done-events", _done_events_endpoint, methods=["GET", "DELETE"]),
+            Route("/api/agents/done-events/cursor", _done_events_cursor_endpoint, methods=["GET"]),
+        ]
+    )
 
     app = Starlette(routes=routes, lifespan=lifespan)
 

@@ -4,8 +4,8 @@ import time
 
 from flask import Blueprint, jsonify, request
 
-from lib.webapp.state import _messages, _lock
-from lib.webapp.helpers import _persist_message, _broadcast
+from lib.webapp.helpers import _broadcast, _persist_message
+from lib.webapp.state import _lock, _messages
 
 bp = Blueprint("emails", __name__)
 
@@ -13,12 +13,14 @@ bp = Blueprint("emails", __name__)
 @bp.route("/api/emails", methods=["GET"])
 def list_emails():
     from lib.email import get_inbox
+
     return jsonify(get_inbox())
 
 
 @bp.route("/api/emails", methods=["POST"])
 def create_email():
     from lib.email import send_email
+
     data = request.get_json(force=True)
     sender = data.get("sender", "System")
     subject = data.get("subject", "").strip()
@@ -44,6 +46,7 @@ def create_email():
 @bp.route("/api/emails/<int:email_id>", methods=["GET"])
 def get_email_detail(email_id):
     from lib.email import get_email
+
     entry = get_email(email_id)
     if not entry:
         return jsonify({"error": "not found"}), 404

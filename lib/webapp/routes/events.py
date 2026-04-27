@@ -207,6 +207,43 @@ def trigger_event():
                 # Create new blog post
                 post = create_blog(title, body, creator, is_external=is_external, tags=tags)
                 results.append({"type": "blog", "action": "created", "slug": post["slug"], "title": title})
+        elif action_type == "merge_request":
+            from lib.gitlab import next_mr_id, save_merge_requests
+            from lib.webapp.state import _gitlab_lock, _gitlab_merge_requests, _gitlab_repos
+
+            project = action.get("project", "")
+            title = action.get("title", "")
+            diff = action.get("diff", "")
+            sender = action.get("sender", action.get("author", "System"))
+            description = action.get("description", "")
+            reviewers = action.get("reviewers", [])
+            if project and title and diff:
+                with _gitlab_lock:
+                    if project in _gitlab_repos:
+                        mrs = _gitlab_merge_requests.setdefault(project, [])
+                        mr_id = next_mr_id(mrs)
+                        now = time.time()
+                        additions = sum(1 for ln in diff.split("\n") if ln.startswith("+") and not ln.startswith("+++"))
+                        deletions = sum(1 for ln in diff.split("\n") if ln.startswith("-") and not ln.startswith("---"))
+                        mr = {
+                            "id": mr_id,
+                            "title": title,
+                            "description": description,
+                            "author": sender,
+                            "project": project,
+                            "diff": diff,
+                            "additions": additions,
+                            "deletions": deletions,
+                            "status": "open",
+                            "reviewers": reviewers,
+                            "approvals": [],
+                            "comments": [],
+                            "created_at": now,
+                            "updated_at": now,
+                        }
+                        mrs.append(mr)
+                        save_merge_requests(project, mrs)
+                        results.append({"type": "merge_request", "action": "created", "id": mr_id, "title": title})
     # Log the event with results
     data["results"] = results
     entry = fire_event(data)

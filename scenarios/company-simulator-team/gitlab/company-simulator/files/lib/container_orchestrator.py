@@ -8,7 +8,9 @@ signal_done events from the MCP server rather than waiting for process exit.
 import asyncio
 import json
 import logging
+import os
 import platform as _platform
+import shutil
 import subprocess
 import threading
 import time as _time
@@ -16,23 +18,71 @@ from pathlib import Path
 
 import requests as sync_requests
 
+from lib.agent_runner import format_duration, get_model_id
 from lib.chat_client import ChatClient
-from lib.agent_runner import get_model_id, format_duration
 from lib.personas import (
-    get_active_personas,
-    build_v3_system_prompt,
-    build_v3_turn_prompt,
-    DEFAULT_CHANNELS,
     DEFAULT_MEMBERSHIPS,
+    PERSONA_TIER,
     PERSONAS,
     RESPONSE_TIERS,
-    PERSONA_TIER,
+    build_v3_system_prompt,
+    build_v3_turn_prompt,
+    get_active_personas,
 )
 
 logger = logging.getLogger("container_orchestrator")
 
 LOG_DIR = Path(__file__).parent.parent / "var" / "logs"
 TMP_DIR = Path(__file__).parent.parent / "var" / "tmp"
+
+# Env vars to forward from the host process to agent containers.
+# These are loaded from .env by main.py's load_dotenv() call.
+_FORWARD_ENV_VARS = [
+    "CLAUDE_CODE_USE_VERTEX",
+    "CLOUD_ML_REGION",
+    "ANTHROPIC_VERTEX_PROJECT_ID",
+    "ANTHROPIC_API_KEY",  # non-Vertex usage
+]
+
+
+def _collect_env_vars() -> list[str]:
+    """Collect env vars from os.environ to forward to containers as -e flags.
+
+    Returns a list like ["-e", "KEY=VAL", "-e", "KEY2=VAL2", ...].
+    """
+    flags: list[str] = []
+    for key in _FORWARD_ENV_VARS:
+        val = os.environ.get(key)
+        if val:
+            flags.extend(["-e", f"{key}={val}"])
+    return flags
+
+
+def _find_and_stage_gcp_credentials() -> str | None:
+    """Find GCP credentials and copy to var/tmp/ for SELinux-safe mounting.
+
+    Checks: GOOGLE_APPLICATION_CREDENTIALS env var, project-local copy,
+    then standard gcloud location. Copies to var/tmp/ so the mount uses
+    the same SELinux context as other already-working volume mounts.
+    """
+    candidates = [
+        os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", ""),
+        str(Path(__file__).parent.parent / "application_default_credentials.json"),
+        str(Path.home() / ".config" / "gcloud" / "application_default_credentials.json"),
+    ]
+    src = None
+    for path in candidates:
+        if path and Path(path).is_file():
+            src = path
+            break
+    if not src:
+        return None
+
+    staged = TMP_DIR / "gcp-credentials.json"
+    TMP_DIR.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(src, staged)
+    return str(staged)
+
 
 # -- DM (Direct Message) queue --
 # recipient_key -> [{from_key, from_name, text, timestamp}]
@@ -65,6 +115,30 @@ def _is_agent_message(msg: dict) -> bool:
     return msg["sender"] in _get_agent_display_names()
 
 
+def _filter_trigger_messages_for_agent(
+    trigger_msgs: list[dict],
+    agent_channels: set[str],
+    last_seen_id: int = 0,
+) -> list[dict] | None:
+    """Filter trigger messages to only those relevant to a specific agent."""
+    if not trigger_msgs:
+        return None
+    return [m for m in trigger_msgs if m.get("channel") in agent_channels and m.get("id", 0) > last_seen_id]
+
+
+def _resolve_agent_trigger_channels(
+    trigger_ch_set: set[str],
+    agent_channels: set[str],
+) -> set[str]:
+    """Resolve the effective trigger channels for an agent.
+
+    Director channels (#director-<key>) are always included if they're in the
+    trigger set, even if they don't appear in the agent's membership list
+    (since they're created dynamically, not defined in scenario yaml).
+    """
+    return (trigger_ch_set & agent_channels) | {ch for ch in trigger_ch_set if ch.startswith("#director-")}
+
+
 def _get_channel_memberships(client: ChatClient) -> dict[str, set[str]]:
     """Fetch current channel memberships from the server.
 
@@ -91,60 +165,101 @@ def _requeue_restart(base_url: str, scenario_name: str) -> None:
         print(f"  Re-queue failed: {e}")
 
 
-# All 32 MCP tool names (must match lib/mcp_server.py registrations)
+# All 34 MCP tool names (must match lib/mcp_server.py registrations)
 MCP_TOOL_NAMES = [
     # Communication (7)
-    "list_channels", "post_message", "get_messages", "send_dm", "get_my_dms",
-    "join_channel", "get_channel_members",
-    # Documents (7)
-    "create_doc", "update_doc", "read_doc", "search_docs", "list_docs",
-    "delete_doc", "append_doc",
-    # GitLab (6)
-    "list_repos", "create_repo", "commit_files", "read_file",
-    "list_repo_tree", "get_repo_log",
+    "list_channels",
+    "post_message",
+    "get_messages",
+    "send_dm",
+    "get_my_dms",
+    "join_channel",
+    "get_channel_members",
+    # Documents (9)
+    "create_doc",
+    "create_folder",
+    "update_folder_access",
+    "update_doc",
+    "read_doc",
+    "search_docs",
+    "list_docs",
+    "delete_doc",
+    "append_doc",
+    # GitLab (12)
+    "list_repos",
+    "create_repo",
+    "commit_files",
+    "read_file",
+    "list_repo_tree",
+    "get_repo_log",
+    "create_merge_request",
+    "list_merge_requests",
+    "get_merge_request",
+    "comment_on_merge_request",
+    "approve_merge_request",
+    "merge_merge_request",
     # Tickets (5)
-    "get_ticket", "create_ticket", "update_ticket", "comment_on_ticket", "list_tickets",
+    "get_ticket",
+    "create_ticket",
+    "update_ticket",
+    "comment_on_ticket",
+    "list_tickets",
     # Memos (5)
-    "list_memos", "get_memo_thread", "create_memo", "reply_to_memo", "delete_memo",
+    "list_memos",
+    "get_memo_thread",
+    "create_memo",
+    "reply_to_memo",
+    "delete_memo",
     # Blog (7)
-    "list_blog_posts", "read_blog_post", "create_blog_post", "reply_to_blog",
-    "update_blog_post", "delete_blog_post",
+    "list_blog_posts",
+    "read_blog_post",
+    "create_blog_post",
+    "reply_to_blog",
+    "update_blog_post",
+    "delete_blog_post",
     # Email (2)
-    "send_email", "get_emails",
+    "send_email",
+    "get_emails",
     # Meta (6)
-    "whoami", "who_is", "get_my_channels", "get_my_tickets",
-    "get_recent_activity", "signal_done",
+    "whoami",
+    "who_is",
+    "get_my_channels",
+    "get_my_tickets",
+    "get_recent_activity",
+    "signal_done",
 ]
 
 
 def _detect_mcp_host() -> str:
     """Detect the hostname containers use to reach services on the host.
 
-    - macOS/Docker Desktop: host.containers.internal (always works)
-    - Linux rootless podman: try host.containers.internal first,
-      fall back to default gateway IP from podman network inspect
+    Prefers host.containers.internal (works on macOS and modern Linux
+    podman with pasta/slirp4netns). Falls back to the podman network
+    gateway IP if the DNS name isn't resolvable from inside a container.
     """
     if _platform.system() == "Darwin":
         return "host.containers.internal"
 
-    # Linux: check if podman supports host.containers.internal
-    # by inspecting the default network gateway
+    # Linux: test host.containers.internal from inside a throwaway container
     try:
-        subprocess.run(
-            ["podman", "info", "--format", "{{.Host.NetworkBackend}}"],
-            capture_output=True, text=True, timeout=5,
+        proc = subprocess.run(
+            ["podman", "run", "--rm", "agent-image:latest", "getent", "hosts", "host.containers.internal"],
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
-        # For pasta/slirp4netns backends, host.containers.internal usually works
-        # in Podman 4.x+ on Fedora. Try it.
+        if proc.returncode == 0 and proc.stdout.strip():
+            return "host.containers.internal"
     except Exception:
         pass
 
     # Fall back: get the host gateway IP from podman's default network
     try:
         proc = subprocess.run(
-            ["podman", "network", "inspect", "podman",
-             "--format", "{{range .Subnets}}{{.Gateway}}{{end}}"],
-            capture_output=True, text=True, timeout=5,
+            ["podman", "network", "inspect", "podman", "--format", "{{range .Subnets}}{{.Gateway}}{{end}}"],
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         gateway = proc.stdout.strip()
         if gateway:
@@ -159,7 +274,8 @@ async def _preflight_checks(container_image: str) -> None:
     """Validate podman and container image before session startup."""
     # Check podman is available
     proc = await asyncio.create_subprocess_exec(
-        "podman", "--version",
+        "podman",
+        "--version",
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
@@ -170,7 +286,10 @@ async def _preflight_checks(container_image: str) -> None:
 
     # Check container image exists
     proc = await asyncio.create_subprocess_exec(
-        "podman", "image", "exists", container_image,
+        "podman",
+        "image",
+        "exists",
+        container_image,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
@@ -179,7 +298,7 @@ async def _preflight_checks(container_image: str) -> None:
         raise RuntimeError(
             f"Container image '{container_image}' not found.\n"
             f"  Build it first:  ./scripts/build-agent-image.sh\n"
-            f"  Or manually:     podman build -t {container_image} -f Dockerfile.agent ."
+            f"  Or manually:     podman build -t {container_image} -f container/Dockerfile.agent container/"
         )
     print(f"  image: {container_image}")
 
@@ -219,10 +338,13 @@ class ContainerPool:
         self._mcp_base_url: str = ""  # set in start()
         mcp_tools = [f"mcp__sim__{t}" for t in MCP_TOOL_NAMES]
         from lib.scenario_loader import get_settings
+
         agent_builtin = get_settings().get("agent_builtin_tools", ["WebSearch", "WebFetch"])
         self._allowed_tools_str = ",".join(mcp_tools + agent_builtin)
         self._config_files: dict[str, Path] = {}  # persona_key -> mcp config path
         self._prompt_files: dict[str, Path] = {}  # persona_key -> system prompt path
+        self._env_flags = _collect_env_vars()
+        self._gcp_creds_path = _find_and_stage_gcp_credentials()
 
     async def start(self, build_system_prompt_fn, on_progress=None) -> None:
         """Validate prerequisites, generate configs, and launch long-running containers.
@@ -241,7 +363,13 @@ class ContainerPool:
         self._clear_done_events()
 
         total = len(self._personas)
+        env_names = [f.split("=")[0] for f in self._env_flags if "=" in f and not f.startswith("-")]
         print(f"Launching {total} long-running agent containers...")
+        print(f"  Env vars forwarded: {', '.join(env_names) if env_names else '(none)'}")
+        if self._gcp_creds_path:
+            print(f"  GCP credentials: {self._gcp_creds_path}")
+        else:
+            print("  GCP credentials: not found (containers may fail auth)")
 
         for i, (key, persona) in enumerate(self._personas.items(), 1):
             display_name = persona["display_name"]
@@ -274,7 +402,7 @@ class ContainerPool:
             with open(log_file, "w") as f:
                 f.write(f"Agent: {display_name}\n")
                 f.write(f"Model: {self._model} ({self._model_id})\n")
-                f.write(f"Mode: container (v3 — long-running)\n")
+                f.write("Mode: container (v3 — long-running)\n")
                 f.write(f"Image: {self._container_image}\n")
                 f.write(f"{'=' * 60}\n\n")
 
@@ -302,7 +430,10 @@ class ContainerPool:
 
         # Cleanup leftover container from previous session
         rm_proc = await asyncio.create_subprocess_exec(
-            "podman", "rm", "-f", container_name,
+            "podman",
+            "rm",
+            "-f",
+            container_name,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -310,13 +441,22 @@ class ContainerPool:
 
         # Launch long-running container (CMD from Dockerfile: sleep infinity)
         cmd = [
-            "podman", "run", "-d",
-            "--name", container_name,
-            "--dns", "8.8.8.8",
-            "-e", f"AGENT_PERSONA_KEY={persona_key}",
-            "-e", f"MCP_SERVER_URL={self._mcp_host}:{self._mcp_port}",
-            "-v", f"{config_path.resolve()}:/home/agent/.mcp-config.json:ro,Z",
-            "-v", f"{prompt_path.resolve()}:/home/agent/system-prompt.md:ro,Z",
+            "podman",
+            "run",
+            "-d",
+            "--name",
+            container_name,
+            "-e",
+            f"AGENT_PERSONA_KEY={persona_key}",
+            "-e",
+            f"MCP_SERVER_URL={self._mcp_host}:{self._mcp_port}",
+            "-e",
+            "GCE_METADATA_HOST=127.0.0.1",
+            *self._env_flags,
+            "-v",
+            f"{config_path.resolve()}:/home/agent/.mcp-config.json:ro,Z",
+            "-v",
+            f"{prompt_path.resolve()}:/home/agent/system-prompt.md:ro,Z",
             self._container_image,
         ]
 
@@ -327,14 +467,16 @@ class ContainerPool:
         )
         stdout, stderr = await proc.communicate()
         if proc.returncode != 0:
-            raise RuntimeError(
-                f"Failed to launch container {container_name}: {stderr.decode().strip()}"
-            )
+            raise RuntimeError(f"Failed to launch container {container_name}: {stderr.decode().strip()}")
 
         # Verify container is running
         check_proc = await asyncio.create_subprocess_exec(
-            "podman", "container", "inspect", container_name,
-            "--format", "{{.State.Status}}",
+            "podman",
+            "container",
+            "inspect",
+            container_name,
+            "--format",
+            "{{.State.Status}}",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -342,9 +484,35 @@ class ContainerPool:
         status = check_stdout.decode().strip()
         if status != "running":
             raise RuntimeError(
-                f"Container {container_name} is not running (status: {status}). "
-                f"Check: podman logs {container_name}"
+                f"Container {container_name} is not running (status: {status}). Check: podman logs {container_name}"
             )
+
+        # Copy GCP credentials into container (avoids volume mount permission/SELinux issues)
+        if self._gcp_creds_path:
+            creds_dest = f"{container_name}:/home/agent/.config/gcloud/application_default_credentials.json"
+            cp_proc = await asyncio.create_subprocess_exec(
+                "podman",
+                "cp",
+                self._gcp_creds_path,
+                creds_dest,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            await cp_proc.communicate()
+            # Fix ownership so the agent user can read it
+            chown_proc = await asyncio.create_subprocess_exec(
+                "podman",
+                "exec",
+                "--user",
+                "root",
+                container_name,
+                "chown",
+                "agent:agent",
+                "/home/agent/.config/gcloud/application_default_credentials.json",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            await chown_proc.communicate()
 
         self._active_containers[persona_key] = container_name
 
@@ -383,16 +551,26 @@ class ContainerPool:
             f.write(f"TURN PROMPT:\n{turn_prompt}\n\n{'-' * 40}\n\n")
 
         cmd = [
-            "podman", "exec", container_name,
+            "podman",
+            "exec",
+            container_name,
             "claude",
-            "-p", turn_prompt,
-            "--system-prompt-file", "/home/agent/system-prompt.md",
-            "--mcp-config", "/home/agent/.mcp-config.json",
-            "--allowedTools", self._allowed_tools_str,
-            "--output-format", "json",
-            "--model", self._model_id,
-            "--max-turns", str(self._max_turns),
-            "--permission-mode", "dontAsk",
+            "-p",
+            turn_prompt,
+            "--system-prompt-file",
+            "/home/agent/system-prompt.md",
+            "--mcp-config",
+            "/home/agent/.mcp-config.json",
+            "--allowedTools",
+            self._allowed_tools_str,
+            "--output-format",
+            "json",
+            "--model",
+            self._model_id,
+            "--max-turns",
+            str(self._max_turns),
+            "--permission-mode",
+            "dontAsk",
         ]
 
         start_time = _time.monotonic()
@@ -448,26 +626,36 @@ class ContainerPool:
 
             success = exit_code == 0
 
-            # Try to extract response from JSON output
+            # Try to extract response and thinking from JSON output
             response_text = ""
+            thinking_text = ""
             if stdout_text.strip():
                 try:
                     output = json.loads(stdout_text.strip())
                     response_text = output.get("result", stdout_text.strip())
+                    # Extract thinking from Claude Code's JSON output if present
+                    thinking_text = output.get("thinking", "")
+                    # Also check usage for any internal monologue
+                    if not thinking_text:
+                        # Claude Code may embed thinking in the content blocks
+                        for block in output.get("content", []):
+                            if isinstance(block, dict) and block.get("type") == "thinking":
+                                thinking_text += block.get("thinking", "") + "\n"
                 except (json.JSONDecodeError, ValueError):
                     response_text = stdout_text.strip()
 
             if not success:
-                print(f"  {display_name}: exec exited with code {exit_code} "
-                      f"({format_duration(elapsed)})")
+                print(f"  {display_name}: exec exited with code {exit_code} ({format_duration(elapsed)})")
                 if stderr_text:
                     for line in stderr_text.strip().split("\n")[:3]:
                         print(f"    stderr: {line}")
 
             return {
                 "name": display_name,
+                "persona_key": persona_key,
                 "success": success,
                 "response_text": response_text,
+                "thinking_text": thinking_text,
                 "duration_seconds": elapsed,
                 "exit_code": exit_code,
             }
@@ -502,6 +690,19 @@ class ContainerPool:
             logger.debug(f"Failed to poll done events: {e}")
         return []
 
+    def _get_done_event_cursor(self) -> int:
+        """Get the current done-event high-water mark without fetching all events."""
+        try:
+            resp = sync_requests.get(
+                f"{self._mcp_base_url}/api/agents/done-events/cursor",
+                timeout=5,
+            )
+            if resp.status_code == 200:
+                return resp.json().get("cursor", 0)
+        except Exception:
+            pass
+        return 0
+
     def _clear_done_events(self) -> None:
         """Clear all done events on the MCP server."""
         try:
@@ -517,14 +718,21 @@ class ContainerPool:
         for persona_key, container_name in list(self._active_containers.items()):
             try:
                 proc = await asyncio.create_subprocess_exec(
-                    "podman", "stop", "-t", "5", container_name,
+                    "podman",
+                    "stop",
+                    "-t",
+                    "5",
+                    container_name,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                 )
                 await proc.communicate()
                 # Remove the container (not auto-removed since no --rm)
                 rm_proc = await asyncio.create_subprocess_exec(
-                    "podman", "rm", "-f", container_name,
+                    "podman",
+                    "rm",
+                    "-f",
+                    container_name,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                 )
@@ -540,6 +748,7 @@ class ContainerPool:
 # Agent status helpers
 # ---------------------------------------------------------------------------
 
+
 def _build_agent_status(personas: list[dict], pool: ContainerPool | None = None) -> dict:
     """Build agent status dict for heartbeat."""
     result = {}
@@ -547,11 +756,7 @@ def _build_agent_status(personas: list[dict], pool: ContainerPool | None = None)
         key = p["name"]
         # With long-running containers, check if the per-agent lock is held
         # to determine if the agent is actively processing a turn
-        is_active = (
-            pool is not None
-            and key in pool._agent_locks
-            and pool._agent_locks[key].locked()
-        )
+        is_active = pool is not None and key in pool._agent_locks and pool._agent_locks[key].locked()
         result[key] = {
             "display_name": p["display_name"],
             "state": "responding" if is_active else "ready",
@@ -562,6 +767,7 @@ def _build_agent_status(personas: list[dict], pool: ContainerPool | None = None)
 # ---------------------------------------------------------------------------
 # Command processing (adapted for container pool — no SDK sessions)
 # ---------------------------------------------------------------------------
+
 
 async def _process_single_command(client, pool, personas, scenario_name, cmd):
     """Process a single add/remove agent command.
@@ -629,13 +835,20 @@ async def _process_single_command(client, pool, personas, scenario_name, cmd):
                 container_name = pool._active_containers[agent_key]
                 try:
                     proc = await asyncio.create_subprocess_exec(
-                        "podman", "stop", "-t", "5", container_name,
+                        "podman",
+                        "stop",
+                        "-t",
+                        "5",
+                        container_name,
                         stdout=asyncio.subprocess.PIPE,
                         stderr=asyncio.subprocess.PIPE,
                     )
                     await proc.communicate()
                     rm_proc = await asyncio.create_subprocess_exec(
-                        "podman", "rm", "-f", container_name,
+                        "podman",
+                        "rm",
+                        "-f",
+                        container_name,
                         stdout=asyncio.subprocess.PIPE,
                         stderr=asyncio.subprocess.PIPE,
                     )
@@ -691,6 +904,7 @@ async def _process_pending_commands(client, pool, personas, scenario_name):
 # Tiered wave loop
 # ---------------------------------------------------------------------------
 
+
 async def _run_loop(
     client: ChatClient,
     pool: ContainerPool,
@@ -699,6 +913,7 @@ async def _run_loop(
     max_waves: int,
     scenario_name: str = "",
     max_concurrent: int = 4,
+    agent_last_seen: dict[str, int] | None = None,
 ) -> set[str]:
     """Run the event-driven response loop with tiered agent responses.
 
@@ -707,11 +922,12 @@ async def _run_loop(
     - Turn prompt is build_v3_turn_prompt() (~300 bytes) not build_turn_prompt() (~10K+ bytes)
     - Agent launch: pool.run_agent(pk, prompt) not pool.send(pk, prompt)
     - No response parsing — agents already did everything via MCP tools
-    - No command execution — agents use MCP tools directly
     - Activity detection via Flask message polling after each tier
 
     Returns the set of channels that received new agent posts (empty if all quiet).
     """
+    if agent_last_seen is None:
+        agent_last_seen = {}
     persona_map = {p["name"]: p for p in personas}
     wave = 0
     posted_channels: set[str] = set()
@@ -766,11 +982,8 @@ async def _run_loop(
         # Run tiers sequentially (1, 2, 3), agents within a tier concurrently.
         for tier_num in sorted(tiers.keys()):
             tier_agents = tiers[tier_num]
-            tier_names = ", ".join(
-                persona_map[pk]["display_name"] for pk in sorted(tier_agents)
-            )
-            print(f"\nWave {wave}, Tier {tier_num}: running {len(tier_agents)} agent(s) "
-                  f"concurrently ({tier_names})")
+            tier_names = ", ".join(persona_map[pk]["display_name"] for pk in sorted(tier_agents))
+            print(f"\nWave {wave}, Tier {tier_num}: running {len(tier_agents)} agent(s) concurrently ({tier_names})")
 
             # Snapshot message state BEFORE this tier runs
             pre_tier_messages = client.get_messages()
@@ -778,24 +991,25 @@ async def _run_loop(
 
             # Build prompts and get trigger messages for headlines
             trigger_msgs = [
-                m for m in pre_tier_messages[-20:]
-                if not _is_agent_message(m)
-                and m.get("channel") in trigger_channels
+                m for m in pre_tier_messages[-20:] if not _is_agent_message(m) and m.get("channel") in trigger_channels
             ]
 
             async def _run_agent(pk, trigger_ch_set):
                 async with semaphore:
                     persona = persona_map[pk]
                     display_name = persona["display_name"]
-                    all_agent_channels = {
-                        ch_name for ch_name, ch_members in memberships.items()
-                        if pk in ch_members
-                    }
+                    all_agent_channels = {ch_name for ch_name, ch_members in memberships.items() if pk in ch_members}
+
+                    # Filter trigger messages to only channels this agent belongs to
+                    agent_trigger_msgs = _filter_trigger_messages_for_agent(
+                        trigger_msgs, all_agent_channels, agent_last_seen.get(pk, 0)
+                    )
 
                     prompt = build_v3_turn_prompt(
                         pk,
-                        trigger_ch_set,
-                        trigger_messages=trigger_msgs[-3:] if trigger_msgs else None,
+                        _resolve_agent_trigger_channels(trigger_ch_set, all_agent_channels),
+                        trigger_messages=agent_trigger_msgs[-3:] if agent_trigger_msgs else None,
+                        last_seen_id=agent_last_seen.get(pk, 0),
                     )
 
                     # Show typing indicators
@@ -805,8 +1019,13 @@ async def _run_loop(
                     # Update heartbeat to show this agent is responding
                     agents_status = _build_agent_status(personas, pool)
                     agents_status[pk]["state"] = "responding"
-                    client.send_heartbeat("responding", scenario_name, agents_status,
-                                          f"{display_name} is thinking...", check_commands=False)
+                    client.send_heartbeat(
+                        "responding",
+                        scenario_name,
+                        agents_status,
+                        f"{display_name} is thinking...",
+                        check_commands=False,
+                    )
 
                     result = await pool.run_agent(pk, prompt)
 
@@ -817,15 +1036,15 @@ async def _run_loop(
                     return pk, result
 
             # --- signal_done-aware tier advancement ---
-            # Snapshot done event cursor before launching agents
-            pre_tier_done_events = pool._poll_done_events(since_id=0)
-            done_since_id = max((e["id"] for e in pre_tier_done_events), default=0)
+            # Snapshot done event cursor before launching agents.
+            # Use the MCP server's event count endpoint to get the current
+            # high-water mark without fetching all historical events.
+            done_since_id = pool._get_done_event_cursor()
 
             # Launch all agents as background tasks
             tier_agent_keys = set(tier_agents.keys())
             agent_tasks: dict[str, asyncio.Task] = {
-                pk: asyncio.create_task(_run_agent(pk, triggered_by))
-                for pk, triggered_by in tier_agents.items()
+                pk: asyncio.create_task(_run_agent(pk, triggered_by)) for pk, triggered_by in tier_agents.items()
             }
 
             # Poll for completion: signal_done events OR process exits
@@ -841,8 +1060,7 @@ async def _run_loop(
                         done_keys.add(ek)
                         display = persona_map[ek]["display_name"]
                         summary = event.get("summary", "")
-                        print(f"  {display}: signal_done — {summary}" if summary
-                              else f"  {display}: signal_done")
+                        print(f"  {display}: signal_done — {summary}" if summary else f"  {display}: signal_done")
                     done_since_id = max(done_since_id, event["id"])
 
                 # Check process exits (fallback)
@@ -884,14 +1102,27 @@ async def _run_loop(
 
                 if result["success"]:
                     print(f"  {display_name}: completed ({format_duration(result['duration_seconds'])})")
+                    # Post agent thoughts if captured
+                    thinking = result.get("thinking_text", "")
+                    response = result.get("response_text", "")
+                    if thinking or response:
+                        client.post_thoughts(pk, thinking, response)
                 else:
                     error = result.get("error", f"exit code {result.get('exit_code', '?')}")
                     print(f"  {display_name}: failed — {error} ({format_duration(result['duration_seconds'])})")
 
             # Reset agent statuses after tier
             agents_status = _build_agent_status(personas, pool)
-            client.send_heartbeat("responding", scenario_name, agents_status,
-                                  "Processing messages...", check_commands=False)
+            client.send_heartbeat(
+                "responding", scenario_name, agents_status, "Processing messages...", check_commands=False
+            )
+
+            # Update per-agent last_seen to current high-water mark
+            all_latest = client.get_messages()
+            if all_latest:
+                hw = all_latest[-1]["id"]
+                for pk in tier_agents:
+                    agent_last_seen[pk] = hw
 
             # Activity detection: query Flask for new messages since pre-tier snapshot
             latest = client.get_messages(since=pre_tier_last_id)
@@ -915,6 +1146,7 @@ async def _run_loop(
 # Main orchestrator loop
 # ---------------------------------------------------------------------------
 
+
 async def run_container_orchestrator(args) -> None:
     """Main container orchestrator loop: poll for messages, launch containers, detect activity.
 
@@ -933,11 +1165,12 @@ async def run_container_orchestrator(args) -> None:
     max_turns = getattr(args, "max_turns", 50)
     max_concurrent = getattr(args, "max_concurrent", 4)
     done_timeout = getattr(args, "done_timeout", 120)
+    ticket_reminders = getattr(args, "ticket_reminders", False)
     personas = []
 
     mcp_host = getattr(args, "mcp_host", None) or _detect_mcp_host()
 
-    print(f"Container orchestrator starting")
+    print("Container orchestrator starting")
     print(f"  Server: {args.server_url}")
     print(f"  Model: {model}")
     print(f"  Max waves: {max_waves}")
@@ -950,6 +1183,7 @@ async def run_container_orchestrator(args) -> None:
     print(f"  Max turns per container: {max_turns}")
     print(f"  Max concurrent agents: {max_concurrent}")
     print(f"  Done timeout: {done_timeout}s")
+    print(f"  Ticket reminders: {'enabled' if ticket_reminders else 'disabled'}")
 
     # Wait for Flask server to be reachable
     while not client.health_check():
@@ -980,8 +1214,7 @@ async def run_container_orchestrator(args) -> None:
                 f"MCP server at {mcp_base_url} not reachable after {mcp_max_retries} attempts.\n"
                 f"  Start it: python main.py mcp-server --port {mcp_port}"
             )
-        client.send_heartbeat("connecting", scenario_name, {},
-                              "Waiting for MCP server...", check_commands=False)
+        client.send_heartbeat("connecting", scenario_name, {}, "Waiting for MCP server...", check_commands=False)
         await asyncio.sleep(2)
 
     # Pre-flight: validate podman and container image early
@@ -991,8 +1224,7 @@ async def run_container_orchestrator(args) -> None:
     pool = None
     last_seen_id = 0
 
-    client.send_heartbeat("waiting", scenario_name, {},
-                          "Checking for pending commands...", check_commands=False)
+    client.send_heartbeat("waiting", scenario_name, {}, "Checking for pending commands...", check_commands=False)
     next_cmd = None
 
     print("Waiting for session start (click New or Load in the UI)...")
@@ -1001,8 +1233,7 @@ async def run_container_orchestrator(args) -> None:
             cmd = next_cmd
             next_cmd = None
         else:
-            cmd = client.send_heartbeat("waiting", scenario_name, {},
-                                        "Waiting for session — click New or Load")
+            cmd = client.send_heartbeat("waiting", scenario_name, {}, "Waiting for session — click New or Load")
         action = cmd.get("action")
 
         # Handle remove commands even in waiting state
@@ -1023,6 +1254,7 @@ async def run_container_orchestrator(args) -> None:
             new_scenario = cmd.get("scenario", scenario_name)
             if new_scenario != scenario_name:
                 from lib.scenario_loader import load_scenario
+
                 load_scenario(new_scenario)
                 scenario_name = new_scenario
             personas = get_active_personas(getattr(args, "personas", None))
@@ -1045,7 +1277,9 @@ async def run_container_orchestrator(args) -> None:
                 print(f"  Warning: Failed to load scenario on MCP server: {e}")
 
             pool = ContainerPool(
-                personas, model, LOG_DIR,
+                personas,
+                model,
+                LOG_DIR,
                 mcp_host=mcp_host,
                 mcp_port=mcp_port,
                 container_image=container_image,
@@ -1053,6 +1287,12 @@ async def run_container_orchestrator(args) -> None:
                 max_turns=max_turns,
                 done_timeout=done_timeout,
             )
+
+            # Capture message baseline before startup so messages sent
+            # while agents come online aren't silently skipped.
+            existing = client.get_messages()
+            last_seen_id = existing[-1]["id"] if existing else 0
+            print(f"Skipping {len(existing)} existing messages (last_seen_id={last_seen_id})")
 
             online_names = []
 
@@ -1065,27 +1305,34 @@ async def run_container_orchestrator(args) -> None:
                     online_names.append(display_name)
                     msg = f"Agent ready {i}/{tot}: {display_name}"
                     online_list = ", ".join(online_names)
-                    client.post_message("System",
+                    client.post_message(
+                        "System",
                         f"{display_name} is online ({i}/{tot})\n\nAgents online: {online_list}",
-                        channel="#system")
+                        channel="#system",
+                    )
                 client.send_heartbeat("starting", scenario_name, agents, msg, check_commands=False)
 
             try:
                 await pool.start(build_v3_system_prompt, on_progress=on_progress)
             except Exception as e:
                 print(f"Agent setup failed: {e}")
+                try:
+                    await pool.close()
+                except Exception:
+                    pass
                 pool = None
+                client.send_heartbeat("waiting", scenario_name, {}, f"Agent startup failed: {e}", check_commands=False)
+                _requeue_restart(client.base_url, scenario_name)
                 continue
 
             # Send ready heartbeat
             agents = _build_agent_status(personas, pool)
             client.send_heartbeat("ready", scenario_name, agents, "All agents ready", check_commands=False)
-
-            existing = client.get_messages()
-            last_seen_id = existing[-1]["id"] if existing else 0
-            print(f"Skipping {len(existing)} existing messages (last_seen_id={last_seen_id})")
+            agent_last_seen: dict[str, int] = {}
         else:
-            await asyncio.sleep(poll_interval)
+            # Poll frequently while waiting for session start, regardless
+            # of the configured poll_interval (which may be very long).
+            await asyncio.sleep(min(poll_interval, 5.0))
 
     try:
         while True:
@@ -1109,6 +1356,7 @@ async def run_container_orchestrator(args) -> None:
                 # Reload scenario if changed
                 if new_scenario != scenario_name:
                     from lib.scenario_loader import load_scenario
+
                     load_scenario(new_scenario)
                     scenario_name = new_scenario
 
@@ -1131,7 +1379,9 @@ async def run_container_orchestrator(args) -> None:
                     print(f"  Warning: Failed to reload scenario on MCP server: {e}")
 
                 pool = ContainerPool(
-                    personas, model, LOG_DIR,
+                    personas,
+                    model,
+                    LOG_DIR,
                     mcp_host=mcp_host,
                     mcp_port=mcp_port,
                     container_image=container_image,
@@ -1139,6 +1389,12 @@ async def run_container_orchestrator(args) -> None:
                     max_turns=max_turns,
                     done_timeout=done_timeout,
                 )
+
+                # Capture message baseline before restart so messages sent
+                # while agents come online aren't silently skipped.
+                existing = client.get_messages()
+                last_seen_id = existing[-1]["id"] if existing else 0
+                print(f"Restart: baseline set at message {last_seen_id}")
 
                 online_names = []
 
@@ -1151,9 +1407,11 @@ async def run_container_orchestrator(args) -> None:
                         online_names.append(display_name)
                         msg = f"Agent ready {i}/{tot}: {display_name}"
                         online_list = ", ".join(online_names)
-                        client.post_message("System",
+                        client.post_message(
+                            "System",
                             f"{display_name} is online ({i}/{tot})\n\nAgents online: {online_list}",
-                            channel="#system")
+                            channel="#system",
+                        )
                     client.send_heartbeat("starting", scenario_name, agents, msg, check_commands=False)
 
                 try:
@@ -1166,10 +1424,8 @@ async def run_container_orchestrator(args) -> None:
                     _requeue_restart(client.base_url, scenario_name)
                     continue
 
-                # Reset message tracking
-                existing = client.get_messages()
-                last_seen_id = existing[-1]["id"] if existing else 0
-                print(f"Restart complete. Skipping {len(existing)} existing messages.")
+                print(f"Restart complete. {len(online_names)} agents online.")
+                agent_last_seen = {}
                 continue
 
             if cmd.get("action") == "shutdown":
@@ -1189,6 +1445,38 @@ async def run_container_orchestrator(args) -> None:
             human_messages = [m for m in new_messages if not _is_agent_message(m)]
 
             if not human_messages:
+                if ticket_reminders:
+                    try:
+                        tickets = client.list_tickets()
+                        open_tickets = [
+                            t for t in tickets if t.get("status", "").lower() not in ("done", "closed", "resolved")
+                        ]
+                        if open_tickets:
+                            lines = [
+                                f"**[Automated Reminder]** There are {len(open_tickets)} open ticket(s) that need attention:\n"
+                            ]
+                            for t in open_tickets:
+                                assignee = t.get("assignee", "unassigned")
+                                lines.append(
+                                    f"- **{t['id']}**: {t['title']} (priority: {t.get('priority', 'n/a')}, assigned: {assignee}, status: {t.get('status', 'open')})"
+                                )
+                            lines.append("\nPlease review and continue working on your assigned tickets.")
+                            channels = client.get_channels()
+                            ch_names = [
+                                c["name"]
+                                for c in channels
+                                if not c.get("is_external")
+                                and not c["name"].startswith("#director-")
+                                and c["name"] not in ("#system", "#dms")
+                            ]
+                            reminder_channel = (
+                                "#general" if "#general" in ch_names else ch_names[0] if ch_names else "#general"
+                            )
+                            client.post_message("System", "\n".join(lines), channel=reminder_channel)
+                            print(f"\nPosted ticket reminder ({len(open_tickets)} open tickets) to {reminder_channel}")
+                            continue
+                    except Exception as e:
+                        print(f"Ticket reminder check failed: {e}")
                 await asyncio.sleep(poll_interval)
                 continue
 
@@ -1205,8 +1493,14 @@ async def run_container_orchestrator(args) -> None:
             print(f"\nNew human message(s) in {sorted(trigger_channels)}")
 
             active_channels = await _run_loop(
-                client, pool, personas, trigger_channels, max_waves,
-                scenario_name, max_concurrent,
+                client,
+                pool,
+                personas,
+                trigger_channels,
+                max_waves,
+                scenario_name,
+                max_concurrent,
+                agent_last_seen,
             )
 
             # Reset all agents to ready and process any pending commands
@@ -1256,16 +1550,23 @@ async def run_container_orchestrator(args) -> None:
                 new_messages = client.get_messages(since=last_seen_id)
                 human_messages = [m for m in new_messages if not _is_agent_message(m)]
                 if human_messages:
-                    print(f"\nHuman input detected — breaking autonomous continuation")
+                    print("\nHuman input detected — breaking autonomous continuation")
                     break
 
                 limit_str = f"/{max_auto_rounds}" if max_auto_rounds > 0 else ""
-                print(f"\n>>> Autonomous round {auto_round}{limit_str}"
-                      f" — agents continuing in {sorted(active_channels)}")
+                print(
+                    f"\n>>> Autonomous round {auto_round}{limit_str} — agents continuing in {sorted(active_channels)}"
+                )
 
                 active_channels = await _run_loop(
-                    client, pool, personas, active_channels, max_waves,
-                    scenario_name, max_concurrent,
+                    client,
+                    pool,
+                    personas,
+                    active_channels,
+                    max_waves,
+                    scenario_name,
+                    max_concurrent,
+                    agent_last_seen,
                 )
 
                 latest = client.get_messages()
@@ -1283,6 +1584,7 @@ async def run_container_orchestrator(args) -> None:
             # Auto-save session after each response cycle
             try:
                 from lib.session import save_session
+
                 save_session("autosave")
                 print("Auto-saved session")
             except Exception as e:

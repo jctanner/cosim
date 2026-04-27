@@ -8,6 +8,7 @@ bp = Blueprint("blog", __name__)
 @bp.route("/api/blog/posts", methods=["GET"])
 def list_blog_posts():
     from lib.blog import get_posts
+
     include_replies = request.args.get("include_replies", "").lower() in ("1", "true")
     posts = get_posts(include_recent_replies=include_replies)
     filt = request.args.get("filter", "")
@@ -21,6 +22,7 @@ def list_blog_posts():
 @bp.route("/api/blog/posts", methods=["POST"])
 def create_blog_post_endpoint():
     from lib.blog import create_post
+
     data = request.get_json(force=True)
     title = data.get("title", "").strip()
     if not title:
@@ -36,6 +38,7 @@ def create_blog_post_endpoint():
 @bp.route("/api/blog/posts/<post_slug>", methods=["GET"])
 def get_blog_post_detail(post_slug):
     from lib.blog import get_post, get_replies
+
     post = get_post(post_slug)
     if not post:
         return jsonify({"error": "not found"}), 404
@@ -46,6 +49,7 @@ def get_blog_post_detail(post_slug):
 @bp.route("/api/blog/posts/<post_slug>", methods=["PUT"])
 def update_blog_post_endpoint(post_slug):
     from lib.blog import update_post
+
     data = request.get_json(force=True)
     kwargs = {}
     for key in ("title", "body", "status", "is_external", "tags"):
@@ -63,12 +67,14 @@ def update_blog_post_endpoint(post_slug):
 @bp.route("/api/blog/posts/<post_slug>/replies", methods=["GET"])
 def list_blog_replies(post_slug):
     from lib.blog import get_replies
+
     return jsonify(get_replies(post_slug))
 
 
 @bp.route("/api/blog/posts/<post_slug>/replies", methods=["POST"])
 def reply_to_blog_post_endpoint(post_slug):
     from lib.blog import reply_to_post
+
     data = request.get_json(force=True)
     text = data.get("text", "").strip()
     if not text:
@@ -84,6 +90,7 @@ def reply_to_blog_post_endpoint(post_slug):
 @bp.route("/api/blog/posts/<post_slug>", methods=["DELETE"])
 def delete_blog_post_endpoint(post_slug):
     from lib.blog import delete_post
+
     if delete_post(post_slug):
         return jsonify({"ok": True})
     return jsonify({"error": "not found"}), 404

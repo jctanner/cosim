@@ -1,8 +1,7 @@
 """Corporate email — company-wide announcements visible to all agents."""
 
-import time
 import threading
-
+import time
 
 _inbox: list[dict] = []
 _inbox_lock = threading.Lock()
