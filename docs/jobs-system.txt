@@ -1,0 +1,294 @@
+Implement a cosim "Jobs / Runner" feature.
+
+Context:
+- Repo: https://github.com/jctanner/cosim
+- Current architecture has Flask webapp, MCP server, and container orchestrator.
+- Agents run in podman containers and interact only through MCP tools.
+- Flask stores simulation state and serves the web UI.
+- MCP server exposes tools to agents.
+- Agents already commit code to a mock GitLab (lib/gitlab.py).
+- Webapp already has route blueprints under lib/webapp/routes/.
+- Runtime state lives under var/.
+Reference repo layout/architecture: README architecture and project structure.
+
+Goal:
+Add a system-owned execution ledger so agents can submit scripts via GitLab
+and trigger execution. The UI can verify whether code actually ran. Agent
+claims are not trusted unless backed by a runner-created job/run record.
+
+The jobs system integrates with the existing mock GitLab rather than accepting
+inline script submission. Agents commit code first, then trigger a run — the
+same commit-then-CI flow a real engineer follows.
+
+Non-goals:
+- Do not build a full Jenkins clone.
+- Do not let agents report results directly.
+- Do not execute arbitrary long-running jobs.
+- Do not expose host secrets to submitted scripts.
+
+Core concepts:
+1. Script: code committed to a mock GitLab repo by an agent.
+2. Job/Run: a single execution of a committed script.
+3. Receipt: immutable metadata proving the system observed the run.
+4. Verifier: optional task-specific checker for stdout/stderr/artifacts.
+
+────────────────────────────────────────
+GitLab Integration
+────────────────────────────────────────
+
+Instead of a separate submit_script tool with inline content, the jobs system
+pulls scripts from the existing mock GitLab. This means:
+
+- Agents commit code via the existing commit_files MCP tool.
+- Agents trigger execution by referencing a repo, file path, and optional ref.
+- The system reads the file content from the GitLab store at the specified commit.
+- Each run record includes repo, path, and commit_id — linking the run to a
+  specific version of the code.
+- The GitLab commit history serves as the script audit trail. No separate
+  script storage needed under var/jobs/scripts/.
+- The Jobs UI can link to the file in the GitLab view at the exact commit.
+
+────────────────────────────────────────
+Storage
+────────────────────────────────────────
+
+- Create var/jobs/ directory.
+- Store runs under var/jobs/runs/<run_id>/
+- Use JSON files for v1; no DB required.
+- Each run record includes:
+  - run_id, session_id, agent_id, status, created_at, started_at, finished_at
+  - repo, path, commit_id, language
+  - content_sha256 (hash of script content at time of execution)
+  - command, image, timeout_seconds, exit_code
+  - network_enabled (whether outbound network was allowed)
+  - stdout, stderr, stdout_sha256, stderr_sha256
+  - nonce, verifier_status, verifier_details
+  - receipt_sha256 (hash over canonical JSON serialization of the full run record)
+
+────────────────────────────────────────
+Execution Architecture
+────────────────────────────────────────
+
+Execution is owned by the Flask server process via a background job runner
+component. This avoids adding a fourth process to manage and keeps execution
+close to the state and SSE broadcast infrastructure.
+
+Flow:
+1. Agent calls run_from_repo MCP tool.
+2. MCP server posts to Flask: POST /api/jobs/runs {repo, path, ref, ...}
+3. Flask validates, reads script content from GitLab, creates run record
+   with status="queued", returns {run_id, status: "queued"} immediately.
+4. Background job runner dequeues and executes in a podman container.
+5. Runner updates record at each transition: queued → running → completed/failed/timeout.
+6. Runner broadcasts SSE events at each transition.
+7. Agent polls get_run(run_id) for results.
+
+Job runner component (lib/job_runner.py):
+- Starts and stops with the Flask process.
+- Thread pool (default max_workers=4) fed by a queue.
+- Each worker: pull script from GitLab → write to temp workspace → podman run
+  → capture output → update record → SSE → cleanup workspace.
+- On Flask shutdown: terminate active containers, mark in-flight runs as
+  status="abandoned".
+- On Flask startup: scan for records with status="running" or "queued",
+  mark them status="abandoned" (container is gone if Flask restarted).
+
+In-memory state:
+  _jobs_lock = threading.Lock()
+  _active_runs = {}       # run_id → {thread, process, started_at}
+  _run_queue = queue.Queue()
+
+────────────────────────────────────────
+Execution Model
+────────────────────────────────────────
+
+- Use podman for sandboxed execution.
+- For Python scripts, run with python:3.13-slim.
+- Write submitted content to job workspace as /work/submitted.py.
+- Generate COSIM_NONCE per run using secrets.token_hex(32).
+- Default command (sandboxed):
+  podman run --rm --network=none --cpus=1 --memory=256m --pids-limit=128
+    --read-only --tmpfs /tmp:rw,size=64m
+    -v <workspace>:/work:Z -w /work
+    -e COSIM_NONCE=<nonce>
+    python:3.13-slim python /work/submitted.py
+- Capture stdout, stderr, exit code, started_at, finished_at.
+- Enforce timeout, default 30s.
+- Mark timeout as status="timeout", nonzero exit.
+
+Network access:
+- Default is --network=none (sandboxed).
+- Agents can request network access via network=true on run_from_repo.
+- When network is enabled, the --network=none flag is omitted, allowing
+  pip install and outbound API calls (e.g., yfinance).
+- The run record includes network_enabled=true/false.
+- The Jobs UI shows a badge: "SANDBOXED" vs "NETWORK" so the human can
+  see which runs had external access.
+
+────────────────────────────────────────
+Security
+────────────────────────────────────────
+
+- Network disabled by default; opt-in per job.
+- No host env passthrough except COSIM_NONCE.
+- Limit CPU/memory/pids.
+- Use temp workspace per run, cleaned up after execution.
+- Do not mount repo root read/write.
+- Do not allow arbitrary shell command in v1; language determines command.
+- Accept only python initially.
+
+────────────────────────────────────────
+MCP Tools
+────────────────────────────────────────
+
+Add tools to lib/mcp_server.py:
+
+1. run_from_repo(repo: str, path: str, ref: str = "main",
+                 language: str = "python", network: bool = false,
+                 verifier: str | None = None)
+   -> {run_id, commit_id, status: "queued"}
+   System resolves ref to a commit, reads file content from GitLab,
+   creates run record, enqueues for execution.
+
+2. get_run(run_id: str)
+   -> run record summary including status, stdout, stderr, exit_code,
+      verifier_status, network_enabled
+
+3. list_runs()
+   -> recent runs for current session/agent
+
+Important MCP behavior:
+- run_from_repo returns immediately with status="queued". Execution is async.
+- The agent polls get_run to check for completion.
+- The MCP response is a convenience; the stored run record is the source of truth.
+- Each run includes session_id and agent_id from MCP context.
+- Agents may cite run_id, but cannot create/edit run results.
+
+────────────────────────────────────────
+Flask REST Routes
+────────────────────────────────────────
+
+- Create lib/webapp/routes/jobs.py
+- Register blueprint in webapp app factory.
+- Endpoints:
+  POST /api/jobs/runs              (called by MCP server to enqueue a run)
+  GET  /api/jobs/runs              (list runs, filterable by session/agent)
+  GET  /api/jobs/runs/<run_id>     (single run record with full detail)
+- Return stored system records only.
+- Do not accept agent-submitted results through REST.
+
+────────────────────────────────────────
+Frontend
+────────────────────────────────────────
+
+- Add a "Jobs" tab/panel to lib/webapp/template.py.
+- Show table:
+  Run ID, Agent, Repo/Path, Commit, Status, Exit, Network, Verifier, Started, Finished
+- Clicking a run shows:
+  metadata, stdout, stderr, nonce, content_sha256, stdout_sha256, receipt_sha256,
+  link to file in GitLab view at the exact commit.
+- Add visual badges:
+  PASS, FAIL, TIMEOUT, RUNNING, QUEUED, ABANDONED, SANDBOXED, NETWORK.
+- Do not display agent-claimed results as job results.
+
+────────────────────────────────────────
+SSE / Live Updates
+────────────────────────────────────────
+
+- When run status changes, broadcast events via existing SSE infrastructure.
+- Events:
+  job.queued
+  job.started
+  job.finished
+  job.verified
+- Jobs tab should refresh on these events.
+
+────────────────────────────────────────
+Verifier v1
+────────────────────────────────────────
+
+- Implement simple built-in verifier names:
+  - none: always verifier_status="not_run"
+  - json: stdout must parse as JSON
+  - hostname_nonce: stdout JSON must include nonce == COSIM_NONCE
+- Structure code so future verifiers can be plugged in by name.
+
+────────────────────────────────────────
+Startup Simplification
+────────────────────────────────────────
+
+The project currently requires three separate terminals to start:
+  python main.py server
+  python main.py mcp-server
+  python main.py chat
+
+Adding the job runner as a Flask-internal component avoids a fourth process,
+but three is still too many. Use honcho (Python Procfile runner) to provide
+single-command startup.
+
+Add Procfile:
+  server:       python main.py server --port 5000
+  mcp:          python main.py mcp-server --port 5001
+  orchestrator: python main.py chat
+
+Add honcho to pyproject.toml dependencies.
+
+Usage:
+  honcho start          # starts everything, colored log output, one Ctrl+C stops all
+
+Individual processes can still be started directly for debugging:
+  honcho start server mcp       # start only server and MCP
+  python main.py chat           # run orchestrator separately with debugger
+
+Note: honcho reads .env by default and injects into child processes. This is
+acceptable since the .env contains Vertex AI credentials that all three
+processes need. If this becomes a problem, use honcho start --no-env.
+
+Scenario selection is done in the web UI (not via CLI args), so no scenario
+coordination is needed across processes.
+
+────────────────────────────────────────
+Session Integration
+────────────────────────────────────────
+
+Jobs state should be included in session save/load snapshots (lib/session.py).
+On save, capture var/jobs/runs/. On load, restore them. This keeps jobs
+history tied to the session like chat, docs, tickets, etc.
+
+────────────────────────────────────────
+Cleanup Policy
+────────────────────────────────────────
+
+- Runs accumulate in var/jobs/runs/. For v1, no automatic cleanup.
+- Session-scoped: loading a different session replaces the jobs state.
+- Future: add TTL or max-count pruning if volume becomes a problem.
+
+────────────────────────────────────────
+Acceptance Test
+────────────────────────────────────────
+
+1. Start stack with honcho start.
+2. Select a scenario in the UI.
+3. From an agent, commit a Python script to a GitLab repo via commit_files.
+4. Call run_from_repo referencing that repo and path.
+5. Confirm run_id is returned with status="queued".
+6. Poll get_run until status="completed".
+7. Confirm var/jobs/runs/<run_id>/record.json exists with stdout/stderr/exit.
+8. Confirm Jobs tab shows the run with correct metadata.
+9. Confirm clicking the run links to the script in GitLab at the correct commit.
+10. Submit an agent chat message claiming "I ran code" without a run.
+11. Confirm Jobs tab shows no corresponding run for that claim.
+
+Network test:
+12. Run a script with network=true that does pip install + API call.
+13. Confirm NETWORK badge appears in Jobs tab.
+14. Confirm run completes with expected output.
+
+────────────────────────────────────────
+Optional Nice-to-Have
+────────────────────────────────────────
+
+- In chat messages, detect text like run_<id> and link to Jobs detail view.
+- Add "No observed runs for this agent" warning in Jobs tab.
+- Support bash/node languages by extending the language → (image, command) map.
+- Pre-baked images with common Python libs for faster execution without network.
