@@ -134,6 +134,30 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "to trigger agents to continue working them",
     )
 
+    # ── job-runner subcommand ──────────────────────────────────────────
+    job_parser = subparsers.add_parser(
+        "job-runner",
+        help="Start the job runner (polls Flask for queued runs and executes in podman containers)",
+    )
+    job_parser.add_argument(
+        "--server-url",
+        type=str,
+        default="http://127.0.0.1:5000",
+        help="Flask server URL (default: http://127.0.0.1:5000)",
+    )
+    job_parser.add_argument(
+        "--max-workers",
+        type=int,
+        default=4,
+        help="Maximum concurrent job executions (default: 4)",
+    )
+    job_parser.add_argument(
+        "--poll-interval",
+        type=float,
+        default=2.0,
+        help="Seconds between polling for queued runs (default: 2.0)",
+    )
+
     # ── mcp-server subcommand ─────────────────────────────────────────
     mcp_parser = subparsers.add_parser(
         "mcp-server",

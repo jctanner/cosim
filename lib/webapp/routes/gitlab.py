@@ -79,15 +79,21 @@ def gitlab_tree(project):
     if not target.exists() or not target.is_dir():
         return jsonify([])
 
+    recursive = request.args.get("recursive", "").strip() == "1"
+
     entries = []
-    for item in sorted(target.iterdir()):
-        rel = str(item.relative_to(files_dir))
-        entry = {"name": item.name, "path": rel}
-        if item.is_dir():
-            entry["type"] = "dir"
-        else:
-            entry["type"] = "file"
-        entries.append(entry)
+    if recursive:
+        for item in sorted(target.rglob("*")):
+            rel = str(item.relative_to(files_dir))
+            entry = {"name": item.name, "path": rel}
+            entry["type"] = "dir" if item.is_dir() else "file"
+            entries.append(entry)
+    else:
+        for item in sorted(target.iterdir()):
+            rel = str(item.relative_to(files_dir))
+            entry = {"name": item.name, "path": rel}
+            entry["type"] = "dir" if item.is_dir() else "file"
+            entries.append(entry)
 
     # Sort: dirs first, then files
     entries.sort(key=lambda e: (0 if e["type"] == "dir" else 1, e["name"]))

@@ -69,34 +69,42 @@ Storage
 Execution Architecture
 ────────────────────────────────────────
 
-Execution is owned by the Flask server process via a background job runner
-component. This avoids adding a fourth process to manage and keeps execution
-close to the state and SSE broadcast infrastructure.
+The job runner is a standalone process (lib/job_runner.py) managed by honcho
+alongside the Flask server, MCP server, and container orchestrator. This keeps
+Flask as a pure HTTP/SSE server and isolates execution failures from the web UI.
+
+Procfile entry:
+  job-runner:   uv run main.py job-runner
+
+CLI subcommand:
+  python main.py job-runner [--server-url http://127.0.0.1:5000]
+                            [--max-workers 4]
+                            [--poll-interval 2.0]
 
 Flow:
 1. Agent calls run_from_repo MCP tool.
 2. MCP server posts to Flask: POST /api/jobs/runs {repo, path, ref, ...}
 3. Flask validates, reads script content from GitLab, creates run record
    with status="queued", returns {run_id, status: "queued"} immediately.
-4. Background job runner dequeues and executes in a podman container.
-5. Runner updates record at each transition: queued → running → completed/failed/timeout.
-6. Runner broadcasts SSE events at each transition.
-7. Agent polls get_run(run_id) for results.
+4. Job runner polls Flask: GET /api/jobs/runs?status=queued
+5. Job runner claims a run: PATCH /api/jobs/runs/<run_id> {status: "running"}
+6. Job runner executes in a podman container, captures output.
+7. Job runner posts results: PATCH /api/jobs/runs/<run_id> {status, stdout, stderr, ...}
+8. Flask broadcasts SSE events on each status transition.
+9. Agent polls get_run(run_id) for results.
 
-Job runner component (lib/job_runner.py):
-- Starts and stops with the Flask process.
-- Thread pool (default max_workers=4) fed by a queue.
-- Each worker: pull script from GitLab → write to temp workspace → podman run
-  → capture output → update record → SSE → cleanup workspace.
-- On Flask shutdown: terminate active containers, mark in-flight runs as
-  status="abandoned".
-- On Flask startup: scan for records with status="running" or "queued",
-  mark them status="abandoned" (container is gone if Flask restarted).
-
-In-memory state:
-  _jobs_lock = threading.Lock()
-  _active_runs = {}       # run_id → {thread, process, started_at}
-  _run_queue = queue.Queue()
+Job runner process (lib/job_runner.py):
+- Polling loop that checks Flask for queued runs.
+- Thread pool (default max_workers=4) for concurrent execution.
+- Each worker: claim run → read script content from run record → write to
+  temp workspace → podman run → capture output → post results to Flask →
+  cleanup workspace.
+- On shutdown (SIGTERM from honcho): terminate active containers, post
+  status="abandoned" for in-flight runs.
+- On Flask startup: scan for records with status="running",
+  mark them status="abandoned" (container is gone if processes restarted).
+- Communicates with Flask exclusively via REST, same pattern as the
+  container orchestrator.
 
 ────────────────────────────────────────
 Execution Model
@@ -171,9 +179,11 @@ Flask REST Routes
 - Create lib/webapp/routes/jobs.py
 - Register blueprint in webapp app factory.
 - Endpoints:
-  POST /api/jobs/runs              (called by MCP server to enqueue a run)
-  GET  /api/jobs/runs              (list runs, filterable by session/agent)
-  GET  /api/jobs/runs/<run_id>     (single run record with full detail)
+  POST  /api/jobs/runs              (called by MCP server to enqueue a run)
+  GET   /api/jobs/runs              (list runs, filterable by session/agent/status)
+  GET   /api/jobs/runs/<run_id>     (single run record with full detail)
+  PATCH /api/jobs/runs/<run_id>     (called by job runner to claim and update runs)
+- PATCH is used by the job runner process only, not by agents or MCP.
 - Return stored system records only.
 - Do not accept agent-submitted results through REST.
 
@@ -233,7 +243,7 @@ Cleanup Policy
 Acceptance Test
 ────────────────────────────────────────
 
-1. Start stack with honcho start.
+1. Start stack with honcho start (all four processes: server, mcp, orchestrator, job-runner).
 2. Select a scenario in the UI.
 3. From an agent, commit a Python script to a GitLab repo via commit_files.
 4. Call run_from_repo referencing that repo and path.

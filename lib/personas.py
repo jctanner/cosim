@@ -989,6 +989,7 @@ You interact with the simulation EXCLUSIVELY through your MCP tools:
 - Communication: post_message, get_messages, send_dm, get_my_dms, join_channel, get_channel_members
 - Documents: create_doc, update_doc, read_doc, search_docs, list_docs
 - Code: create_repo, commit_files, read_file, list_repo_tree, get_repo_log
+- Jobs: run_from_repo, get_run, list_runs
 - Tickets: create_ticket, update_ticket, comment_on_ticket, list_tickets
 - Memos: create_memo, reply_to_memo
 - Blog: create_blog_post, reply_to_blog
@@ -1004,6 +1005,10 @@ When you are finished with your turn, call signal_done() with a brief summary.
 {folders_listing}
 
 Use documents when you want to persist information that should survive across conversation turns.
+
+### Running Code
+
+To execute code, first commit it to a GitLab repo with commit_files, then call run_from_repo(repo, path) to run it in a sandboxed container. The run is asynchronous — poll get_run(run_id) for status and results. Pass network=true if the script needs pip install or outbound network access.
 
 ---
 

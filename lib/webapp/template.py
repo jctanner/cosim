@@ -745,6 +745,7 @@ WEB_UI = """<!DOCTYPE html>
   <button class="header-tab" data-tab="email">Email</button>
   <button class="header-tab" data-tab="memos">Memos</button>
   <button class="header-tab" data-tab="blog">Blog</button>
+  <button class="header-tab" data-tab="jobs">Jobs</button>
   <button class="header-tab" data-tab="events">Events</button>
   <button class="header-tab" data-tab="npcs">NPCs</button>
   <button class="header-tab" data-tab="usage">Usage</button>
@@ -1021,6 +1022,61 @@ WEB_UI = """<!DOCTYPE html>
     <div id="npcs-main">
       <div id="npcs-content">
         <div id="npcs-empty">No scenario loaded. Click New to start a session.</div>
+      </div>
+    </div>
+  </div>
+  <!-- Jobs tab -->
+  <div id="jobs-pane" class="tab-pane" style="flex-direction:column;overflow:hidden">
+    <div style="padding:10px 20px;background:var(--panel);border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px">
+      <span style="font-weight:700;font-size:14px;color:var(--text)">Job Runs</span>
+      <span id="jobs-count" style="font-size:11px;color:var(--text-dimmer)"></span>
+      <button id="jobs-run-btn" class="session-btn" style="margin-left:auto;background:#9b59b6;border-color:#9b59b6;color:var(--text-bright);font-size:11px" onclick="toggleJobRunForm()">+ Run Script</button>
+      <button id="jobs-refresh-btn" class="session-btn" style="font-size:11px" onclick="loadJobs()">Refresh</button>
+    </div>
+    <div style="flex:1;display:flex;overflow:hidden">
+      <div id="jobs-list-area" style="flex:1;overflow-y:auto;padding:10px 20px">
+        <div id="jobs-run-form" style="display:none;background:var(--panel);border:1px solid var(--border);border-radius:6px;padding:12px 16px;margin-bottom:12px">
+          <div style="font-weight:700;font-size:12px;color:var(--text);margin-bottom:8px">Run a Script</div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:end">
+            <div style="flex:1;min-width:120px">
+              <label style="font-size:10px;color:var(--text-dimmer);text-transform:uppercase;display:block;margin-bottom:2px">Repo</label>
+              <select id="job-repo-select" style="width:100%;background:var(--input-bg);color:var(--text);border:1px solid var(--border-dark);padding:4px 6px;border-radius:4px;font-size:12px" onchange="loadJobRepoFiles()">
+                <option value="">Select repo...</option>
+              </select>
+            </div>
+            <div style="flex:2;min-width:180px">
+              <label style="font-size:10px;color:var(--text-dimmer);text-transform:uppercase;display:block;margin-bottom:2px">File</label>
+              <select id="job-file-select" style="width:100%;background:var(--input-bg);color:var(--text);border:1px solid var(--border-dark);padding:4px 6px;border-radius:4px;font-size:12px">
+                <option value="">Select file...</option>
+              </select>
+            </div>
+            <div>
+              <label style="font-size:10px;color:var(--text-dimmer);text-transform:uppercase;display:block;margin-bottom:2px">Network</label>
+              <label style="font-size:11px;color:var(--text);cursor:pointer"><input type="checkbox" id="job-network-check"> Enable</label>
+            </div>
+            <button class="session-btn" style="background:#2ecc71;border-color:#2ecc71;color:var(--text-bright);font-size:11px;padding:5px 14px" onclick="submitJobRun()">Run</button>
+            <button class="session-btn" style="font-size:11px;padding:5px 10px" onclick="toggleJobRunForm()">Cancel</button>
+          </div>
+        </div>
+        <table id="jobs-table" style="width:100%;border-collapse:collapse;font-size:12px;display:none">
+          <thead>
+            <tr style="border-bottom:2px solid var(--border);text-align:left">
+              <th style="padding:6px 8px;color:var(--text-dim)">Run ID</th>
+              <th style="padding:6px 8px;color:var(--text-dim)">Agent</th>
+              <th style="padding:6px 8px;color:var(--text-dim)">Repo / Path</th>
+              <th style="padding:6px 8px;color:var(--text-dim)">Commit</th>
+              <th style="padding:6px 8px;color:var(--text-dim)">Status</th>
+              <th style="padding:6px 8px;color:var(--text-dim)">Exit</th>
+              <th style="padding:6px 8px;color:var(--text-dim)">Network</th>
+              <th style="padding:6px 8px;color:var(--text-dim)">Started</th>
+            </tr>
+          </thead>
+          <tbody id="jobs-tbody"></tbody>
+        </table>
+        <div id="jobs-empty" style="color:var(--text-dimmer);text-align:center;padding:60px;font-size:13px">No job runs yet.</div>
+      </div>
+      <div id="jobs-detail" style="width:420px;min-width:420px;border-left:1px solid var(--border);overflow-y:auto;padding:16px;display:none">
+        <div id="jobs-detail-content"></div>
       </div>
     </div>
   </div>
@@ -1771,6 +1827,7 @@ document.querySelectorAll('.header-tab').forEach(tab => {
     if (target === 'gitlab') loadRepos();
     if (target === 'tickets') loadTickets();
     if (target === 'npcs') loadNPCs();
+    if (target === 'jobs') loadJobs();
     if (target === 'events') loadEventPool();
     if (target === 'email') loadEmails();
     if (target === 'memos') loadMemoThreads();
@@ -1992,6 +2049,8 @@ function connectSSE() {
         loadTickets();
         if (tkCurrentViewId) viewTicket(tkCurrentViewId);
       }
+    } else if (data.type === 'jobs_event') {
+      if (currentTab === 'jobs') loadJobs();
     } else if (data.type === 'typing') {
       handleTypingIndicator(data);
     } else {
@@ -2916,6 +2975,7 @@ function renderTree(entries, path) {
     acc += (i > 0 ? '/' : '') + p;
     html += ' / <a onclick="glNavTree(\\'' + acc + '\\')">' + escapeHtml(p) + '</a>';
   });
+  html += ' <button class="session-btn" style="font-size:10px;padding:2px 8px;margin-left:8px" onclick="glShowNewFileEditor(\\'' + escapeHtml(path || '') + '\\')">+ New File</button>';
   html += '</div>';
   // Entries
   if (entries.length === 0) {
@@ -2955,8 +3015,10 @@ async function loadFileContent(project, path) {
     }
   });
   html += '</div>';
+  html += '<div style="margin-bottom:6px"><button class="session-btn" style="font-size:10px;padding:2px 8px" onclick="glShowEditFileEditor(\\'' + escapeHtml(path) + '\\')">Edit</button></div>';
   html += '<div class="gitlab-file-viewer">' + escapeHtml(data.content || '') + '</div>';
   content.innerHTML = html;
+  glLastFileContent = data.content || '';
 }
 
 async function loadCommits(project) {
@@ -3023,6 +3085,96 @@ document.getElementById('gl-new-repo-name').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') document.getElementById('gl-new-repo-save').click();
   if (e.key === 'Escape') document.getElementById('gl-new-repo-cancel').click();
 });
+
+// -- GitLab file editor --
+let glLastFileContent = '';
+
+function glEditorHtml(filePath, content, isNew) {
+  const title = isNew ? 'New File' : 'Edit: ' + filePath;
+  const pathField = isNew
+    ? '<div style="margin-bottom:6px"><label style="font-size:10px;color:var(--text-dimmer);text-transform:uppercase;display:block;margin-bottom:2px">File Path</label>'
+      + '<input id="gl-editor-path" type="text" value="' + escapeHtml(filePath) + '" placeholder="e.g. src/main.py" '
+      + 'style="width:100%;background:var(--input-bg);color:var(--text);border:1px solid var(--border-dark);padding:5px 8px;border-radius:4px;font-size:12px;box-sizing:border-box;font-family:monospace" /></div>'
+    : '';
+  return '<div style="font-weight:700;font-size:13px;color:var(--text);margin-bottom:8px">' + escapeHtml(title) + '</div>'
+    + pathField
+    + '<textarea id="gl-editor-content" style="width:100%;height:calc(100% - 140px);min-height:200px;background:var(--input-bg);color:var(--text);border:1px solid var(--border-dark);padding:8px;border-radius:4px;font-size:12px;font-family:monospace;resize:vertical;box-sizing:border-box;tab-size:4">' + escapeHtml(content) + '</textarea>'
+    + '<div style="margin-top:8px;display:flex;gap:8px;align-items:end">'
+    + '<div style="flex:1"><label style="font-size:10px;color:var(--text-dimmer);text-transform:uppercase;display:block;margin-bottom:2px">Commit Message</label>'
+    + '<input id="gl-editor-msg" type="text" placeholder="' + (isNew ? 'Add ' + escapeHtml(filePath) : 'Update ' + escapeHtml(filePath)) + '" '
+    + 'style="width:100%;background:var(--input-bg);color:var(--text);border:1px solid var(--border-dark);padding:5px 8px;border-radius:4px;font-size:12px;box-sizing:border-box" /></div>'
+    + '<button class="session-btn" style="font-size:11px;padding:5px 14px;background:#2ecc71;border-color:#2ecc71;color:var(--text-bright)" onclick="glCommitEditor(' + isNew + ')">Commit</button>'
+    + '<button class="session-btn" style="font-size:11px;padding:5px 10px" onclick="glCancelEditor()">Cancel</button>'
+    + '</div>';
+}
+
+function glShowNewFileEditor(dirPath) {
+  const prefix = dirPath ? dirPath + '/' : '';
+  const content = document.getElementById('gitlab-content');
+  content.innerHTML = glEditorHtml(prefix, '', true);
+  document.getElementById('gl-editor-path').focus();
+  // Handle tab key in textarea
+  glBindEditorTab();
+}
+
+function glShowEditFileEditor(filePath) {
+  const content = document.getElementById('gitlab-content');
+  content.innerHTML = glEditorHtml(filePath, glLastFileContent, false);
+  document.getElementById('gl-editor-content').focus();
+  glBindEditorTab();
+}
+
+function glBindEditorTab() {
+  const ta = document.getElementById('gl-editor-content');
+  if (!ta) return;
+  ta.addEventListener('keydown', (e) => {
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      const start = ta.selectionStart;
+      const end = ta.selectionEnd;
+      ta.value = ta.value.substring(0, start) + '    ' + ta.value.substring(end);
+      ta.selectionStart = ta.selectionEnd = start + 4;
+    }
+  });
+}
+
+async function glCommitEditor(isNew) {
+  const contentEl = document.getElementById('gl-editor-content');
+  const msgEl = document.getElementById('gl-editor-msg');
+  const fileContent = contentEl.value;
+  let filePath;
+  if (isNew) {
+    filePath = document.getElementById('gl-editor-path').value.trim();
+    if (!filePath) { alert('File path is required.'); return; }
+  } else {
+    const titleEl = document.querySelector('#gitlab-content div');
+    filePath = titleEl.textContent.replace('Edit: ', '');
+  }
+  const message = msgEl.value.trim() || (isNew ? 'Add ' + filePath : 'Update ' + filePath);
+  const author = getSenderLabel();
+  try {
+    const resp = await fetch('/api/gitlab/repos/' + encodeURIComponent(glCurrentRepo) + '/commit', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({message, files: [{path: filePath, content: fileContent}], author})
+    });
+    if (resp.ok) {
+      loadTree(glCurrentRepo, isNew ? filePath.split('/').slice(0, -1).join('/') : '');
+      loadFileContent(glCurrentRepo, filePath);
+    } else {
+      const err = await resp.json();
+      alert('Error: ' + (err.error || 'unknown'));
+    }
+  } catch (e) { alert('Failed to commit.'); }
+}
+
+function glCancelEditor() {
+  if (glCurrentPath) {
+    loadTree(glCurrentRepo, glCurrentPath);
+  } else {
+    loadTree(glCurrentRepo, '');
+  }
+}
 
 // -- Tickets tab --
 let tkAllTickets = [];
@@ -4819,6 +4971,175 @@ document.getElementById('blog-delete-btn').addEventListener('click', async () =>
     showNotice('Post deleted');
   }
 });
+
+// -- Jobs tab --
+
+let jobsAllRuns = [];
+let jobsSelectedId = null;
+
+function toggleJobRunForm() {
+  const form = document.getElementById('jobs-run-form');
+  const visible = form.style.display !== 'none';
+  form.style.display = visible ? 'none' : '';
+  if (!visible) loadJobRepoList();
+}
+
+async function loadJobRepoList() {
+  const sel = document.getElementById('job-repo-select');
+  sel.innerHTML = '<option value="">Select repo...</option>';
+  try {
+    const resp = await fetch('/api/gitlab/repos');
+    const repos = await resp.json();
+    repos.forEach(r => {
+      const opt = document.createElement('option');
+      opt.value = r.name;
+      opt.textContent = r.name;
+      sel.appendChild(opt);
+    });
+  } catch (e) {}
+  document.getElementById('job-file-select').innerHTML = '<option value="">Select file...</option>';
+}
+
+async function loadJobRepoFiles() {
+  const repo = document.getElementById('job-repo-select').value;
+  const sel = document.getElementById('job-file-select');
+  sel.innerHTML = '<option value="">Select file...</option>';
+  if (!repo) return;
+  try {
+    const resp = await fetch(`/api/gitlab/repos/${encodeURIComponent(repo)}/tree?recursive=1`);
+    const entries = await resp.json();
+    entries.filter(e => e.type === 'file' && e.path.endsWith('.py')).forEach(e => {
+      const opt = document.createElement('option');
+      opt.value = e.path;
+      opt.textContent = e.path;
+      sel.appendChild(opt);
+    });
+  } catch (e) {}
+}
+
+async function submitJobRun() {
+  const repo = document.getElementById('job-repo-select').value;
+  const path = document.getElementById('job-file-select').value;
+  const network = document.getElementById('job-network-check').checked;
+  if (!repo || !path) { alert('Select a repo and file first.'); return; }
+  try {
+    const resp = await fetch('/api/jobs/runs', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({repo, path, ref: 'main', language: 'python', network, agent_id: 'observer'})
+    });
+    if (resp.ok) {
+      toggleJobRunForm();
+      loadJobs();
+    } else {
+      const err = await resp.json();
+      alert('Error: ' + (err.error || 'unknown'));
+    }
+  } catch (e) { alert('Failed to submit run.'); }
+}
+
+function jobStatusBadge(status) {
+  const colors = {
+    queued: '#3498db', running: '#f39c12', completed: '#2ecc71',
+    failed: '#e74c3c', timeout: '#e67e22', abandoned: '#95a5a6'
+  };
+  const bg = colors[status] || '#666';
+  return `<span style="display:inline-block;padding:2px 8px;border-radius:4px;font-size:10px;font-weight:700;color:#fff;background:${bg};text-transform:uppercase">${escapeHtml(status)}</span>`;
+}
+
+function jobNetworkBadge(enabled) {
+  if (enabled) return '<span style="display:inline-block;padding:2px 6px;border-radius:4px;font-size:10px;font-weight:700;color:#fff;background:#e74c3c">NETWORK</span>';
+  return '<span style="display:inline-block;padding:2px 6px;border-radius:4px;font-size:10px;font-weight:700;color:#fff;background:#2ecc71">SANDBOXED</span>';
+}
+
+function jobTimeStr(ts) {
+  if (!ts) return '—';
+  return new Date(ts * 1000).toLocaleTimeString();
+}
+
+async function loadJobs() {
+  try {
+    const resp = await fetch('/api/jobs/runs');
+    jobsAllRuns = await resp.json();
+  } catch (e) { jobsAllRuns = []; }
+
+  const tbody = document.getElementById('jobs-tbody');
+  const table = document.getElementById('jobs-table');
+  const empty = document.getElementById('jobs-empty');
+  const count = document.getElementById('jobs-count');
+
+  count.textContent = `(${jobsAllRuns.length})`;
+
+  if (!jobsAllRuns.length) {
+    table.style.display = 'none';
+    empty.style.display = '';
+    document.getElementById('jobs-detail').style.display = 'none';
+    return;
+  }
+  table.style.display = '';
+  empty.style.display = 'none';
+
+  tbody.innerHTML = '';
+  jobsAllRuns.forEach(r => {
+    const tr = document.createElement('tr');
+    tr.style.cssText = 'border-bottom:1px solid var(--border);cursor:pointer;transition:background 0.1s';
+    if (r.run_id === jobsSelectedId) tr.style.background = 'var(--border-mid)';
+    tr.addEventListener('mouseenter', () => { tr.style.background = 'var(--border-mid)'; });
+    tr.addEventListener('mouseleave', () => { if (r.run_id !== jobsSelectedId) tr.style.background = ''; });
+    tr.addEventListener('click', () => viewJobDetail(r.run_id));
+    const td = (html) => `<td style="padding:6px 8px;color:var(--text)">${html}</td>`;
+    tr.innerHTML =
+      td(`<span style="font-family:monospace;font-size:11px">${escapeHtml(r.run_id)}</span>`) +
+      td(escapeHtml(r.agent_id || '')) +
+      td(`<span style="font-size:11px">${escapeHtml(r.repo || '')}/${escapeHtml(r.path || '')}</span>`) +
+      td(`<span style="font-family:monospace;font-size:11px">${escapeHtml((r.commit_id || '').slice(0,8))}</span>`) +
+      td(jobStatusBadge(r.status)) +
+      td(r.exit_code != null ? String(r.exit_code) : '—') +
+      td(jobNetworkBadge(r.network_enabled)) +
+      td(`<span style="font-size:11px">${jobTimeStr(r.started_at)}</span>`);
+    tbody.appendChild(tr);
+  });
+
+  if (jobsSelectedId) viewJobDetail(jobsSelectedId);
+}
+
+function viewJobDetail(runId) {
+  jobsSelectedId = runId;
+  const r = jobsAllRuns.find(x => x.run_id === runId);
+  if (!r) return;
+
+  const detail = document.getElementById('jobs-detail');
+  const content = document.getElementById('jobs-detail-content');
+  detail.style.display = '';
+
+  const field = (label, val) => `<div style="margin-bottom:8px"><span style="font-size:10px;color:var(--text-dimmer);text-transform:uppercase">${label}</span><div style="font-size:12px;color:var(--text);font-family:monospace;word-break:break-all">${val}</div></div>`;
+  const pre = (text) => `<pre style="background:var(--input-bg);padding:8px;border-radius:4px;font-size:11px;max-height:200px;overflow:auto;white-space:pre-wrap;color:var(--text)">${escapeHtml(text || '(empty)')}</pre>`;
+
+  content.innerHTML =
+    `<div style="font-size:15px;font-weight:700;color:var(--text);margin-bottom:12px">${escapeHtml(r.run_id)}</div>` +
+    `<div style="margin-bottom:12px">${jobStatusBadge(r.status)} ${jobNetworkBadge(r.network_enabled)}</div>` +
+    field('Agent', r.agent_id || '—') +
+    field('Repo / Path', `${r.repo || ''}/${r.path || ''}`) +
+    field('Commit', r.commit_id || '—') +
+    field('Command', r.command || '—') +
+    field('Image', r.image || '—') +
+    field('Exit Code', r.exit_code != null ? String(r.exit_code) : '—') +
+    field('Created', jobTimeStr(r.created_at)) +
+    field('Started', jobTimeStr(r.started_at)) +
+    field('Finished', jobTimeStr(r.finished_at)) +
+    field('Nonce', r.nonce || '—') +
+    field('Content SHA256', r.content_sha256 || '—') +
+    '<div style="margin-top:12px"><span style="font-size:10px;color:var(--text-dimmer);text-transform:uppercase">STDOUT</span>' + pre(r.stdout) + '</div>' +
+    '<div style="margin-top:8px"><span style="font-size:10px;color:var(--text-dimmer);text-transform:uppercase">STDERR</span>' + pre(r.stderr) + '</div>' +
+    field('Stdout SHA256', r.stdout_sha256 || '—') +
+    field('Receipt SHA256', r.receipt_sha256 || '—');
+
+  // Highlight selected row
+  document.querySelectorAll('#jobs-tbody tr').forEach(tr => { tr.style.background = ''; });
+  const rows = document.querySelectorAll('#jobs-tbody tr');
+  const idx = jobsAllRuns.findIndex(x => x.run_id === runId);
+  if (idx >= 0 && rows[idx]) rows[idx].style.background = 'var(--border-mid)';
+}
 
 // -- Events tab --
 

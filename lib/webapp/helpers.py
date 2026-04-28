@@ -5,6 +5,7 @@ import time
 
 from lib.docs import DEFAULT_FOLDER_ACCESS, DEFAULT_FOLDERS
 from lib.gitlab import GITLAB_DIR, init_gitlab_storage, load_repos_index
+from lib.jobs import init_jobs_storage, load_runs_index
 from lib.personas import DEFAULT_CHANNELS, DEFAULT_MEMBERSHIPS, PERSONAS
 from lib.tickets import init_tickets_storage, load_tickets_index
 from lib.webapp.state import (
@@ -37,6 +38,8 @@ from lib.webapp.state import (
     _lock,
     _messages,
     _recaps,
+    _runs,
+    _runs_lock,
     _sub_lock,
     _subscribers,
     _tickets,
@@ -389,6 +392,15 @@ def _init_tickets():
         _tickets.update(index)
 
 
+def _init_jobs():
+    """Initialize jobs storage and load runs from disk."""
+    init_jobs_storage()
+    with _runs_lock:
+        _runs.clear()
+        index = load_runs_index()
+        _runs.update(index)
+
+
 def _init_agent_online():
     """Initialize agent online/offline state from PERSONAS."""
     with _agent_online_lock:
@@ -556,6 +568,24 @@ def _broadcast_tickets_event(action: str, data: dict):
     import queue as _queue
 
     payload = {"type": "tickets_event", "action": action}
+    payload.update(data)
+    raw = json.dumps(payload)
+    with _sub_lock:
+        dead = []
+        for q in _subscribers:
+            try:
+                q.put_nowait(raw)
+            except _queue.Full:
+                dead.append(q)
+        for q in dead:
+            _subscribers.remove(q)
+
+
+def _broadcast_jobs_event(action: str, data: dict):
+    """Send a jobs_event through the existing SSE subscribers."""
+    import queue as _queue
+
+    payload = {"type": "jobs_event", "action": action}
     payload.update(data)
     raw = json.dumps(payload)
     with _sub_lock:

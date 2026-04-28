@@ -165,7 +165,7 @@ def _requeue_restart(base_url: str, scenario_name: str) -> None:
         print(f"  Re-queue failed: {e}")
 
 
-# All 34 MCP tool names (must match lib/mcp_server.py registrations)
+# All 37 MCP tool names (must match lib/mcp_server.py registrations)
 MCP_TOOL_NAMES = [
     # Communication (7)
     "list_channels",
@@ -220,6 +220,10 @@ MCP_TOOL_NAMES = [
     # Email (2)
     "send_email",
     "get_emails",
+    # Jobs (3)
+    "run_from_repo",
+    "get_run",
+    "list_runs",
     # Meta (6)
     "whoami",
     "who_is",

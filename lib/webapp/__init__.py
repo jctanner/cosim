@@ -7,6 +7,7 @@ All backward-compatible imports are re-exported here.
 from flask import Flask
 
 from lib.gitlab import GITLAB_DIR
+from lib.jobs import JOBS_DIR
 from lib.tickets import TICKETS_DIR
 from lib.webapp.helpers import (
     _init_agent_online,
@@ -14,6 +15,7 @@ from lib.webapp.helpers import (
     _init_docs,
     _init_folders,
     _init_gitlab,
+    _init_jobs,
     _init_tickets,
     _load_chat_log,
 )
@@ -26,6 +28,7 @@ from lib.webapp.routes.gitlab import bp as gitlab_bp
 
 # Route blueprints
 from lib.webapp.routes.index import bp as index_bp
+from lib.webapp.routes.jobs import bp as jobs_bp
 from lib.webapp.routes.memos import bp as memos_bp
 from lib.webapp.routes.messages import bp as messages_bp
 from lib.webapp.routes.misc import bp as misc_bp
@@ -72,6 +75,9 @@ from lib.webapp.state import (
     _orchestrator_status,
     # Recaps
     _recaps,
+    # Jobs
+    _runs,
+    _runs_lock,
     _sub_lock,
     _subscribers,
     # Tickets
@@ -100,6 +106,9 @@ def create_app() -> Flask:
     _init_tickets()
     print(f"Tickets storage ready: {TICKETS_DIR}  ({len(_tickets)} existing tickets)")
 
+    _init_jobs()
+    print(f"Jobs storage ready: {JOBS_DIR}  ({len(_runs)} existing runs)")
+
     _init_agent_online()
 
     _load_chat_log()
@@ -120,6 +129,7 @@ def create_app() -> Flask:
     app.register_blueprint(memos_bp)
     app.register_blueprint(blog_bp)
     app.register_blueprint(sessions_bp)
+    app.register_blueprint(jobs_bp)
     app.register_blueprint(misc_bp)
 
     return app

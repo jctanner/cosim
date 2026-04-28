@@ -71,7 +71,7 @@ def _clear_runtime_dirs() -> None:
     """Remove runtime data directories and chat log."""
     if CHAT_LOG.exists():
         CHAT_LOG.unlink()
-    for d in [DOCS_DIR, GITLAB_DIR, TICKETS_DIR, LOGS_DIR, VAR_DIR / "characters"]:
+    for d in [DOCS_DIR, GITLAB_DIR, TICKETS_DIR, LOGS_DIR, VAR_DIR / "characters", VAR_DIR / "jobs"]:
         if d.exists():
             shutil.rmtree(d)
 
@@ -197,6 +197,18 @@ def save_session(name: str | None = None) -> dict:
             task_data = executor.get_all_tasks()
             if task_data:
                 (instance_dir / "background_tasks.json").write_text(json.dumps(task_data, indent=2))
+    except Exception:
+        pass
+
+    # Save job runs
+    try:
+        from lib.jobs import get_runs_snapshot
+        from lib.webapp.state import _runs, _runs_lock
+
+        with _runs_lock:
+            runs_data = get_runs_snapshot(dict(_runs))
+        if runs_data:
+            (instance_dir / "runs.json").write_text(json.dumps(runs_data, indent=2))
     except Exception:
         pass
 
@@ -385,6 +397,20 @@ def load_session(instance_name: str) -> dict:
         except Exception:
             pass
 
+    # Restore job runs
+    runs_path = instance_dir / "runs.json"
+    if runs_path.exists():
+        try:
+            from lib.jobs import restore_runs
+            from lib.webapp.state import _runs, _runs_lock
+
+            restored = restore_runs(json.loads(runs_path.read_text()))
+            with _runs_lock:
+                _runs.clear()
+                _runs.update(restored)
+        except Exception:
+            pass
+
     # Restore emails
     emails_path = instance_dir / "emails.json"
     if emails_path.exists():
@@ -476,6 +502,13 @@ def new_session(scenario_name: str | None = None) -> dict:
         from lib.blog import clear_blog
 
         clear_blog()
+    except Exception:
+        pass
+    try:
+        from lib.webapp.state import _runs, _runs_lock
+
+        with _runs_lock:
+            _runs.clear()
     except Exception:
         pass
     try:

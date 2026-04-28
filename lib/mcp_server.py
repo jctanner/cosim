@@ -1091,6 +1091,71 @@ def _register_email_tools(
         return json.dumps(result)
 
 
+def _register_jobs_tools(
+    server: FastMCP,
+    agent_key: str,
+    display_name: str,
+    flask_url: str,
+    config: dict,
+):
+    """Register 3 jobs/runner tools."""
+
+    @server.tool(
+        name="run_from_repo",
+        description="Execute a Python script from a GitLab repo. Commits the full repo to a sandboxed container. "
+        "Returns immediately with a run_id — poll get_run() for results.",
+    )
+    async def run_from_repo(
+        repo: str,
+        path: str,
+        ref: str = "main",
+        language: str = "python",
+        network: bool = False,
+    ) -> str:
+        t0 = time.time()
+        result = await _flask(
+            "POST",
+            "/api/jobs/runs",
+            flask_url,
+            json={
+                "repo": repo,
+                "path": path,
+                "ref": ref,
+                "language": language,
+                "network": network,
+                "agent_id": agent_key,
+            },
+        )
+        _record_audit(
+            agent_key,
+            "run_from_repo",
+            {"repo": repo, "path": path, "ref": ref},
+            result.get("run_id", ""),
+            (time.time() - t0) * 1000,
+        )
+        return json.dumps(result)
+
+    @server.tool(
+        name="get_run",
+        description="Get the status and results of a job run by its run_id.",
+    )
+    async def get_run(run_id: str) -> str:
+        t0 = time.time()
+        result = await _flask("GET", f"/api/jobs/runs/{run_id}", flask_url)
+        _record_audit(agent_key, "get_run", {"run_id": run_id}, result.get("status", ""), (time.time() - t0) * 1000)
+        return json.dumps(result)
+
+    @server.tool(
+        name="list_runs",
+        description="List recent job runs.",
+    )
+    async def list_runs() -> str:
+        t0 = time.time()
+        result = await _flask("GET", "/api/jobs/runs", flask_url)
+        _record_audit(agent_key, "list_runs", {}, f"{len(result)} runs", (time.time() - t0) * 1000)
+        return json.dumps(result)
+
+
 def _register_meta_tools(
     server: FastMCP,
     agent_key: str,
@@ -1274,6 +1339,7 @@ def create_agent_mcp(
     _register_memo_tools(*reg_args)
     _register_blog_tools(*reg_args)
     _register_email_tools(*reg_args)
+    _register_jobs_tools(*reg_args)
     _register_meta_tools(*reg_args)
 
     return server

@@ -82,6 +82,10 @@ if __name__ == "__main__":
                     import time
 
                     time.sleep(3)
+        elif args.command == "job-runner":
+            from lib.job_runner import run_job_runner
+
+            asyncio.run(run_job_runner(args))
         elif args.command == "mcp-server":
             import uvicorn
 
@@ -90,7 +94,7 @@ if __name__ == "__main__":
             app = build_app(scenario_name=args.scenario, flask_url=args.flask_url)
             uvicorn.run(app, host=args.host, port=args.port)
         else:
-            print("Use 'server', 'chat', or 'mcp-server' subcommand. See --help.", file=sys.stderr)
+            print("Use 'server', 'chat', 'job-runner', or 'mcp-server' subcommand. See --help.", file=sys.stderr)
             sys.exit(1)
     except KeyboardInterrupt:
         print("\n\nInterrupted by user")

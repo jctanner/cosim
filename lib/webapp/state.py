@@ -57,6 +57,10 @@ _gitlab_lock = threading.Lock()
 _tickets: dict[str, dict] = {}
 _tickets_lock = threading.Lock()
 
+# Jobs state: run_id -> full run record dict
+_runs: dict[str, dict] = {}
+_runs_lock = threading.Lock()
+
 # Recaps: list of generated recaps
 _recaps: list[dict] = []
 
