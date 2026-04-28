@@ -10,6 +10,7 @@ dependencies = [
     "mcp>=1.0",
     "python-dotenv>=1.1",
     "requests>=2.32",
+    "honcho>=2.0",
     "pyyaml>=6.0",
     "uvicorn>=0.30",
 ]
