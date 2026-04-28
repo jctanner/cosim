@@ -1,0 +1,31 @@
+Startup Simplification via Honcho
+
+The project currently requires three separate terminals to start:
+  python main.py server
+  python main.py mcp-server
+  python main.py chat
+
+Adding the job runner as a Flask-internal component avoids a fourth process,
+but three is still too many. Use honcho (Python Procfile runner) to provide
+single-command startup.
+
+Add Procfile:
+  server:       python main.py server --port 5000
+  mcp:          python main.py mcp-server --port 5001
+  orchestrator: python main.py chat
+
+Add honcho to pyproject.toml dependencies.
+
+Usage:
+  honcho start          # starts everything, colored log output, one Ctrl+C stops all
+
+Individual processes can still be started directly for debugging:
+  honcho start server mcp       # start only server and MCP
+  python main.py chat           # run orchestrator separately with debugger
+
+Note: honcho reads .env by default and injects into child processes. This is
+acceptable since the .env contains Vertex AI credentials that all three
+processes need. If this becomes a problem, use honcho start --no-env.
+
+Scenario selection is done in the web UI (not via CLI args), so no scenario
+coordination is needed across processes.
