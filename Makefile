@@ -4,7 +4,7 @@ PYTHON := $(VENV)/bin/python
 PYTEST := $(VENV)/bin/pytest
 RUFF := $(VENV)/bin/ruff
 
-.PHONY: venv install test lint lint-fix clean start
+.PHONY: venv install test lint lint-fix clean start build-sandbox
 
 venv:
 	@test -d $(VENV) || $(UV) venv $(VENV)
@@ -25,6 +25,9 @@ lint-fix: install
 
 start: install
 	$(UV) run honcho start
+
+build-sandbox:
+	podman build -f container/Dockerfile.sandbox -t cosim-sandbox:latest container/
 
 clean:
 	rm -rf $(VENV) .pytest_cache __pycache__ tests/__pycache__ lib/__pycache__

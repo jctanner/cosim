@@ -83,8 +83,8 @@ def _execute_run(server_url: str, run: dict):
     path = run["path"]
     nonce = run.get("nonce", "")
     network_enabled = run.get("network_enabled", False)
-    timeout_seconds = run.get("timeout_seconds", 30)
-    image = run.get("image", "python:3.13-slim")
+    timeout_seconds = run.get("timeout_seconds", 600)
+    image = run.get("image", "cosim-sandbox:latest")
 
     repo_files = _get_run_files(server_url, run_id)
 
@@ -98,7 +98,7 @@ def _execute_run(server_url: str, run: dict):
 
         cmd = [
             "podman", "run", "--rm",
-            "--cpus=1", "--memory=256m", "--pids-limit=128",
+            "--cpus=1", "--memory=1g", "--pids-limit=128",
             "--read-only",
             "--tmpfs", "/tmp:rw,size=64m",
             "-v", f"{workspace_path}:/work:Z",

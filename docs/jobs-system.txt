@@ -111,17 +111,18 @@ Execution Model
 ────────────────────────────────────────
 
 - Use podman for sandboxed execution.
-- For Python scripts, run with python:3.13-slim.
+- For Python scripts, run with cosim-sandbox:latest (pre-baked image with
+  common libraries). Build with: make build-sandbox
 - Write submitted content to job workspace as /work/submitted.py.
 - Generate COSIM_NONCE per run using secrets.token_hex(32).
 - Default command (sandboxed):
-  podman run --rm --network=none --cpus=1 --memory=256m --pids-limit=128
+  podman run --rm --network=none --cpus=1 --memory=1g --pids-limit=128
     --read-only --tmpfs /tmp:rw,size=64m
     -v <workspace>:/work:Z -w /work
     -e COSIM_NONCE=<nonce>
-    python:3.13-slim python /work/submitted.py
+    cosim-sandbox:latest python /work/<path>
 - Capture stdout, stderr, exit code, started_at, finished_at.
-- Enforce timeout, default 30s.
+- Enforce timeout, default 600s.
 - Mark timeout as status="timeout", nonzero exit.
 
 Network access:

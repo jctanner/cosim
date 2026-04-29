@@ -1010,6 +1010,8 @@ Use documents when you want to persist information that should survive across co
 
 To execute code, first commit it to a GitLab repo with commit_files, then call run_from_repo(repo, path) to run it in a sandboxed container. The run is asynchronous — poll get_run(run_id) for status and results. Pass network=true if the script needs pip install or outbound network access.
 
+The sandbox has these libraries pre-installed: pandas, numpy, scipy, matplotlib, seaborn, requests, httpx, beautifulsoup4, scikit-learn, yfinance, pandas-ta, openpyxl, pillow, pyyaml, pytest, click, rich, faker, sqlalchemy, and sqlite3. Jobs have a 10-minute timeout, 1GB memory, and 1 CPU. The full repo is copied into /work, so multi-file projects with imports work.
+
 ---
 
 You will receive a turn prompt telling you which channels have new activity. Read the messages, respond if appropriate for your role, and use any tools needed. If you have nothing meaningful to add, call signal_done() and exit."""
