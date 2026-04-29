@@ -1091,6 +1091,7 @@ async def _run_loop(
             # Poll for completion: signal_done events OR process exits
             done_keys: set[str] = set()
             deadline = _time.monotonic() + pool._done_timeout
+            last_heartbeat_time = _time.monotonic()
 
             while len(done_keys) < len(tier_agent_keys) and _time.monotonic() < deadline:
                 # Check signal_done events from MCP server
@@ -1103,6 +1104,14 @@ async def _run_loop(
                         summary = event.get("summary", "")
                         print(f"  {display}: signal_done — {summary}" if summary else f"  {display}: signal_done")
                     done_since_id = max(done_since_id, event["id"])
+
+                # Send periodic heartbeat to prevent "Disconnected" in UI
+                if _time.monotonic() - last_heartbeat_time > 10:
+                    responding_names = [persona_map[pk]["display_name"] for pk in tier_agent_keys - done_keys]
+                    msg = f"Waiting on: {', '.join(responding_names)}" if responding_names else "Processing..."
+                    agents_status = _build_agent_status(personas, pool)
+                    client.send_heartbeat("responding", scenario_name, agents_status, msg, check_commands=False)
+                    last_heartbeat_time = _time.monotonic()
 
                 # Check process exits (fallback)
                 for pk, task in agent_tasks.items():
