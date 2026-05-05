@@ -133,6 +133,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="When agents go idle, check for open tickets and post a reminder "
         "to trigger agents to continue working them",
     )
+    chat_parser.add_argument(
+        "--use-sessions",
+        action="store_true",
+        default=False,
+        help="Persist Claude Code sessions across agent turns (agents resume "
+        "prior context instead of rebuilding full prompts)",
+    )
 
     # ── job-runner subcommand ──────────────────────────────────────────
     job_parser = subparsers.add_parser(

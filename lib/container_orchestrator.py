@@ -14,6 +14,7 @@ import shutil
 import subprocess
 import threading
 import time as _time
+import uuid as _uuid
 from pathlib import Path
 
 import requests as sync_requests
@@ -326,6 +327,7 @@ class ContainerPool:
         container_timeout: int = 300,
         max_turns: int = 50,
         done_timeout: int = 120,
+        use_sessions: bool = False,
     ):
         self._personas: dict[str, dict] = {p["name"]: p for p in personas}
         self._model = model
@@ -337,6 +339,9 @@ class ContainerPool:
         self._container_timeout = container_timeout
         self._max_turns = max_turns
         self._done_timeout = done_timeout
+        self._use_sessions = use_sessions
+        self._session_ids: dict[str, str] = {}  # persona_key -> session UUID
+        self._session_started: set[str] = set()  # personas that completed first turn
         self._active_containers: dict[str, str] = {}  # persona_key -> container_name
         self._agent_locks: dict[str, asyncio.Lock] = {}  # per-agent mutex
         self._mcp_base_url: str = ""  # set in start()
@@ -554,15 +559,29 @@ class ContainerPool:
         with open(log_file, "a") as f:
             f.write(f"TURN PROMPT:\n{turn_prompt}\n\n{'-' * 40}\n\n")
 
+        resuming = self._use_sessions and persona_key in self._session_started
+
+        if self._use_sessions and persona_key not in self._session_ids:
+            self._session_ids[persona_key] = str(_uuid.uuid4())
+
         cmd = [
             "podman",
             "exec",
             container_name,
             "claude",
-            "-p",
-            turn_prompt,
-            "--system-prompt-file",
-            "/home/agent/system-prompt.md",
+        ]
+
+        if resuming:
+            cmd += ["--resume", self._session_ids[persona_key]]
+
+        cmd += ["-p", turn_prompt]
+
+        if not resuming:
+            cmd += ["--system-prompt-file", "/home/agent/system-prompt.md"]
+            if self._use_sessions:
+                cmd += ["--session-id", self._session_ids[persona_key]]
+
+        cmd += [
             "--mcp-config",
             "/home/agent/.mcp-config.json",
             "--allowedTools",
@@ -630,6 +649,9 @@ class ContainerPool:
                 f.write(f"{'=' * 60}\n\n")
 
             success = exit_code == 0
+
+            if success and self._use_sessions:
+                self._session_started.add(persona_key)
 
             # Try to extract response and thinking from JSON output
             response_text = ""
@@ -1216,6 +1238,7 @@ async def run_container_orchestrator(args) -> None:
     max_concurrent = getattr(args, "max_concurrent", 4)
     done_timeout = getattr(args, "done_timeout", 120)
     ticket_reminders = getattr(args, "ticket_reminders", False)
+    use_sessions = getattr(args, "use_sessions", False)
     personas = []
 
     mcp_host = getattr(args, "mcp_host", None) or _detect_mcp_host()
@@ -1234,6 +1257,7 @@ async def run_container_orchestrator(args) -> None:
     print(f"  Max concurrent agents: {max_concurrent}")
     print(f"  Done timeout: {done_timeout}s")
     print(f"  Ticket reminders: {'enabled' if ticket_reminders else 'disabled'}")
+    print(f"  Use sessions: {'enabled' if use_sessions else 'disabled'}")
 
     # Wait for Flask server to be reachable
     while not client.health_check():
@@ -1336,6 +1360,7 @@ async def run_container_orchestrator(args) -> None:
                 container_timeout=container_timeout,
                 max_turns=max_turns,
                 done_timeout=done_timeout,
+                use_sessions=use_sessions,
             )
 
             # Capture message baseline before startup so messages sent
@@ -1438,6 +1463,7 @@ async def run_container_orchestrator(args) -> None:
                     container_timeout=container_timeout,
                     max_turns=max_turns,
                     done_timeout=done_timeout,
+                    use_sessions=use_sessions,
                 )
 
                 # Capture message baseline before restart so messages sent
