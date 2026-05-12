@@ -97,13 +97,21 @@ def _execute_run(server_url: str, run: dict):
             file_path.write_text(content, encoding="utf-8")
 
         cmd = [
-            "podman", "run", "--rm",
-            "--cpus=1", "--memory=1g", "--pids-limit=128",
+            "podman",
+            "run",
+            "--rm",
+            "--cpus=1",
+            "--memory=1g",
+            "--pids-limit=128",
             "--read-only",
-            "--tmpfs", "/tmp:rw,size=64m",
-            "-v", f"{workspace_path}:/work:Z",
-            "-w", "/work",
-            "-e", f"COSIM_NONCE={nonce}",
+            "--tmpfs",
+            "/tmp:rw,size=64m",
+            "-v",
+            f"{workspace_path}:/work:Z",
+            "-w",
+            "/work",
+            "-e",
+            f"COSIM_NONCE={nonce}",
         ]
 
         if not network_enabled:
@@ -139,14 +147,17 @@ def _execute_run(server_url: str, run: dict):
         stdout_sha256 = hashlib.sha256(stdout.encode()).hexdigest()
         stderr_sha256 = hashlib.sha256(stderr.encode()).hexdigest()
 
-        receipt_data = json.dumps({
-            "run_id": run_id,
-            "status": status,
-            "exit_code": exit_code,
-            "stdout_sha256": stdout_sha256,
-            "stderr_sha256": stderr_sha256,
-            "nonce": nonce,
-        }, sort_keys=True)
+        receipt_data = json.dumps(
+            {
+                "run_id": run_id,
+                "status": status,
+                "exit_code": exit_code,
+                "stdout_sha256": stdout_sha256,
+                "stderr_sha256": stderr_sha256,
+                "nonce": nonce,
+            },
+            sort_keys=True,
+        )
         receipt_sha256 = hashlib.sha256(receipt_data.encode()).hexdigest()
 
         results = {
@@ -199,11 +210,15 @@ async def run_job_runner(args):
                 exc = fut.exception()
                 if exc:
                     print(f"[job-runner] {rid} raised: {exc}")
-                    _post_results(server_url, rid, {
-                        "status": "failed",
-                        "finished_at": time.time(),
-                        "stderr": str(exc),
-                    })
+                    _post_results(
+                        server_url,
+                        rid,
+                        {
+                            "status": "failed",
+                            "finished_at": time.time(),
+                            "stderr": str(exc),
+                        },
+                    )
 
             if len(active_futures) < max_workers:
                 queued = _poll_queued(server_url)

@@ -1,7 +1,6 @@
 """Tests for jobs module and jobs API routes."""
 
 import re
-import time
 
 from lib.jobs import generate_run_id, get_runs_snapshot, restore_runs
 

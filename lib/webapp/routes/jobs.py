@@ -141,9 +141,17 @@ def update_run(run_id):
             return jsonify({"error": "run not found"}), 404
 
         allowed_fields = {
-            "status", "started_at", "finished_at", "exit_code",
-            "stdout", "stderr", "stdout_sha256", "stderr_sha256",
-            "verifier_status", "verifier_details", "receipt_sha256",
+            "status",
+            "started_at",
+            "finished_at",
+            "exit_code",
+            "stdout",
+            "stderr",
+            "stdout_sha256",
+            "stderr_sha256",
+            "verifier_status",
+            "verifier_details",
+            "receipt_sha256",
         }
         for key in allowed_fields:
             if key in data:
