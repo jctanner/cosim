@@ -1234,7 +1234,7 @@ def _register_meta_tools(
 
     @server.tool(
         name="get_recent_activity",
-        description="Get a summary of recent activity across channels, tickets, and documents.",
+        description="Get a summary of recent activity across channels, tickets, documents, emails, memos, and blog posts.",
     )
     async def get_recent_activity(since_minutes: int = 30) -> str:
         t0 = time.time()
@@ -1257,6 +1257,24 @@ def _register_meta_tools(
 
         # Fetch recent memos
         all_memos = await _flask("GET", "/api/memos/threads", flask_url, params={"include_posts": "1"})
+        recent_memos = [
+            t for t in all_memos
+            if t.get("created_at", 0) > cutoff or t.get("last_post_at", 0) and t["last_post_at"] > cutoff
+        ]
+
+        # Fetch recent emails
+        all_emails = await _flask("GET", "/api/emails", flask_url)
+        recent_emails = [
+            e for e in all_emails
+            if e.get("timestamp", 0) > cutoff
+        ]
+
+        # Fetch recent blog posts with replies
+        all_blog_posts = await _flask("GET", "/api/blog/posts", flask_url, params={"include_replies": "1"})
+        recent_blog = [
+            p for p in all_blog_posts
+            if p.get("created_at", 0) > cutoff or p.get("last_reply_at", 0) and p["last_reply_at"] > cutoff
+        ]
 
         summary = {
             "recent_messages": len(recent_msgs),
@@ -1264,6 +1282,21 @@ def _register_meta_tools(
             "recent_tickets": len(recent_tickets),
             "ticket_ids": [t.get("id") for t in recent_tickets[:10]],
             "active_memo_threads": len(all_memos),
+            "recent_memo_threads": len(recent_memos),
+            "memo_threads_with_activity": [
+                {"id": t.get("id", ""), "title": t.get("title", ""), "post_count": t.get("post_count", 0)}
+                for t in recent_memos[:10]
+            ],
+            "recent_emails": len(recent_emails),
+            "email_subjects": [
+                {"id": e.get("id"), "subject": e.get("subject", ""), "sender": e.get("sender", "")}
+                for e in recent_emails[:10]
+            ],
+            "recent_blog_posts": len(recent_blog),
+            "blog_posts_with_activity": [
+                {"slug": p["slug"], "title": p.get("title", ""), "reply_count": p.get("reply_count", 0)}
+                for p in recent_blog[:10]
+            ],
         }
         for m in recent_msgs:
             ch = m.get("channel", "?")

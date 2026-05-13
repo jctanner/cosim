@@ -347,6 +347,17 @@ class ChatClient:
         resp.raise_for_status()
         return resp.json()
 
+    # -- Email API --
+
+    def get_emails(self) -> list[dict]:
+        """Return list of email dicts from the inbox."""
+        try:
+            resp = requests.get(f"{self.base_url}/api/emails", timeout=10)
+            resp.raise_for_status()
+            return resp.json()
+        except Exception:
+            return []
+
     # -- Blog API --
 
     def get_blog_posts(self, include_replies: bool = False) -> list[dict]:

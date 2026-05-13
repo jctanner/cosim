@@ -599,6 +599,60 @@ def _broadcast_jobs_event(action: str, data: dict):
             _subscribers.remove(q)
 
 
+def _broadcast_blog_event(action: str, data: dict):
+    """Send a blog_event through the existing SSE subscribers."""
+    import queue as _queue
+
+    payload = {"type": "blog_event", "action": action}
+    payload.update(data)
+    raw = json.dumps(payload)
+    with _sub_lock:
+        dead = []
+        for q in _subscribers:
+            try:
+                q.put_nowait(raw)
+            except _queue.Full:
+                dead.append(q)
+        for q in dead:
+            _subscribers.remove(q)
+
+
+def _broadcast_email_event(action: str, data: dict):
+    """Send an email_event through the existing SSE subscribers."""
+    import queue as _queue
+
+    payload = {"type": "email_event", "action": action}
+    payload.update(data)
+    raw = json.dumps(payload)
+    with _sub_lock:
+        dead = []
+        for q in _subscribers:
+            try:
+                q.put_nowait(raw)
+            except _queue.Full:
+                dead.append(q)
+        for q in dead:
+            _subscribers.remove(q)
+
+
+def _broadcast_memo_event(action: str, data: dict):
+    """Send a memo_event through the existing SSE subscribers."""
+    import queue as _queue
+
+    payload = {"type": "memo_event", "action": action}
+    payload.update(data)
+    raw = json.dumps(payload)
+    with _sub_lock:
+        dead = []
+        for q in _subscribers:
+            try:
+                q.put_nowait(raw)
+            except _queue.Full:
+                dead.append(q)
+        for q in dead:
+            _subscribers.remove(q)
+
+
 def _extract_snippet(content: str, query: str, context_chars: int = 80) -> str:
     """Extract a short snippet around the first occurrence of query in content."""
     lower = content.lower()

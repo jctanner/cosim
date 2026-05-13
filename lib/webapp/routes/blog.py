@@ -32,6 +32,8 @@ def create_blog_post_endpoint():
     is_external = data.get("is_external", False)
     tags = data.get("tags", [])
     entry = create_post(title, body, author, is_external=is_external, tags=tags)
+    from lib.webapp.helpers import _broadcast_blog_event
+    _broadcast_blog_event("created", entry)
     return jsonify(entry), 201
 
 
@@ -61,6 +63,8 @@ def update_blog_post_endpoint(post_slug):
         entry = update_post(post_slug, **kwargs)
     except ValueError as e:
         return jsonify({"error": str(e)}), 404
+    from lib.webapp.helpers import _broadcast_blog_event
+    _broadcast_blog_event("updated", entry)
     return jsonify(entry)
 
 
@@ -84,6 +88,8 @@ def reply_to_blog_post_endpoint(post_slug):
         entry = reply_to_post(post_slug, text, author)
     except ValueError as e:
         return jsonify({"error": str(e)}), 404
+    from lib.webapp.helpers import _broadcast_blog_event
+    _broadcast_blog_event("replied", entry)
     return jsonify(entry), 201
 
 

@@ -977,6 +977,7 @@ async def _run_loop(
     scenario_name: str = "",
     max_concurrent: int = 4,
     agent_last_seen: dict[str, int] | None = None,
+    activity_hints: list[str] | None = None,
 ) -> set[str]:
     """Run the event-driven response loop with tiered agent responses.
 
@@ -1073,6 +1074,7 @@ async def _run_loop(
                         _resolve_agent_trigger_channels(trigger_ch_set, all_agent_channels),
                         trigger_messages=agent_trigger_msgs[-3:] if agent_trigger_msgs else None,
                         last_seen_id=agent_last_seen.get(pk, 0),
+                        activity_hints=activity_hints,
                     )
 
                     # Show typing indicators
@@ -1297,6 +1299,11 @@ async def run_container_orchestrator(args) -> None:
     # Wait for a session to be started (New or Load)
     pool = None
     last_seen_id = 0
+    last_blog_check_ts = _time.time()
+    last_ticket_check_ts = _time.time()
+    last_doc_check_ts = _time.time()
+    last_email_check_ts = _time.time()
+    last_memo_check_ts = _time.time()
 
     client.send_heartbeat("waiting", scenario_name, {}, "Checking for pending commands...", check_commands=False)
     next_cmd = None
@@ -1553,6 +1560,110 @@ async def run_container_orchestrator(args) -> None:
                             continue
                     except Exception as e:
                         print(f"Ticket reminder check failed: {e}")
+
+                # Check for non-chat activity across subsystems
+                hints: list[str] = []
+
+                # Blog replies
+                try:
+                    blog_posts = client.get_blog_posts()
+                    new_blog_replies = [
+                        p for p in blog_posts
+                        if p.get("last_reply_at") and p["last_reply_at"] > last_blog_check_ts
+                    ]
+                    if new_blog_replies:
+                        last_blog_check_ts = max(p["last_reply_at"] for p in new_blog_replies)
+                        print(f"\nNew blog replies detected on {len(new_blog_replies)} post(s)")
+                        hints.append(
+                            "There are new blog replies. Use list_blog_posts() to see recent posts "
+                            "and read_blog_post(post_slug) to read the full discussion."
+                        )
+                except Exception as e:
+                    print(f"Blog reply check failed: {e}")
+
+                # Ticket updates
+                try:
+                    tickets = client.list_tickets()
+                    new_ticket_activity = [
+                        t for t in tickets
+                        if t.get("updated_at") and t["updated_at"] > last_ticket_check_ts
+                    ]
+                    if new_ticket_activity:
+                        last_ticket_check_ts = max(t["updated_at"] for t in new_ticket_activity)
+                        print(f"\nTicket activity detected on {len(new_ticket_activity)} ticket(s)")
+                        hints.append(
+                            "Tickets have been updated. Use get_my_tickets() or list_tickets() to check."
+                        )
+                except Exception as e:
+                    print(f"Ticket activity check failed: {e}")
+
+                # Document creates/updates
+                try:
+                    docs = client.list_docs()
+                    new_doc_activity = [
+                        d for d in docs
+                        if d.get("updated_at") and d["updated_at"] > last_doc_check_ts
+                    ]
+                    if new_doc_activity:
+                        last_doc_check_ts = max(d["updated_at"] for d in new_doc_activity)
+                        print(f"\nDocument activity detected on {len(new_doc_activity)} doc(s)")
+                        hints.append(
+                            "New documents have been created or updated. Use list_docs() and read_doc() to check."
+                        )
+                except Exception as e:
+                    print(f"Document activity check failed: {e}")
+
+                # New emails
+                try:
+                    emails = client.get_emails()
+                    new_email_activity = [
+                        e for e in emails
+                        if e.get("timestamp") and e["timestamp"] > last_email_check_ts
+                    ]
+                    if new_email_activity:
+                        last_email_check_ts = max(e["timestamp"] for e in new_email_activity)
+                        print(f"\nNew email(s) detected: {len(new_email_activity)}")
+                        hints.append(
+                            "New company emails have arrived. Use get_emails() to read them."
+                        )
+                except Exception as e:
+                    print(f"Email activity check failed: {e}")
+
+                # Memo replies
+                try:
+                    memo_threads = client.get_memo_threads()
+                    new_memo_activity = [
+                        t for t in memo_threads
+                        if t.get("last_post_at") and t["last_post_at"] > last_memo_check_ts
+                    ]
+                    if new_memo_activity:
+                        last_memo_check_ts = max(t["last_post_at"] for t in new_memo_activity)
+                        print(f"\nMemo activity detected on {len(new_memo_activity)} thread(s)")
+                        hints.append(
+                            "There are new memo replies. Use list_memos() and get_memo_thread() to check."
+                        )
+                except Exception as e:
+                    print(f"Memo activity check failed: {e}")
+
+                if hints:
+                    trigger_channels = {"#general"}
+                    active_channels = await _run_loop(
+                        client,
+                        pool,
+                        personas,
+                        trigger_channels,
+                        max_waves,
+                        scenario_name,
+                        max_concurrent,
+                        agent_last_seen,
+                        activity_hints=hints,
+                    )
+
+                    latest = client.get_messages()
+                    if latest:
+                        last_seen_id = latest[-1]["id"]
+                    continue
+
                 await asyncio.sleep(poll_interval)
                 continue
 

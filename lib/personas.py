@@ -1022,6 +1022,7 @@ def build_v3_turn_prompt(
     trigger_channels: set[str],
     trigger_messages: list[dict] | None = None,
     last_seen_id: int = 0,
+    activity_hints: list[str] | None = None,
 ) -> str:
     """Build a lightweight per-turn prompt for a v3 containerized agent.
 
@@ -1033,6 +1034,7 @@ def build_v3_turn_prompt(
         trigger_channels: Set of channels with new activity.
         trigger_messages: Optional list of trigger message dicts for headlines.
         last_seen_id: Last message ID this agent has seen. Pass to get_messages(since_id=).
+        activity_hints: Optional list of hints about non-chat activity that triggered this turn.
     """
     persona = PERSONAS[persona_key]
     display_name = persona["display_name"]
@@ -1069,6 +1071,10 @@ def build_v3_turn_prompt(
     if last_seen_id:
         since_hint = f" Use since_id={last_seen_id} to fetch only new messages."
 
+    activity_section = ""
+    if activity_hints:
+        activity_section = "\n\n" + "\n".join(activity_hints)
+
     return f"""There is new activity in {channels_str}.
 {headlines}
 You are {display_name}.{role_hint}
@@ -1077,7 +1083,7 @@ Use get_messages() to read the recent messages.{since_hint}
 Respond if appropriate for your role. Do not repeat or reiterate points you have already made in earlier messages.
 Use any other tools (create_doc, create_ticket, etc.) if the situation calls for it.
 If you have nothing meaningful to add, call signal_done() and exit.
-You may have pending DMs — use get_my_dms() to check.{director_hint}"""
+You may have pending DMs — use get_my_dms() to check.{director_hint}{activity_section}"""
 
 
 def get_active_personas(filter_str: str | None = None) -> list[dict]:
