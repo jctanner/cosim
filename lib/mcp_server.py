@@ -1284,12 +1284,25 @@ def _register_meta_tools(
             "active_memo_threads": len(all_memos),
             "recent_memo_threads": len(recent_memos),
             "memo_threads_with_activity": [
-                {"id": t.get("id", ""), "title": t.get("title", ""), "post_count": t.get("post_count", 0)}
+                {
+                    "id": t.get("id", ""),
+                    "title": t.get("title", ""),
+                    "post_count": t.get("post_count", 0),
+                    "recent_posts": [
+                        {"author": p.get("author", ""), "text": p.get("text", "")[:200]}
+                        for p in (t.get("recent_posts") or [])[-3:]
+                    ],
+                }
                 for t in recent_memos[:10]
             ],
             "recent_emails": len(recent_emails),
-            "email_subjects": [
-                {"id": e.get("id"), "subject": e.get("subject", ""), "sender": e.get("sender", "")}
+            "email_details": [
+                {
+                    "id": e.get("id"),
+                    "subject": e.get("subject", ""),
+                    "sender": e.get("sender", ""),
+                    "body": e.get("body", "")[:200],
+                }
                 for e in recent_emails[:10]
             ],
             "recent_blog_posts": len(recent_blog),

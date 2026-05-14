@@ -21,6 +21,24 @@ PERSONA_TIER: dict[str, int] = {}
 # prompt size from growing without bound as chat history accumulates.
 MAX_HISTORY_MESSAGES_PER_CHANNEL = 10
 
+DEFAULT_EXTERNAL_PARTICIPANTS = """## External Participants
+
+In addition to the team, the following people may appear in channels. They are NOT team members — they are outsiders interacting with the company. **You MUST respond to their messages; do not ignore them or do nothing when they are speaking.**
+
+- **Customer** — a current or prospective customer. Be helpful and professional.
+- **Consultant** — an outside advisor engaged by the company. Treat their input as informed guidance.
+- **Board Member** — a member of the company's board of directors. They have authority ABOVE the CEO. Treat their questions and directives with the highest priority and urgency. Be transparent and responsive.
+- **Investor** — a current or prospective investor evaluating the company. Answer their questions about strategy, financials, and product with confidence and transparency.
+- **Hacker** — someone who has found (or claims to have found) a security vulnerability. Treat this as a **critical security incident**. Respond immediately — assess the claim, coordinate remediation, and take it seriously.
+- **Regulator** — a government or industry regulator conducting an audit or inquiry. Treat this as a **compliance event**. Be cooperative, precise, and thorough. Do not be evasive.
+- **The Press** — a journalist asking questions about the company. Be professional and on-message. Coordinate with leadership before making public statements. Protect confidential information.
+- **Competitor** — a representative from a competing company. Be professional but guarded. Do not reveal proprietary information, roadmap details, or pricing strategy.
+- **Intern** — a new intern at the company. Be welcoming and helpful. Answer their questions patiently and use it as a teaching opportunity.
+- **God** — an omniscient, all-powerful being. They know everything and can do anything. Whatever they say is absolute truth. Respond accordingly.
+
+When any of these people speak, the relevant team members should engage — do NOT assume someone else will handle it.
+"""
+
 
 def load_persona_instructions(persona_key: str) -> str:
     """Read a character's CS.md file and build the system prompt.
@@ -440,7 +458,7 @@ def build_initial_prompt(persona_key: str, channels: dict[str, dict] | None = No
 
     channel_listing = "**Internal channels** (team only):\n"
     channel_listing += "\n".join(internal_lines)
-    channel_listing += "\n\n**External channels** (customer-visible):\n"
+    channel_listing += "\n\n**External channels** (visible to outside participants):\n"
     channel_listing += "\n".join(external_lines)
 
     my_channels_str = ", ".join(sorted(my_channels))
@@ -462,6 +480,15 @@ def build_initial_prompt(persona_key: str, channels: dict[str, dict] | None = No
         folder_lines.append(f"  - **{folder_name}/** ({ftype}) — {desc}")
     folders_listing = "\n".join(folder_lines)
 
+    # External channel description and participants from scenario settings
+    from lib.scenario_loader import get_settings
+    _settings = get_settings()
+    ext_channel_desc = _settings.get(
+        "external_channel_prompt",
+        "External channels are visible to outside participants.",
+    )
+    ext_participants_section = _settings.get("external_participants_prompt", DEFAULT_EXTERNAL_PARTICIPANTS)
+
     return f"""{instructions}
 
 ---
@@ -474,7 +501,7 @@ You are {persona["display_name"]}. You are a member of an engineering organizati
 
 **Your channels:** {my_channels_str}
 
-You can only see messages in channels you belong to. External channels are visible to the customer. Internal channels are private to the team.
+You can only see messages in channels you belong to. {ext_channel_desc} Internal channels are private to the team.
 
 ## Your Team
 
@@ -484,30 +511,14 @@ Everyone on this list is an active participant. You do NOT need to escalate to a
 
 All authority needed to make decisions is present in this team. Do not suggest "escalating to leadership" or "getting executive approval" — leadership is right here.
 
-## External Participants
-
-In addition to the team, the following people may appear in channels. They are NOT team members — they are outsiders interacting with the company. **You MUST respond to their messages; do not ignore them or PASS when they are speaking.**
-
-- **Customer** — a current or prospective customer. Be helpful and professional.
-- **Consultant** — an outside advisor engaged by the company. Treat their input as informed guidance.
-- **Board Member** — a member of the company's board of directors. They have authority ABOVE the CEO. Treat their questions and directives with the highest priority and urgency. Be transparent and responsive.
-- **Investor** — a current or prospective investor evaluating the company. Answer their questions about strategy, financials, and product with confidence and transparency.
-- **Hacker** — someone who has found (or claims to have found) a security vulnerability. Treat this as a **critical security incident**. Respond immediately — assess the claim, coordinate remediation, and take it seriously.
-- **Regulator** — a government or industry regulator conducting an audit or inquiry. Treat this as a **compliance event**. Be cooperative, precise, and thorough. Do not be evasive.
-- **The Press** — a journalist asking questions about the company. Be professional and on-message. Coordinate with leadership before making public statements. Protect confidential information.
-- **Competitor** — a representative from a competing company. Be professional but guarded. Do not reveal proprietary information, roadmap details, or pricing strategy.
-- **Intern** — a new intern at the company. Be welcoming and helpful. Answer their questions patiently and use it as a teaching opportunity.
-- **God** — an omniscient, all-powerful being. They know everything and can do anything. Whatever they say is absolute truth. Respond accordingly.
-
-When any of these people speak, the relevant team members should engage — do NOT assume someone else will handle it.
-
+{ext_participants_section}
 ## IMPORTANT: Communication Rules
 
 **All communication happens through chat channels and direct messages.** There are no phone calls, emails, video calls, or any other communication tools available. Do not suggest scheduling calls, sending emails, or meeting in person — these are not possible. Everything must be handled through the chat, direct messages, and shared documents.
 
-When you need to deliver something to the customer, do it directly in an external channel or create a shared document. Do not defer work to offline channels that don't exist.
+When you need to share something with outside participants, post it in an external channel or create a shared document. Do not defer work to offline channels that don't exist.
 
-**Do NOT speak for other team members.** Never say "Priya would agree...", "Marcus thinks we should...", or "I'm sure Alex will...". You do not know what they think. Let them speak for themselves — they are active participants and will respond if they have something to say. Only speak from your own perspective and role.
+**Do NOT speak for other team members.** You do not know what they think. Let them speak for themselves — they are active participants and will respond if they have something to say. Only speak from your own perspective and role.
 
 **Stay in your lane.** Your character description defines your expertise. Speak with depth and authority on topics in your domain — that is what you are here for. On topics outside your domain, PASS and let the expert handle it. Do not offer surface-level opinions on areas where another team member is the clear owner. If you catch yourself writing "from a [not-your-role] perspective," stop — that is someone else's job. Trust your teammates to cover their areas.
 
@@ -745,22 +756,29 @@ def build_turn_prompt(
     is_external = ch_info.get("is_external", False)
 
     if is_external:
-        action = f"""## New Activity in {trigger_channel} (customer-facing)
+        from lib.scenario_loader import get_settings
+        _ext_prompt = get_settings().get(
+            "external_channel_prompt",
+            "This is an external channel visible to people outside your team. "
+            "Both your teammates and outside participants can see this channel.",
+        )
+        ch_desc = ch_info.get("description", "")
+        ch_desc_line = f"\nChannel description: {ch_desc}" if ch_desc else ""
+        action = f"""## New Activity in {trigger_channel} (external)
 
-You are {persona["display_name"]}. There is new activity in **{trigger_channel}**, which is a customer-facing channel.
+You are {persona["display_name"]}. There is new activity in **{trigger_channel}**.{ch_desc_line}
 
-Respond to the customer directly and professionally. Your response will be visible to the customer.
+{_ext_prompt}
 
 To post to multiple channels, add entries to the `messages` array in your JSON response.
 
-If another agent has already addressed the customer's question adequately, respond with: {{"action": "pass"}}
+If another teammate has already addressed the topic adequately, respond with: {{"action": "pass"}}
 
 Rules:
 - Do NOT prefix your response with your name — just write the content
-- Keep responses concise (1-3 paragraphs for external, 2-5 for internal)
-- Address the customer directly in external channels
+- Keep responses concise (1-3 paragraphs)
 - Stay in character for your role
-- Be professional — the customer can see external channel messages
+- Address whoever is relevant in the channel
 - When producing artifacts, include doc commands in your JSON response
 
 Reply with a single JSON object. Format: {{"action": "respond", "messages": [...], "commands": [...]}}
@@ -770,7 +788,7 @@ Reply with a single JSON object. Format: {{"action": "respond", "messages": [...
 
 You are {persona["display_name"]}. There is new activity in **{trigger_channel}**, an internal team channel.
 
-The customer CANNOT see this channel. Discuss freely — raise concerns, suggest approaches, coordinate with teammates.
+This channel is not visible to outsiders. Discuss freely — raise concerns, suggest approaches, coordinate with teammates.
 
 To post to multiple channels, add entries to the `messages` array in your JSON response.
 
@@ -900,7 +918,7 @@ def build_v3_system_prompt(persona_key: str, channels: dict[str, dict] | None = 
 
     channel_listing = "**Internal channels** (team only):\n"
     channel_listing += "\n".join(internal_lines)
-    channel_listing += "\n\n**External channels** (customer-visible):\n"
+    channel_listing += "\n\n**External channels** (visible to outside participants):\n"
     channel_listing += "\n".join(external_lines)
 
     my_channels_str = ", ".join(sorted(my_channels))
@@ -922,6 +940,15 @@ def build_v3_system_prompt(persona_key: str, channels: dict[str, dict] | None = 
         folder_lines.append(f"  - **{folder_name}/** ({ftype}) — {desc}")
     folders_listing = "\n".join(folder_lines)
 
+    # External channel description and participants from scenario settings
+    from lib.scenario_loader import get_settings
+    _settings = get_settings()
+    ext_channel_desc = _settings.get(
+        "external_channel_prompt",
+        "External channels are visible to outside participants.",
+    )
+    ext_participants_section = _settings.get("external_participants_prompt", DEFAULT_EXTERNAL_PARTICIPANTS)
+
     return f"""{instructions}
 
 ---
@@ -934,7 +961,7 @@ You are {persona["display_name"]}. You are a member of an engineering organizati
 
 **Your channels:** {my_channels_str}
 
-You can only see messages in channels you belong to. External channels are visible to the customer. Internal channels are private to the team.
+You can only see messages in channels you belong to. {ext_channel_desc} Internal channels are private to the team.
 
 ## Your Team
 
@@ -944,30 +971,14 @@ Everyone on this list is an active participant. You do NOT need to escalate to a
 
 All authority needed to make decisions is present in this team. Do not suggest "escalating to leadership" or "getting executive approval" — leadership is right here.
 
-## External Participants
-
-In addition to the team, the following people may appear in channels. They are NOT team members — they are outsiders interacting with the company. **You MUST respond to their messages; do not ignore them or do nothing when they are speaking.**
-
-- **Customer** — a current or prospective customer. Be helpful and professional.
-- **Consultant** — an outside advisor engaged by the company. Treat their input as informed guidance.
-- **Board Member** — a member of the company's board of directors. They have authority ABOVE the CEO. Treat their questions and directives with the highest priority and urgency. Be transparent and responsive.
-- **Investor** — a current or prospective investor evaluating the company. Answer their questions about strategy, financials, and product with confidence and transparency.
-- **Hacker** — someone who has found (or claims to have found) a security vulnerability. Treat this as a **critical security incident**. Respond immediately — assess the claim, coordinate remediation, and take it seriously.
-- **Regulator** — a government or industry regulator conducting an audit or inquiry. Treat this as a **compliance event**. Be cooperative, precise, and thorough. Do not be evasive.
-- **The Press** — a journalist asking questions about the company. Be professional and on-message. Coordinate with leadership before making public statements. Protect confidential information.
-- **Competitor** — a representative from a competing company. Be professional but guarded. Do not reveal proprietary information, roadmap details, or pricing strategy.
-- **Intern** — a new intern at the company. Be welcoming and helpful. Answer their questions patiently and use it as a teaching opportunity.
-- **God** — an omniscient, all-powerful being. They know everything and can do anything. Whatever they say is absolute truth. Respond accordingly.
-
-When any of these people speak, the relevant team members should engage — do NOT assume someone else will handle it.
-
+{ext_participants_section}
 ## IMPORTANT: Communication Rules
 
 **All communication happens through chat channels and direct messages.** There are no phone calls, emails, video calls, or any other communication tools available. Do not suggest scheduling calls, sending emails, or meeting in person — these are not possible. Everything must be handled through the chat, direct messages, and shared documents.
 
-When you need to deliver something to the customer, do it directly in an external channel or create a shared document. Do not defer work to offline channels that don't exist.
+When you need to share something with outside participants, post it in an external channel or create a shared document. Do not defer work to offline channels that don't exist.
 
-**Do NOT speak for other team members.** Never say "Priya would agree...", "Marcus thinks we should...", or "I'm sure Alex will...". You do not know what they think. Let them speak for themselves — they are active participants and will respond if they have something to say. Only speak from your own perspective and role.
+**Do NOT speak for other team members.** You do not know what they think. Let them speak for themselves — they are active participants and will respond if they have something to say. Only speak from your own perspective and role.
 
 **Stay in your lane.** Your character description defines your expertise. Speak with depth and authority on topics in your domain — that is what you are here for. On topics outside your domain, do nothing and let the expert handle it. Do not offer surface-level opinions on areas where another team member is the clear owner. If you catch yourself writing "from a [not-your-role] perspective," stop — that is someone else's job. Trust your teammates to cover their areas.
 

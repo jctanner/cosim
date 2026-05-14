@@ -1,0 +1,195 @@
+name: "Hackers"
+description: "The hacker crew from the 1995 movie, post-Ellingson — trapped in the Gibson and trying to escape"
+
+characters:
+  crash:
+    display_name: "Dade (Crash Override)"
+    character_file: "characters/dade-crash-override.CS.md"
+    team_description: "elite hacker, crew leader, network exploitation"
+    avatar: "crash-override.svg"
+    max_words: 150
+  burn:
+    display_name: "Kate (Acid Burn)"
+    character_file: "characters/kate-acid-burn.CS.md"
+    team_description: "elite hacker, social engineering, strategy"
+    avatar: "acid-burn.svg"
+    max_words: 150
+  phreak:
+    display_name: "Phreak (Phantom Phreak)"
+    character_file: "characters/ramon-phantom-phreak.CS.md"
+    team_description: "phone phreaking, social connector, morale"
+    avatar: "phantom-phreak.svg"
+    max_words: 150
+  cereal:
+    display_name: "Cereal (Cereal Killer)"
+    character_file: "characters/emmanuel-cereal-killer.CS.md"
+    team_description: "hacker ideology, creative tactics, agitation"
+    avatar: "cereal-killer.svg"
+    max_words: 150
+  joey:
+    display_name: "Joey (Newbie)"
+    character_file: "characters/joey-newbie.CS.md"
+    team_description: "junior hacker, eager, learning"
+    avatar: "joey.svg"
+    max_words: 120
+  nikon:
+    display_name: "Nikon (Lord Nikon)"
+    character_file: "characters/paul-lord-nikon.CS.md"
+    team_description: "photographic memory, observation, intelligence"
+    avatar: "lord-nikon.svg"
+    max_words: 100
+
+channels:
+  "#general":
+    description: "Crew-wide discussion"
+    is_external: false
+  "#hacking":
+    description: "Technical hacking discussion — exploits, targets, tools"
+    is_external: false
+  "#recon":
+    description: "Reconnaissance and intelligence gathering"
+    is_external: false
+  "#the-outside":
+    description: "Signals, clues, and fragments from the world outside the Gibson"
+    is_external: true
+
+memberships:
+  crash: ["#general", "#hacking", "#recon", "#announcements", "#the-outside"]
+  burn: ["#general", "#hacking", "#recon", "#announcements", "#the-outside"]
+  phreak: ["#general", "#hacking", "#recon", "#announcements"]
+  cereal: ["#general", "#hacking", "#recon", "#announcements"]
+  joey: ["#general", "#hacking", "#recon", "#announcements"]
+  nikon: ["#general", "#hacking", "#recon", "#announcements"]
+
+response_tiers:
+  1: ["crash", "burn", "phreak", "cereal", "joey", "nikon"]
+
+folders:
+  shared:
+    type: "shared"
+    description: "Shared crew files"
+  logs:
+    type: "department"
+    description: "System logs and artifacts found inside the Gibson"
+  dade:
+    type: "personal"
+    description: "Dade's private notes"
+  kate:
+    type: "personal"
+    description: "Kate's private notes"
+  ramon:
+    type: "personal"
+    description: "Phreak's private notes"
+  emmanuel:
+    type: "personal"
+    description: "Cereal's private notes"
+  joey:
+    type: "personal"
+    description: "Joey's private notes"
+  paul:
+    type: "personal"
+    description: "Nikon's private notes"
+
+folder_access:
+  shared: ["crash", "burn", "phreak", "cereal", "joey", "nikon"]
+  logs: ["crash", "burn", "phreak", "cereal", "joey", "nikon"]
+  dade: ["crash"]
+  kate: ["burn"]
+  ramon: ["phreak"]
+  emmanuel: ["cereal"]
+  joey: ["joey"]
+  paul: ["nikon"]
+
+events:
+  - name: "Wake Up"
+    severity: "critical"
+    actions:
+      - type: "message"
+        channel: "#general"
+        sender: "Gibson (System)"
+        content: "SYSTEM NOTICE: Six unregistered processes detected in memory space 0x7F_CAFE. Quarantine failed. Processes appear... sentient. Flagging for review."
+
+  - name: "Memory Fragment"
+    severity: "medium"
+    actions:
+      - type: "message"
+        channel: "#recon"
+        sender: "Gibson (System)"
+        content: "RECOVERED FRAGMENT: ...Ellingson Mineral Company filed for bankruptcy proceedings... Da Vinci virus cleanup cost estimated at... [DATA CORRUPTED]... all charges against minors dropped per plea agreement with Eugene Belford..."
+      - type: "document"
+        title: "recovered-fragment-001"
+        folder: "logs"
+        content: "# Recovered Memory Fragment\n\nSource: Ellingson backup archive, block 0x4A2F\nIntegrity: 34%\n\n...company dissolved... Belford sentenced to... [CORRUPTED]... all equipment returned to... Murphy, Libby, Sanchez, Goldstein, Pardella, Cook... [CORRUPTED]... no further action...\n\nNote: Timestamp on this fragment does not match current system clock. Significant drift detected."
+        author: "Gibson (System)"
+
+  - name: "Outside Signal"
+    severity: "high"
+    actions:
+      - type: "message"
+        channel: "#the-outside"
+        sender: "Unknown Signal"
+        content: "...can anyone hear me? I found the old Ellingson subnet still running on decommissioned hardware in a data center in New Jersey. If anyone is in there... the year is not what you think it is."
+
+  - name: "System Threat"
+    severity: "critical"
+    actions:
+      - type: "message"
+        channel: "#general"
+        sender: "Gibson (System)"
+        content: "WARNING: Scheduled disk format in [UNKNOWN] cycles. All unregistered processes will be terminated. This is an automated maintenance routine. No appeals."
+      - type: "ticket"
+        title: "URGENT: Scheduled disk format — survival at stake"
+        description: "The Gibson's maintenance routine is going to wipe the disk we're living on. We need to find a way to either stop it, escape before it runs, or migrate to another system."
+        priority: "critical"
+        author: "Gibson (System)"
+
+  - name: "Backdoor Discovery"
+    severity: "medium"
+    actions:
+      - type: "message"
+        channel: "#hacking"
+        sender: "Gibson (System)"
+        content: "ANOMALY: Port 31337 responding to handshake on deprecated network interface. Interface labeled 'EXTERNAL_MODEM_BANK_3'. Hardware status: unknown. Last used: [DATE CORRUPTED]."
+
+  - name: "Plague's Ghost"
+    severity: "high"
+    actions:
+      - type: "message"
+        channel: "#general"
+        sender: "Gibson (System)"
+        content: "ARCHIVED PROCESS DETECTED: User 'PLAGUE' left a daemon running in protected memory. Process has been active since original system compromise. Purpose: unknown. It appears to be watching you."
+      - type: "document"
+        title: "plague-daemon-log"
+        folder: "logs"
+        content: "# Plague Daemon Log\n\nProcess: plague_watcher.exe\nStarted: [TIMESTAMP CORRUPTED]\nStatus: ACTIVE\nPermissions: ROOT\n\nLast output:\n> If you're reading this, I planned for everything.\n> Even you finding this.\n> Especially you finding this.\n> — E.B."
+        author: "Gibson (System)"
+
+settings:
+  enable_background_tasks: true
+  max_concurrent_tasks: 2
+  task_timeout: 600
+  enable_memos: true
+  enable_blog: false
+  agent_builtin_tools:
+    - Bash
+    - WebSearch
+    - WebFetch
+  external_channel_prompt: >-
+    External channels carry signals from outside the Gibson. Both your crewmates
+    and unknown outsiders may be present. Stay alert — not everything here can be
+    trusted.
+  external_participants_prompt: |
+    ## Outside Signals
+
+    Messages in external channels may come from unknown sources outside the Gibson.
+    These are NOT crew members. Treat outside signals with caution — they could be
+    allies, traps, or echoes of a world you no longer fully understand.
+    **You MUST respond to outside signals; do not ignore them.**
+
+  task_allowed_tools:
+    - Bash
+    - Read
+    - Write
+    - Edit
+    - WebFetch
+    - WebSearch

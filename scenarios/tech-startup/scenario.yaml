@@ -311,6 +311,9 @@ settings:
   task_timeout: 600
   enable_memos: true
   enable_blog: true
+  external_channel_prompt: >-
+    External channels are customer-facing. The customer can see everything you
+    post. Be professional and helpful.
   task_allowed_tools:
     - Bash
     - Read
