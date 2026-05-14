@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <defs>
+    <clipPath id="diamond-co">
+      <polygon points="64,4 124,64 64,124 4,64"/>
+    </clipPath>
+  </defs>
+  <!-- Gold diamond background -->
+  <polygon points="64,4 124,64 64,124 4,64" fill="#d4a017" stroke="#b8860b" stroke-width="3"/>
+  <!-- Skull with eye patch -->
+  <g clip-path="url(#diamond-co)">
+    <!-- Skull outline -->
+    <circle cx="64" cy="52" r="28" fill="#0a0a0a" stroke="#0a0a0a" stroke-width="2"/>
+    <!-- Jaw -->
+    <rect x="46" y="68" width="36" height="16" rx="4" fill="#0a0a0a"/>
+    <!-- Left eye -->
+    <circle cx="52" cy="48" r="6" fill="#d4a017"/>
+    <!-- Right eye (patched) -->
+    <polygon points="70,42 82,48 70,54" fill="#333"/>
+    <!-- Eye patch strap -->
+    <line x1="76" y1="42" x2="90" y2="28" stroke="#333" stroke-width="3"/>
+    <line x1="76" y1="54" x2="90" y2="68" stroke="#333" stroke-width="3"/>
+    <!-- Teeth -->
+    <rect x="50" y="74" width="5" height="8" rx="1" fill="#d4a017"/>
+    <rect x="57" y="74" width="5" height="8" rx="1" fill="#d4a017"/>
+    <rect x="64" y="74" width="5" height="8" rx="1" fill="#d4a017"/>
+    <rect x="71" y="74" width="5" height="8" rx="1" fill="#d4a017"/>
+  </g>
+</svg>

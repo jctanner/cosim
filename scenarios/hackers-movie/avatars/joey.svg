@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <defs>
+    <clipPath id="diamond-j">
+      <polygon points="64,4 124,64 64,124 4,64"/>
+    </clipPath>
+  </defs>
+  <!-- Diamond background -->
+  <polygon points="64,4 124,64 64,124 4,64" fill="#1a0a1a" stroke="#cc44cc" stroke-width="3"/>
+  <g clip-path="url(#diamond-j)">
+    <!-- Monitor outline (Lucy) -->
+    <rect x="32" y="26" width="64" height="48" rx="3" fill="none" stroke="#cc44cc" stroke-width="2.5"/>
+    <!-- Screen inner -->
+    <rect x="36" y="30" width="56" height="40" rx="2" fill="#0d001a"/>
+    <!-- Monitor stand -->
+    <rect x="56" y="74" width="16" height="8" fill="none" stroke="#cc44cc" stroke-width="2"/>
+    <rect x="48" y="82" width="32" height="4" rx="2" fill="none" stroke="#cc44cc" stroke-width="2"/>
+    <!-- "LUCY" text on screen -->
+    <text x="64" y="48" text-anchor="middle" fill="#cc44cc" font-family="monospace" font-size="11" font-weight="bold" opacity="0.9">LUCY</text>
+    <!-- Blinking cursor -->
+    <rect x="62" y="54" width="8" height="2" fill="#cc44cc" opacity="0.7"/>
+    <!-- Heart on screen (Joey loves Lucy) -->
+    <path d="M58,58 C56,55 52,55 52,58 C52,62 58,66 58,66 C58,66 64,62 64,58 C64,55 60,55 58,58Z"
+      fill="#cc44cc" opacity="0.4" transform="translate(6,0) scale(0.6)"/>
+    <!-- Scanlines -->
+    <line x1="36" y1="38" x2="92" y2="38" stroke="#cc44cc" stroke-width="0.3" opacity="0.2"/>
+    <line x1="36" y1="46" x2="92" y2="46" stroke="#cc44cc" stroke-width="0.3" opacity="0.2"/>
+    <line x1="36" y1="54" x2="92" y2="54" stroke="#cc44cc" stroke-width="0.3" opacity="0.15"/>
+    <line x1="36" y1="62" x2="92" y2="62" stroke="#cc44cc" stroke-width="0.3" opacity="0.2"/>
+  </g>
+</svg>

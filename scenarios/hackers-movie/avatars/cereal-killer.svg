@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <defs>
+    <clipPath id="diamond-ck">
+      <polygon points="64,4 124,64 64,124 4,64"/>
+    </clipPath>
+  </defs>
+  <!-- Diamond background -->
+  <polygon points="64,4 124,64 64,124 4,64" fill="#1a1a00" stroke="#cccc00" stroke-width="3"/>
+  <g clip-path="url(#diamond-ck)">
+    <!-- Smiley face circle -->
+    <circle cx="64" cy="64" r="38" fill="#ffcc00" stroke="#b38f00" stroke-width="2.5"/>
+    <!-- Left eye -->
+    <circle cx="50" cy="54" r="5" fill="#1a1a00"/>
+    <!-- Right eye - eye patch -->
+    <polygon points="72,44 86,54 72,64" fill="#1a1a00"/>
+    <!-- Eye patch strap -->
+    <line x1="78" y1="44" x2="92" y2="30" stroke="#1a1a00" stroke-width="3.5" stroke-linecap="round"/>
+    <line x1="78" y1="64" x2="92" y2="78" stroke="#1a1a00" stroke-width="3.5" stroke-linecap="round"/>
+    <!-- Big grin -->
+    <path d="M42,72 Q64,96 86,72" fill="none" stroke="#1a1a00" stroke-width="3.5" stroke-linecap="round"/>
+  </g>
+</svg>

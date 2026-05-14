@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <defs>
+    <clipPath id="diamond-ab">
+      <polygon points="64,4 124,64 64,124 4,64"/>
+    </clipPath>
+    <linearGradient id="flame-grad" x1="0" y1="1" x2="0" y2="0">
+      <stop offset="0%" stop-color="#cc3300"/>
+      <stop offset="40%" stop-color="#ff6600"/>
+      <stop offset="70%" stop-color="#ffcc00"/>
+      <stop offset="100%" stop-color="#ffffcc"/>
+    </linearGradient>
+    <radialGradient id="burn-edge" cx="50%" cy="50%" r="50%">
+      <stop offset="60%" stop-color="#1a0a00" stop-opacity="0"/>
+      <stop offset="100%" stop-color="#1a0a00" stop-opacity="0.7"/>
+    </radialGradient>
+  </defs>
+  <!-- Diamond background -->
+  <polygon points="64,4 124,64 64,124 4,64" fill="#1a0a00" stroke="#8b2500" stroke-width="3"/>
+  <g clip-path="url(#diamond-ab)">
+    <!-- Main flame -->
+    <path d="M64,100 C44,100 32,80 38,62 C42,50 48,52 46,40 C46,32 50,20 64,16 C78,20 82,32 82,40 C80,52 86,50 90,62 C96,80 84,100 64,100Z"
+      fill="url(#flame-grad)"/>
+    <!-- Inner flame -->
+    <path d="M64,100 C52,100 44,86 48,74 C50,66 56,68 54,58 C54,52 58,42 64,38 C70,42 74,52 74,58 C72,68 78,66 80,74 C84,86 76,100 64,100Z"
+      fill="#ffffcc" opacity="0.6"/>
+    <!-- Charred edges -->
+    <rect x="0" y="0" width="128" height="128" fill="url(#burn-edge)"/>
+  </g>
+</svg>

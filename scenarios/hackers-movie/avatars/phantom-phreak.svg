@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <defs>
+    <clipPath id="diamond-pp">
+      <polygon points="64,4 124,64 64,124 4,64"/>
+    </clipPath>
+  </defs>
+  <!-- Diamond background -->
+  <polygon points="64,4 124,64 64,124 4,64" fill="#0a1a0a" stroke="#00cc66" stroke-width="3"/>
+  <g clip-path="url(#diamond-pp)">
+    <!-- Ghost body -->
+    <path d="M64,22 C44,22 34,38 34,54 L34,88 L42,80 L50,88 L58,80 L66,88 L74,80 L82,88 L90,80 L94,84 L94,54 C94,38 84,22 64,22Z"
+      fill="none" stroke="#00ff66" stroke-width="2.5" opacity="0.8"/>
+    <!-- Ghost eyes -->
+    <circle cx="52" cy="48" r="5" fill="#00ff66" opacity="0.9"/>
+    <circle cx="76" cy="48" r="5" fill="#00ff66" opacity="0.9"/>
+    <!-- Phone receiver overlaid on ghost -->
+    <path d="M40,62 C40,56 44,52 50,52 L54,52 L54,58 L50,58 C48,58 46,60 46,62 L46,72 C46,74 48,76 50,76 L54,76 L54,82 L50,82 C44,82 40,78 40,72 Z"
+      fill="none" stroke="#00ff66" stroke-width="2" opacity="0.5"/>
+    <path d="M74,52 L78,52 C84,52 88,56 88,62 L88,72 C88,78 84,82 78,82 L74,82 L74,76 L78,76 C80,76 82,74 82,72 L82,62 C82,60 80,58 78,58 L74,58 Z"
+      fill="none" stroke="#00ff66" stroke-width="2" opacity="0.5"/>
+    <!-- Connection cord -->
+    <path d="M54,67 L74,67" stroke="#00ff66" stroke-width="1.5" opacity="0.4" stroke-dasharray="3,2"/>
+  </g>
+</svg>

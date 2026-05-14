@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <defs>
+    <clipPath id="diamond-ln">
+      <polygon points="64,4 124,64 64,124 4,64"/>
+    </clipPath>
+  </defs>
+  <!-- Diamond background -->
+  <polygon points="64,4 124,64 64,124 4,64" fill="#0a0a2e" stroke="#1a1a5e" stroke-width="3"/>
+  <g clip-path="url(#diamond-ln)">
+    <!-- Camera aperture blades -->
+    <circle cx="64" cy="64" r="44" fill="none" stroke="#2a2a6e" stroke-width="2"/>
+    <circle cx="64" cy="64" r="18" fill="#e8e8ff" stroke="#2a2a6e" stroke-width="1.5"/>
+    <!-- Aperture blade 1 -->
+    <path d="M64,20 C80,20 92,28 92,28 L72,52 Z" fill="#1a1a5e" stroke="#2a2a6e" stroke-width="0.5"/>
+    <!-- Aperture blade 2 -->
+    <path d="M100,40 C108,56 108,72 108,72 L76,60 Z" fill="#1a1a5e" stroke="#2a2a6e" stroke-width="0.5"/>
+    <!-- Aperture blade 3 -->
+    <path d="M100,92 C88,104 72,108 72,108 L68,74 Z" fill="#1a1a5e" stroke="#2a2a6e" stroke-width="0.5"/>
+    <!-- Aperture blade 4 -->
+    <path d="M44,108 C28,100 20,88 20,88 L56,76 Z" fill="#1a1a5e" stroke="#2a2a6e" stroke-width="0.5"/>
+    <!-- Aperture blade 5 -->
+    <path d="M20,56 C20,40 28,28 28,28 L52,68 Z" fill="#1a1a5e" stroke="#2a2a6e" stroke-width="0.5"/>
+    <!-- Aperture blade 6 -->
+    <path d="M64,20 C48,20 36,28 36,28 L60,56 Z" fill="#181850" stroke="#2a2a6e" stroke-width="0.5"/>
+    <!-- Center highlight -->
+    <circle cx="60" cy="60" r="6" fill="#ffffff" opacity="0.3"/>
+  </g>
+</svg>
