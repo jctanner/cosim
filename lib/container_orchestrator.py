@@ -830,6 +830,23 @@ async def _process_single_command(client, pool, personas, scenario_name, cmd):
                     agent_key, prompt_content, pool._mcp_host, pool._mcp_port, TMP_DIR,
                 )
 
+                # Register MCP endpoints for the new agent on the MCP server
+                mcp_config = {
+                    "characters": {agent_key: persona},
+                    "memberships": {agent_key: list(DEFAULT_MEMBERSHIPS.get(agent_key, []))},
+                    "folder_access": {},
+                    "channels": {},
+                }
+                try:
+                    sync_requests.post(
+                        f"{pool._mcp_base_url}/api/add-agent",
+                        json={"key": agent_key, "config": mcp_config},
+                        timeout=10,
+                    )
+                    print(f"  MCP endpoints registered for {agent_key}")
+                except Exception as e:
+                    print(f"  Warning: failed to register MCP endpoints for {agent_key}: {e}")
+
                 # Launch long-running container and create lock
                 await pool._launch_container(agent_key)
                 pool._agent_locks[agent_key] = asyncio.Lock()
@@ -884,6 +901,15 @@ async def _process_single_command(client, pool, personas, scenario_name, cmd):
                 if agent_key in RESPONSE_TIERS[old_tier]:
                     RESPONSE_TIERS[old_tier].remove(agent_key)
             personas = list(pool._personas.values())
+            # Remove MCP endpoints
+            try:
+                sync_requests.post(
+                    f"{pool._mcp_base_url}/api/remove-agent",
+                    json={"key": agent_key},
+                    timeout=5,
+                )
+            except Exception:
+                pass
             # Finalize on server
             try:
                 sync_requests.post(f"{client.base_url}/api/npcs/{agent_key}/finalize-fire", timeout=5)

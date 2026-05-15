@@ -1623,6 +1623,76 @@ async def _done_events_cursor_endpoint(request: Request) -> JSONResponse:
         return JSONResponse({"cursor": _done_event_counter})
 
 
+async def _add_agent_endpoint(request: Request) -> JSONResponse:
+    """POST /api/add-agent — mount MCP endpoints for a dynamically hired agent.
+
+    Accepts JSON: {"key": "alex", "config": {...scenario config...}}
+    The config must include "characters" with at least the given key.
+    """
+    try:
+        data = await request.json()
+    except Exception:
+        return JSONResponse({"error": "invalid json"}, status_code=400)
+
+    agent_key = data.get("key")
+    config = data.get("config")
+    if not agent_key or not config:
+        return JSONResponse({"error": "missing 'key' or 'config'"}, status_code=400)
+
+    if agent_key not in config.get("characters", {}):
+        return JSONResponse({"error": f"key '{agent_key}' not in config characters"}, status_code=400)
+
+    flask_url = request.app.state.flask_url
+    exit_stack = getattr(request.app.state, "http_exit_stack", None)
+
+    agent_mcp = create_agent_mcp(agent_key, flask_url, config)
+    sse_app = agent_mcp.sse_app()
+    http_app = agent_mcp.streamable_http_app()
+    if exit_stack is not None:
+        await exit_stack.enter_async_context(agent_mcp._session_manager.run())
+    request.app.routes.insert(0, Mount(f"/agents-http/{agent_key}", app=http_app))
+    request.app.routes.insert(0, Mount(f"/agents/{agent_key}", app=sse_app))
+
+    agent_keys = getattr(request.app.state, "agent_keys", [])
+    if agent_key not in agent_keys:
+        agent_keys.append(agent_key)
+    request.app.state.agent_keys = agent_keys
+
+    logger.info(f"Dynamically mounted MCP endpoints for agent '{agent_key}'")
+    return JSONResponse({"status": "ok", "agent": agent_key})
+
+
+async def _remove_agent_endpoint(request: Request) -> JSONResponse:
+    """POST /api/remove-agent — unmount MCP endpoints for a fired agent.
+
+    Accepts JSON: {"key": "alex"}
+    """
+    try:
+        data = await request.json()
+    except Exception:
+        return JSONResponse({"error": "invalid json"}, status_code=400)
+
+    agent_key = data.get("key")
+    if not agent_key:
+        return JSONResponse({"error": "missing 'key'"}, status_code=400)
+
+    request.app.routes[:] = [
+        r for r in request.app.routes
+        if not (
+            isinstance(r, Mount)
+            and (r.path == f"/agents/{agent_key}" or r.path == f"/agents-http/{agent_key}")
+        )
+    ]
+
+    agent_keys = getattr(request.app.state, "agent_keys", [])
+    if agent_key in agent_keys:
+        agent_keys.remove(agent_key)
+    request.app.state.agent_keys = agent_keys
+
+    logger.info(f"Removed MCP endpoints for agent '{agent_key}'")
+    return JSONResponse({"status": "ok", "agent": agent_key})
+
+
 async def _load_scenario_endpoint(request: Request) -> JSONResponse:
     """POST /api/load-scenario — dynamically load (or reload) a scenario.
 
@@ -1739,6 +1809,8 @@ def build_app(scenario_name: str | None, flask_url: str) -> Starlette:
         [
             Route("/health", _health, methods=["GET"]),
             Route("/api/load-scenario", _load_scenario_endpoint, methods=["POST"]),
+            Route("/api/add-agent", _add_agent_endpoint, methods=["POST"]),
+            Route("/api/remove-agent", _remove_agent_endpoint, methods=["POST"]),
             Route("/api/telemetry/model-end", _telemetry_model_end, methods=["POST"]),
             Route("/api/telemetry/tool-start", _telemetry_tool_start, methods=["POST"]),
             Route("/api/telemetry", _get_telemetry, methods=["GET"]),
