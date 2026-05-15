@@ -62,7 +62,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--default-agent-type",
         type=str,
         default="claude",
-        choices=["claude", "codex"],
+        choices=["claude", "codex", "modelscorp"],
         help="Default agent CLI backend when not specified per-character (default: claude)",
     )
     chat_parser.add_argument(

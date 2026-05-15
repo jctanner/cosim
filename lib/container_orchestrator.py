@@ -18,7 +18,7 @@ from pathlib import Path
 
 import requests as sync_requests
 
-from lib.agent_backends import ClaudeBackend, CodexBackend, get_backend
+from lib.agent_backends import ClaudeBackend, CodexBackend, ModelscorpBackend, get_backend
 from lib.agent_runner import format_duration, get_model_id
 from lib.chat_client import ChatClient
 from lib.personas import (
@@ -575,7 +575,12 @@ class ContainerPool:
                 self._session_ids[persona_key] = str(_uuid.uuid4())
 
         # Resolve per-agent model
-        agent_type = "codex" if isinstance(backend, CodexBackend) else "claude"
+        if isinstance(backend, CodexBackend):
+            agent_type = "codex"
+        elif isinstance(backend, ModelscorpBackend):
+            agent_type = "modelscorp"
+        else:
+            agent_type = "claude"
         effective_model = persona.get("model") or self._default_model
         effective_model_id = get_model_id(effective_model, agent_type)
 

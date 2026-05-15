@@ -30,11 +30,22 @@ _CODEX_MODELS = {
     "gpt-5.5": "gpt-5.5",
 }
 
+_MODELSCORP_MODELS = {
+    "granite-micro": "granite-4-0-micro",
+    "granite-tiny": "granite-4-0-h-tiny",
+    "granite-small": "granite-4-0-h-small",
+    "qwen3": "qwen3-14b",
+    "gemini": "gemini",
+    "claude": "claude",
+}
+
 
 def get_model_id(model_shorthand: str, agent_type: str = "claude") -> str:
     """Convert model shorthand to full model ID."""
     if agent_type == "codex":
         return _CODEX_MODELS.get(model_shorthand, model_shorthand)
+    if agent_type == "modelscorp":
+        return _MODELSCORP_MODELS.get(model_shorthand, model_shorthand)
     return _CLAUDE_MODELS.get(model_shorthand, model_shorthand)
 
 

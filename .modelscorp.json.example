@@ -1,0 +1,12 @@
+{
+  "endpoint_base": "YOUR_ENDPOINT_HOST",
+  "endpoint_type": "staging",
+  "models": {
+    "granite-4-0-micro": {"key": "YOUR_KEY_HERE"},
+    "granite-4-0-h-tiny": {"key": "YOUR_KEY_HERE"},
+    "granite-4-0-h-small": {"key": "YOUR_KEY_HERE"},
+    "qwen3-14b": {"key": "YOUR_KEY_HERE"},
+    "gemini": {"key": "YOUR_KEY_HERE", "endpoint_type": "production", "base_path": "/v1beta/openai"},
+    "claude": {"key": "YOUR_KEY_HERE"}
+  }
+}
