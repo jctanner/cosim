@@ -11,11 +11,13 @@ Logs: stderr.
 
 import argparse
 import json
+import re
 import sys
 import time
+import uuid
 
 import httpx
-from openai import OpenAI
+from openai import DefaultHttpxClient, OpenAI
 
 
 def log(msg: str) -> None:
@@ -28,6 +30,7 @@ def emit(obj: dict) -> None:
 
 # ── MCP client (raw JSON-RPC over Streamable HTTP) ─────────────────────
 
+
 class MCPClient:
     """Minimal MCP client using JSON-RPC over HTTP POST."""
 
@@ -36,7 +39,7 @@ class MCPClient:
         self._timeout = timeout
         self._session_id: str | None = None
         self._req_id = 0
-        self._client = httpx.Client(timeout=timeout)
+        self._client = httpx.Client(timeout=timeout, verify=False)
 
     def _next_id(self) -> int:
         self._req_id += 1
@@ -66,11 +69,14 @@ class MCPClient:
         return resp.json()
 
     def initialize(self) -> dict:
-        result = self._post("initialize", {
-            "protocolVersion": "2025-03-26",
-            "capabilities": {},
-            "clientInfo": {"name": "modelscorp-agent", "version": "1.0"},
-        })
+        result = self._post(
+            "initialize",
+            {
+                "protocolVersion": "2025-03-26",
+                "capabilities": {},
+                "clientInfo": {"name": "modelscorp-agent", "version": "1.0"},
+            },
+        )
         self._post("notifications/initialized")
         return result
 
@@ -96,23 +102,53 @@ class MCPClient:
 
 # ── Tool format conversion ──────────────────────────────────────────────
 
+
 def mcp_tools_to_openai(mcp_tools: list[dict]) -> list[dict]:
     """Convert MCP tool definitions to OpenAI function-calling format."""
     openai_tools = []
     for tool in mcp_tools:
         schema = tool.get("inputSchema", {"type": "object", "properties": {}})
-        openai_tools.append({
-            "type": "function",
-            "function": {
-                "name": tool["name"],
-                "description": tool.get("description", ""),
-                "parameters": schema,
-            },
-        })
+        openai_tools.append(
+            {
+                "type": "function",
+                "function": {
+                    "name": tool["name"],
+                    "description": tool.get("description", ""),
+                    "parameters": schema,
+                },
+            }
+        )
     return openai_tools
 
 
+# ── Text-based tool call parsing (for models like Granite) ──────────────
+
+_TOOL_CALL_RE = re.compile(
+    r"<tool_call>\s*(\{.*?\})\s*</tool_call>",
+    re.DOTALL,
+)
+
+
+def parse_text_tool_calls(text: str) -> list[dict]:
+    """Extract tool calls from <tool_call> tags in model text output."""
+    calls = []
+    for match in _TOOL_CALL_RE.finditer(text):
+        try:
+            parsed = json.loads(match.group(1))
+            calls.append(
+                {
+                    "id": f"call_{uuid.uuid4().hex[:12]}",
+                    "name": parsed.get("name", ""),
+                    "arguments": json.dumps(parsed.get("arguments", {})),
+                }
+            )
+        except (json.JSONDecodeError, KeyError):
+            continue
+    return calls
+
+
 # ── Config loading ──────────────────────────────────────────────────────
+
 
 def load_config(config_path: str) -> dict:
     with open(config_path) as f:
@@ -136,7 +172,14 @@ def get_api_key(config: dict, model: str) -> str:
     return key
 
 
+def get_model_id(config: dict, model: str) -> str:
+    """Get the model ID to send in API requests (may differ from the URL slug)."""
+    model_cfg = config.get("models", {}).get(model, {})
+    return model_cfg.get("model_id", model)
+
+
 # ── Agent loop ──────────────────────────────────────────────────────────
+
 
 def run_agent(
     prompt: str,
@@ -148,12 +191,18 @@ def run_agent(
 ) -> None:
     base_url = build_base_url(config, model)
     api_key = get_api_key(config, model)
+    model_id = get_model_id(config, model)
 
-    log(f"Model: {model}")
+    log(f"Model slug: {model}")
+    log(f"Model ID: {model_id}")
     log(f"Base URL: {base_url}")
     log(f"Max turns: {max_turns}")
 
-    client = OpenAI(base_url=base_url, api_key=api_key)
+    client = OpenAI(
+        base_url=base_url,
+        api_key=api_key,
+        http_client=DefaultHttpxClient(verify=False),
+    )
 
     mcp = MCPClient(mcp_url)
     try:
@@ -180,7 +229,7 @@ def run_agent(
             log(f"Turn {turns}/{max_turns} ...")
 
             kwargs: dict = {
-                "model": model,
+                "model": model_id,
                 "messages": messages,
             }
             if openai_tools:
@@ -191,7 +240,7 @@ def run_agent(
             except Exception as e:
                 error_str = str(e)
                 if "429" in error_str or "rate" in error_str.lower():
-                    wait = min(2 ** turns, 60)
+                    wait = min(2**turns, 60)
                     log(f"Rate limited, waiting {wait}s ...")
                     time.sleep(wait)
                     turns -= 1
@@ -225,9 +274,27 @@ def run_agent(
 
             messages.append(assistant_msg)
 
+            # Collect tool calls — native or parsed from text
+            native_calls = message.tool_calls or []
+            text_calls = []
+            if not native_calls and message.content:
+                text_calls = parse_text_tool_calls(message.content)
+                if text_calls:
+                    log(f"  Parsed {len(text_calls)} tool call(s) from text")
+                    assistant_msg["tool_calls"] = [
+                        {
+                            "id": tc["id"],
+                            "type": "function",
+                            "function": {"name": tc["name"], "arguments": tc["arguments"]},
+                        }
+                        for tc in text_calls
+                    ]
+
             tool_call_names = []
-            if message.tool_calls:
-                for tc in message.tool_calls:
+            has_tool_calls = bool(native_calls or text_calls)
+
+            if native_calls:
+                for tc in native_calls:
                     name = tc.function.name
                     tool_call_names.append(name)
                     try:
@@ -243,36 +310,68 @@ def run_agent(
                         result = f"Error calling tool {name}: {e}"
                         log(f"  Tool error: {e}")
 
-                    messages.append({
-                        "role": "tool",
-                        "tool_call_id": tc.id,
-                        "content": result,
-                    })
+                    messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": tc.id,
+                            "content": result,
+                        }
+                    )
 
-            emit({
-                "type": "turn",
-                "turn": turns,
-                "content": message.content or "",
-                "tool_calls": tool_call_names,
-            })
+            elif text_calls:
+                for tc in text_calls:
+                    name = tc["name"]
+                    tool_call_names.append(name)
+                    try:
+                        args = json.loads(tc["arguments"])
+                    except (json.JSONDecodeError, TypeError):
+                        args = {}
 
-            if choice.finish_reason == "stop" or not message.tool_calls:
+                    log(f"  Tool: {name}({json.dumps(args, ensure_ascii=False)[:200]})")
+
+                    try:
+                        result = mcp.call_tool(name, args)
+                    except Exception as e:
+                        result = f"Error calling tool {name}: {e}"
+                        log(f"  Tool error: {e}")
+
+                    messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": tc["id"],
+                            "content": result,
+                        }
+                    )
+
+            emit(
+                {
+                    "type": "turn",
+                    "turn": turns,
+                    "content": message.content or "",
+                    "tool_calls": tool_call_names,
+                }
+            )
+
+            if not has_tool_calls:
                 log("Model finished (no more tool calls)")
                 break
 
-        emit({
-            "type": "result",
-            "response_text": last_text,
-            "turns": turns,
-            "input_tokens": total_input_tokens,
-            "output_tokens": total_output_tokens,
-        })
+        emit(
+            {
+                "type": "result",
+                "response_text": last_text,
+                "turns": turns,
+                "input_tokens": total_input_tokens,
+                "output_tokens": total_output_tokens,
+            }
+        )
 
     finally:
         mcp.close()
 
 
 # ── CLI ─────────────────────────────────────────────────────────────────
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Models.Corp agent harness")
@@ -300,14 +399,16 @@ def main() -> None:
         )
     except Exception as e:
         log(f"FATAL: {e}")
-        emit({
-            "type": "result",
-            "response_text": "",
-            "turns": 0,
-            "input_tokens": 0,
-            "output_tokens": 0,
-            "error": str(e),
-        })
+        emit(
+            {
+                "type": "result",
+                "response_text": "",
+                "turns": 0,
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "error": str(e),
+            }
+        )
         sys.exit(1)
 
 
