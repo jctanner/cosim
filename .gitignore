@@ -10,3 +10,5 @@ build/
 .venv/
 application_default_credentials.json
 backups/
+confidential/
+.modelscorp.json
