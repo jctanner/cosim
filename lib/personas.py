@@ -482,6 +482,7 @@ def build_initial_prompt(persona_key: str, channels: dict[str, dict] | None = No
 
     # External channel description and participants from scenario settings
     from lib.scenario_loader import get_settings
+
     _settings = get_settings()
     ext_channel_desc = _settings.get(
         "external_channel_prompt",
@@ -757,6 +758,7 @@ def build_turn_prompt(
 
     if is_external:
         from lib.scenario_loader import get_settings
+
         _ext_prompt = get_settings().get(
             "external_channel_prompt",
             "This is an external channel visible to people outside your team. "
@@ -942,6 +944,7 @@ def build_v3_system_prompt(persona_key: str, channels: dict[str, dict] | None = 
 
     # External channel description and participants from scenario settings
     from lib.scenario_loader import get_settings
+
     _settings = get_settings()
     ext_channel_desc = _settings.get(
         "external_channel_prompt",

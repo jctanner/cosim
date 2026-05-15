@@ -1259,21 +1259,20 @@ def _register_meta_tools(
         # Fetch recent memos
         all_memos = await _flask("GET", "/api/memos/threads", flask_url, params={"include_posts": "1"})
         recent_memos = [
-            t for t in all_memos
+            t
+            for t in all_memos
             if t.get("created_at", 0) > cutoff or t.get("last_post_at", 0) and t["last_post_at"] > cutoff
         ]
 
         # Fetch recent emails
         all_emails = await _flask("GET", "/api/emails", flask_url)
-        recent_emails = [
-            e for e in all_emails
-            if e.get("timestamp", 0) > cutoff
-        ]
+        recent_emails = [e for e in all_emails if e.get("timestamp", 0) > cutoff]
 
         # Fetch recent blog posts with replies
         all_blog_posts = await _flask("GET", "/api/blog/posts", flask_url, params={"include_replies": "1"})
         recent_blog = [
-            p for p in all_blog_posts
+            p
+            for p in all_blog_posts
             if p.get("created_at", 0) > cutoff or p.get("last_reply_at", 0) and p["last_reply_at"] > cutoff
         ]
 
@@ -1677,11 +1676,9 @@ async def _remove_agent_endpoint(request: Request) -> JSONResponse:
         return JSONResponse({"error": "missing 'key'"}, status_code=400)
 
     request.app.routes[:] = [
-        r for r in request.app.routes
-        if not (
-            isinstance(r, Mount)
-            and (r.path == f"/agents/{agent_key}" or r.path == f"/agents-http/{agent_key}")
-        )
+        r
+        for r in request.app.routes
+        if not (isinstance(r, Mount) and (r.path == f"/agents/{agent_key}" or r.path == f"/agents-http/{agent_key}"))
     ]
 
     agent_keys = getattr(request.app.state, "agent_keys", [])
@@ -1717,7 +1714,8 @@ async def _load_scenario_endpoint(request: Request) -> JSONResponse:
 
     # Remove any previously mounted agent routes
     request.app.routes[:] = [
-        r for r in request.app.routes
+        r
+        for r in request.app.routes
         if not (isinstance(r, Mount) and (r.path.startswith("/agents/") or r.path.startswith("/agents-http/")))
     ]
 
