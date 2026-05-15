@@ -1,0 +1,75 @@
+name: "Codex Test"
+description: "Mixed-backend scenario for testing Claude and Codex agents with different models"
+
+settings:
+  default_agent_type: "claude"
+  default_model: "sonnet"
+  agent_builtin_tools: []
+
+characters:
+  engineer:
+    display_name: "Alex (Engineer)"
+    character_file: "characters/alex-engineer.md"
+    team_description: "software development, debugging, code review"
+    max_words: 200
+    agent_type: "codex"
+    model: "gpt-5.4-mini"
+
+  designer:
+    display_name: "Sam (Designer)"
+    character_file: "characters/sam-designer.md"
+    team_description: "UI/UX design, frontend, user research"
+    max_words: 200
+    agent_type: "codex"
+    model: "gpt-5.5"
+
+  pm:
+    display_name: "Jordan (PM)"
+    character_file: "characters/jordan-pm.md"
+    team_description: "product management, roadmap, prioritization"
+    max_words: 200
+    agent_type: "claude"
+    model: "haiku"
+
+  lead:
+    display_name: "Casey (Tech Lead)"
+    character_file: "characters/casey-lead.md"
+    team_description: "architecture, technical direction, mentoring"
+    max_words: 200
+    agent_type: "claude"
+    model: "sonnet"
+
+  director:
+    display_name: "Morgan (Director)"
+    character_file: "characters/morgan-director.md"
+    team_description: "engineering leadership, strategy, cross-team coordination"
+    max_words: 200
+    agent_type: "claude"
+    model: "opus"
+
+channels:
+  "#general":
+    description: "General discussion"
+    is_external: false
+
+memberships:
+  engineer: ["#general"]
+  designer: ["#general"]
+  pm: ["#general"]
+  lead: ["#general"]
+  director: ["#general"]
+
+response_tiers:
+  1: ["engineer", "designer", "pm"]
+  2: ["lead"]
+  3: ["director"]
+
+folders:
+  shared:
+    type: "shared"
+    description: "Shared team documents"
+
+folder_access:
+  shared: ["engineer", "designer", "pm", "lead", "director"]
+
+events: []
