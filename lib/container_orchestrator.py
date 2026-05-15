@@ -6,7 +6,6 @@ signal_done events from the MCP server rather than waiting for process exit.
 """
 
 import asyncio
-import json
 import logging
 import os
 import platform as _platform
