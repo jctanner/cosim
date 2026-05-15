@@ -295,6 +295,10 @@ class ModelscorpBackend:
 
     def __init__(self) -> None:
         self._mcp_urls: dict[str, str] = {}
+        self._allowed_tools: dict[str, list[str]] = {}
+
+    def set_allowed_tools(self, persona_key: str, tools: list[str]) -> None:
+        self._allowed_tools[persona_key] = tools
 
     def build_exec_command(
         self,
@@ -310,7 +314,7 @@ class ModelscorpBackend:
     ) -> list[str]:
         persona_key = container_name.removeprefix("agent-")
         mcp_url = self._mcp_urls.get(persona_key, "")
-        return [
+        cmd = [
             "podman",
             "exec",
             container_name,
@@ -329,6 +333,10 @@ class ModelscorpBackend:
             "--config",
             "/home/agent/.modelscorp.json",
         ]
+        agent_tools = self._allowed_tools.get(persona_key)
+        if agent_tools:
+            cmd += ["--allowed-tools", ",".join(agent_tools)]
+        return cmd
 
     def parse_output(self, stdout: str) -> tuple[str, str, dict]:
         response_text = ""

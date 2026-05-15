@@ -54,7 +54,10 @@ class MCPClient:
         if params:
             body["params"] = params
 
-        headers: dict[str, str] = {"Content-Type": "application/json"}
+        headers: dict[str, str] = {
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream",
+        }
         if self._session_id:
             headers["mcp-session-id"] = self._session_id
 
@@ -135,11 +138,14 @@ def parse_text_tool_calls(text: str) -> list[dict]:
     for match in _TOOL_CALL_RE.finditer(text):
         try:
             parsed = json.loads(match.group(1))
+            raw_args = parsed.get("arguments", {})
+            if isinstance(raw_args, str):
+                raw_args = json.loads(raw_args)
             calls.append(
                 {
                     "id": f"call_{uuid.uuid4().hex[:12]}",
                     "name": parsed.get("name", ""),
-                    "arguments": json.dumps(parsed.get("arguments", {})),
+                    "arguments": json.dumps(raw_args),
                 }
             )
         except (json.JSONDecodeError, KeyError):
@@ -161,7 +167,7 @@ def build_base_url(config: dict, model: str) -> str:
     model_cfg = config.get("models", {}).get(model, {})
     endpoint_type = model_cfg.get("endpoint_type", config.get("endpoint_type", "staging"))
     base_path = model_cfg.get("base_path", "")
-    return f"https://{model}--{endpoint_type}.{endpoint_base}:443{base_path}/v1"
+    return f"https://{model}--{endpoint_type}.{endpoint_base}:443{base_path or '/v1'}"
 
 
 def get_api_key(config: dict, model: str) -> str:
@@ -188,6 +194,7 @@ def run_agent(
     model: str,
     max_turns: int,
     config: dict,
+    allowed_tools: list[str] | None = None,
 ) -> None:
     base_url = build_base_url(config, model)
     api_key = get_api_key(config, model)
@@ -211,6 +218,9 @@ def run_agent(
 
         log("Fetching MCP tools ...")
         mcp_tools = mcp.list_tools()
+        if allowed_tools:
+            mcp_tools = [t for t in mcp_tools if t["name"] in allowed_tools]
+            log(f"Filtered to {len(mcp_tools)} allowed tools")
         openai_tools = mcp_tools_to_openai(mcp_tools)
         log(f"Discovered {len(openai_tools)} tools")
 
@@ -381,12 +391,14 @@ def main() -> None:
     parser.add_argument("--model", required=True, help="Model slug (e.g. granite-4-0-micro)")
     parser.add_argument("--max-turns", type=int, default=50, help="Max agentic turns")
     parser.add_argument("--config", required=True, help="Path to .modelscorp.json config")
+    parser.add_argument("--allowed-tools", default="", help="Comma-separated list of allowed tool names (empty=all)")
     args = parser.parse_args()
 
     with open(args.system_prompt_file) as f:
         system_prompt = f.read()
 
     config = load_config(args.config)
+    allowed_tools = [t.strip() for t in args.allowed_tools.split(",") if t.strip()] or None
 
     try:
         run_agent(
@@ -396,6 +408,7 @@ def main() -> None:
             model=args.model,
             max_turns=args.max_turns,
             config=config,
+            allowed_tools=allowed_tools,
         )
     except Exception as e:
         log(f"FATAL: {e}")

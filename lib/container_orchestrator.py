@@ -362,10 +362,13 @@ class ContainerPool:
 
         # Resolve per-agent backend
         settings = get_settings()
-        self._backends: dict[str, ClaudeBackend | CodexBackend] = {}
+        self._backends: dict[str, ClaudeBackend | CodexBackend | ModelscorpBackend] = {}
         for key, persona in self._personas.items():
             agent_type = persona.get("agent_type") or settings.get("default_agent_type") or default_agent_type
-            self._backends[key] = get_backend(agent_type)
+            backend = get_backend(agent_type)
+            if isinstance(backend, ModelscorpBackend) and persona.get("allowed_tools"):
+                backend.set_allowed_tools(key, persona["allowed_tools"])
+            self._backends[key] = backend
 
     async def start(self, build_system_prompt_fn, on_progress=None) -> None:
         """Validate prerequisites, generate configs, and launch long-running containers.
@@ -411,7 +414,12 @@ class ContainerPool:
             )
 
             # Initialize log file
-            agent_type = "codex" if isinstance(backend, CodexBackend) else "claude"
+            if isinstance(backend, CodexBackend):
+                agent_type = "codex"
+            elif isinstance(backend, ModelscorpBackend):
+                agent_type = "modelscorp"
+            else:
+                agent_type = "claude"
             effective_model = persona.get("model") or self._default_model
             effective_model_id = get_model_id(effective_model, agent_type)
             log_file = self._log_dir / f"{display_name.replace('/', '_').replace(' ', '_')}.log"
@@ -857,6 +865,8 @@ async def _process_single_command(client, pool, personas, scenario_name, cmd):
                     persona.get("agent_type") or get_settings().get("default_agent_type") or pool._default_agent_type
                 )
                 backend = get_backend(agent_type)
+                if isinstance(backend, ModelscorpBackend) and persona.get("allowed_tools"):
+                    backend.set_allowed_tools(agent_key, persona["allowed_tools"])
                 pool._backends[agent_key] = backend
 
                 # Generate config files via backend

@@ -1462,6 +1462,9 @@ def create_agent_mcp(
         # Disable DNS rebinding protection — containers connect via gateway IP
         # or host.containers.internal, not 127.0.0.1
         transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
+        # Return plain JSON instead of SSE streams for Streamable HTTP POST
+        # responses — the Models.Corp agent harness uses simple httpx POST calls.
+        json_response=True,
     )
 
     reg_args = (server, agent_key, display_name, flask_url, config)

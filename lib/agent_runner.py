@@ -35,6 +35,7 @@ _MODELSCORP_MODELS = {
     "granite-tiny": "granite-4-0-h-tiny",
     "granite-small": "granite-4-0-h-small",
     "qwen3": "qwen3-14b",
+    "llama-70b": "llama-3-3-70b-instruct-fp8-dynamic",
     "gemini": "gemini",
     "claude": "claude",
 }

@@ -48,6 +48,8 @@ def load_scenario(scenario_name: str) -> None:
     # --- Populate personas.PERSONAS ---
     personas_mod.PERSONAS.clear()
     for key, char_info in config["characters"].items():
+        if char_info.get("enabled") is False:
+            continue
         char_file = char_info.get("character_file")
         if not char_file:
             # Default: try .CS.md first, fall back to .md
@@ -68,6 +70,7 @@ def load_scenario(scenario_name: str) -> None:
             "avatar": char_info.get("avatar"),
             "agent_type": char_info.get("agent_type"),
             "model": char_info.get("model"),
+            "allowed_tools": char_info.get("allowed_tools"),
         }
 
     # --- Populate personas.DEFAULT_CHANNELS ---

@@ -1,5 +1,5 @@
-name: "Codex Test"
-description: "Mixed-backend scenario for testing Claude and Codex agents with different models"
+name: "Model Test"
+description: "Mixed-backend scenario for testing Claude, Codex, and Models.Corp agents with different models"
 
 settings:
   default_agent_type: "claude"
@@ -7,45 +7,139 @@ settings:
   agent_builtin_tools: []
 
 characters:
-  engineer:
-    display_name: "Alex (Engineer)"
-    character_file: "characters/alex-engineer.md"
-    team_description: "software development, debugging, code review"
-    max_words: 200
-    agent_type: "codex"
-    model: "gpt-5.4-mini"
+  # engineer:
+  #   display_name: "Codey (Codex GPT-5.4-mini)"
+  #   character_file: "characters/codey-engineer.md"
+  #   team_description: "software development, debugging, code review"
+  #   max_words: 200
+  #   agent_type: "codex"
+  #   model: "gpt-5.4-mini"
 
-  designer:
-    display_name: "Sam (Designer)"
-    character_file: "characters/sam-designer.md"
-    team_description: "UI/UX design, frontend, user research"
-    max_words: 200
-    agent_type: "codex"
-    model: "gpt-5.5"
+  # designer:
+  #   display_name: "Dexy (Codex GPT-5.5)"
+  #   character_file: "characters/dexy-designer.md"
+  #   team_description: "UI/UX design, frontend, user research"
+  #   max_words: 200
+  #   agent_type: "codex"
+  #   model: "gpt-5.5"
 
-  pm:
-    display_name: "Jordan (PM)"
-    character_file: "characters/jordan-pm.md"
-    team_description: "product management, roadmap, prioritization"
-    max_words: 200
-    agent_type: "claude"
-    model: "haiku"
+  # pm:
+  #   display_name: "Harry (Claude Haiku)"
+  #   character_file: "characters/harry-pm.md"
+  #   team_description: "product management, roadmap, prioritization"
+  #   max_words: 200
+  #   agent_type: "claude"
+  #   model: "haiku"
 
-  lead:
-    display_name: "Casey (Tech Lead)"
-    character_file: "characters/casey-lead.md"
-    team_description: "architecture, technical direction, mentoring"
-    max_words: 200
-    agent_type: "claude"
-    model: "sonnet"
+  # lead:
+  #   display_name: "Sonny (Claude Sonnet)"
+  #   character_file: "characters/sonny-lead.md"
+  #   team_description: "architecture, technical direction, mentoring"
+  #   max_words: 200
+  #   agent_type: "claude"
+  #   model: "sonnet"
 
-  director:
-    display_name: "Morgan (Director)"
-    character_file: "characters/morgan-director.md"
-    team_description: "engineering leadership, strategy, cross-team coordination"
+  # director:
+  #   display_name: "Opie (Claude Opus)"
+  #   character_file: "characters/opie-director.md"
+  #   team_description: "engineering leadership, strategy, cross-team coordination"
+  #   max_words: 200
+  #   agent_type: "claude"
+  #   model: "opus"
+
+  sre:
+    display_name: "Rocky (Granite 4.0-Micro)"
+    character_file: "characters/rocky-sre.md"
+    team_description: "site reliability, infrastructure, monitoring, incident response"
     max_words: 200
-    agent_type: "claude"
-    model: "opus"
+    agent_type: "modelscorp"
+    model: "granite-4-0-micro"
+    allowed_tools:
+      - get_messages
+      - post_message
+      - get_my_dms
+      - send_dm
+      - get_my_channels
+      - join_channel
+      - get_channel_members
+      - whoami
+      - who_is
+      - get_recent_activity
+      - signal_done
+
+  devops:
+    display_name: "Gabby (Granite 3.3-8B)"
+    character_file: "characters/gabby-devops.md"
+    team_description: "CI/CD, container orchestration, infrastructure as code, deployments"
+    max_words: 200
+    agent_type: "modelscorp"
+    model: "granite-3-3-8b-instruct"
+    enabled: false
+
+  devops2:
+    display_name: "Gabby (Granite 4.0-Tiny)"
+    character_file: "characters/gabby-devops-tiny.md"
+    team_description: "CI/CD, container orchestration, infrastructure as code, deployments"
+    max_words: 200
+    agent_type: "modelscorp"
+    model: "granite-4-0-h-tiny"
+
+  qa:
+    display_name: "Quinn (Qwen 3-14B)"
+    character_file: "characters/quinn-qa.md"
+    team_description: "testing, quality assurance, test automation, edge cases"
+    max_words: 200
+    agent_type: "modelscorp"
+    model: "qwen3-14b"
+    allowed_tools:
+      - get_messages
+      - post_message
+      - get_my_dms
+      - send_dm
+      - get_my_channels
+      - join_channel
+      - get_channel_members
+      - whoami
+      - who_is
+      - get_recent_activity
+      - signal_done
+
+  analyst:
+    display_name: "Misty (Mistral 7B)"
+    character_file: "characters/misty-analyst.md"
+    team_description: "data analysis, metrics, dashboards, data pipelines"
+    max_words: 200
+    agent_type: "modelscorp"
+    model: "mistral-7b-instruct-v0-3"
+    enabled: false
+    allowed_tools:
+      - get_messages
+      - post_message
+      - get_my_dms
+      - send_dm
+      - get_my_channels
+      - join_channel
+      - get_channel_members
+      - whoami
+      - who_is
+      - get_recent_activity
+      - signal_done
+
+  analyst2:
+    display_name: "Lana (Llama 3.3-70B)"
+    character_file: "characters/lana-analyst.md"
+    team_description: "data analysis, metrics, dashboards, data pipelines"
+    max_words: 200
+    agent_type: "modelscorp"
+    model: "llama-3-3-70b-instruct-fp8-dynamic"
+
+  security:
+    display_name: "Gemma (Gemini 2.5-Pro)"
+    character_file: "characters/gemma-security.md"
+    team_description: "application security, vulnerability management, compliance"
+    max_words: 200
+    agent_type: "modelscorp"
+    model: "gemini"
 
 channels:
   "#general":
@@ -53,16 +147,21 @@ channels:
     is_external: false
 
 memberships:
-  engineer: ["#general"]
-  designer: ["#general"]
-  pm: ["#general"]
-  lead: ["#general"]
-  director: ["#general"]
+  # engineer: ["#general"]
+  # designer: ["#general"]
+  # pm: ["#general"]
+  # lead: ["#general"]
+  # director: ["#general"]
+  sre: ["#general"]
+  # devops: ["#general"]
+  devops2: ["#general"]
+  qa: ["#general"]
+  # analyst: ["#general"]
+  analyst2: ["#general"]
+  security: ["#general"]
 
 response_tiers:
-  1: ["engineer", "designer", "pm"]
-  2: ["lead"]
-  3: ["director"]
+  1: ["sre", "devops2", "qa", "analyst2", "security"]
 
 folders:
   shared:
@@ -70,6 +169,6 @@ folders:
     description: "Shared team documents"
 
 folder_access:
-  shared: ["engineer", "designer", "pm", "lead", "director"]
+  shared: ["sre", "devops2", "qa", "analyst2", "security"]
 
 events: []
