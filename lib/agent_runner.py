@@ -12,19 +12,30 @@ def get_model_display_name(model_shorthand: str) -> str:
     display_names = {
         "sonnet": "Claude Sonnet 4.5",
         "opus": "Claude Opus 4.6",
-        "haiku": "Claude Haiku 3.5",
+        "haiku": "Claude Haiku 4.5",
     }
     return display_names.get(model_shorthand, model_shorthand)
 
 
-def get_model_id(model_shorthand: str) -> str:
+_CLAUDE_MODELS = {
+    "sonnet": "claude-sonnet-4-5",
+    "opus": "claude-opus-4-6",
+    "haiku": "haiku",
+}
+
+_CODEX_MODELS = {
+    "o3": "o3",
+    "o4-mini": "o4-mini",
+    "gpt-4.1": "gpt-4.1",
+    "gpt-5.5": "gpt-5.5",
+}
+
+
+def get_model_id(model_shorthand: str, agent_type: str = "claude") -> str:
     """Convert model shorthand to full model ID."""
-    model_mapping = {
-        "sonnet": "claude-sonnet-4-5",
-        "opus": "claude-opus-4-6",
-        "haiku": "claude-haiku-3-5",
-    }
-    return model_mapping.get(model_shorthand, model_shorthand)
+    if agent_type == "codex":
+        return _CODEX_MODELS.get(model_shorthand, model_shorthand)
+    return _CLAUDE_MODELS.get(model_shorthand, model_shorthand)
 
 
 def format_duration(seconds: float) -> str:

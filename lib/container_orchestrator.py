@@ -19,6 +19,7 @@ from pathlib import Path
 
 import requests as sync_requests
 
+from lib.agent_backends import ClaudeBackend, CodexBackend, get_backend
 from lib.agent_runner import format_duration, get_model_id
 from lib.chat_client import ChatClient
 from lib.personas import (
@@ -43,6 +44,7 @@ _FORWARD_ENV_VARS = [
     "CLOUD_ML_REGION",
     "ANTHROPIC_VERTEX_PROJECT_ID",
     "ANTHROPIC_API_KEY",  # non-Vertex usage
+    "OPENAI_API_KEY",  # codex API key auth (if used)
 ]
 
 
@@ -328,10 +330,11 @@ class ContainerPool:
         max_turns: int = 50,
         done_timeout: int = 120,
         use_sessions: bool = False,
+        default_agent_type: str = "claude",
     ):
         self._personas: dict[str, dict] = {p["name"]: p for p in personas}
-        self._model = model
-        self._model_id = get_model_id(model)
+        self._default_model = model
+        self._default_agent_type = default_agent_type
         self._log_dir = log_dir
         self._mcp_host = mcp_host
         self._mcp_port = mcp_port
@@ -340,7 +343,7 @@ class ContainerPool:
         self._max_turns = max_turns
         self._done_timeout = done_timeout
         self._use_sessions = use_sessions
-        self._session_ids: dict[str, str] = {}  # persona_key -> session UUID
+        self._session_ids: dict[str, str] = {}  # persona_key -> session UUID/thread_id
         self._session_started: set[str] = set()  # personas that completed first turn
         self._active_containers: dict[str, str] = {}  # persona_key -> container_name
         self._agent_locks: dict[str, asyncio.Lock] = {}  # per-agent mutex
@@ -350,10 +353,20 @@ class ContainerPool:
 
         agent_builtin = get_settings().get("agent_builtin_tools", ["WebSearch", "WebFetch"])
         self._allowed_tools_str = ",".join(mcp_tools + agent_builtin)
-        self._config_files: dict[str, Path] = {}  # persona_key -> mcp config path
-        self._prompt_files: dict[str, Path] = {}  # persona_key -> system prompt path
+        self._backend_configs: dict[str, dict[str, Path]] = {}  # persona_key -> config files
         self._env_flags = _collect_env_vars()
         self._gcp_creds_path = _find_and_stage_gcp_credentials()
+
+        # Resolve per-agent backend
+        settings = get_settings()
+        self._backends: dict[str, ClaudeBackend | CodexBackend] = {}
+        for key, persona in self._personas.items():
+            agent_type = (
+                persona.get("agent_type")
+                or settings.get("default_agent_type")
+                or default_agent_type
+            )
+            self._backends[key] = get_backend(agent_type)
 
     async def start(self, build_system_prompt_fn, on_progress=None) -> None:
         """Validate prerequisites, generate configs, and launch long-running containers.
@@ -387,30 +400,22 @@ class ContainerPool:
             if on_progress:
                 on_progress(i, total, key, display_name, "starting")
 
-            # Generate MCP config file
-            mcp_config = {
-                "mcpServers": {
-                    "sim": {
-                        "type": "sse",
-                        "url": f"http://{self._mcp_host}:{self._mcp_port}/agents/{key}/sse",
-                    }
-                }
-            }
-            config_path = TMP_DIR / f"mcp-config-{key}.json"
-            config_path.write_text(json.dumps(mcp_config, indent=2))
-            self._config_files[key] = config_path
-
-            # Generate system prompt file
-            prompt_path = TMP_DIR / f"system-prompt-{key}.md"
+            # Delegate config file generation to the agent backend
+            backend = self._backends[key]
             prompt_content = build_system_prompt_fn(key)
-            prompt_path.write_text(prompt_content)
-            self._prompt_files[key] = prompt_path
+            self._backend_configs[key] = backend.generate_config_files(
+                key, prompt_content, self._mcp_host, self._mcp_port, TMP_DIR,
+            )
 
             # Initialize log file
+            agent_type = "codex" if isinstance(backend, CodexBackend) else "claude"
+            effective_model = persona.get("model") or self._default_model
+            effective_model_id = get_model_id(effective_model, agent_type)
             log_file = self._log_dir / f"{display_name.replace('/', '_').replace(' ', '_')}.log"
             with open(log_file, "w") as f:
                 f.write(f"Agent: {display_name}\n")
-                f.write(f"Model: {self._model} ({self._model_id})\n")
+                f.write(f"Backend: {agent_type}\n")
+                f.write(f"Model: {effective_model} ({effective_model_id})\n")
                 f.write("Mode: container (v3 — long-running)\n")
                 f.write(f"Image: {self._container_image}\n")
                 f.write(f"{'=' * 60}\n\n")
@@ -434,38 +439,29 @@ class ContainerPool:
         Removes any leftover container from a previous session first.
         """
         container_name = f"agent-{persona_key}"
-        config_path = self._config_files[persona_key]
-        prompt_path = self._prompt_files[persona_key]
+        backend = self._backends[persona_key]
+        backend_configs = self._backend_configs.get(persona_key, {})
 
         # Cleanup leftover container from previous session
         rm_proc = await asyncio.create_subprocess_exec(
-            "podman",
-            "rm",
-            "-f",
-            container_name,
+            "podman", "rm", "-f", container_name,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
         await rm_proc.communicate()
 
+        # Build volume mounts from the backend
+        volume_flags = backend.get_volume_mounts(backend_configs)
+
         # Launch long-running container (CMD from Dockerfile: sleep infinity)
         cmd = [
-            "podman",
-            "run",
-            "-d",
-            "--name",
-            container_name,
-            "-e",
-            f"AGENT_PERSONA_KEY={persona_key}",
-            "-e",
-            f"MCP_SERVER_URL={self._mcp_host}:{self._mcp_port}",
-            "-e",
-            "GCE_METADATA_HOST=127.0.0.1",
+            "podman", "run", "-d",
+            "--name", container_name,
+            "-e", f"AGENT_PERSONA_KEY={persona_key}",
+            "-e", f"MCP_SERVER_URL={self._mcp_host}:{self._mcp_port}",
+            "-e", "GCE_METADATA_HOST=127.0.0.1",
             *self._env_flags,
-            "-v",
-            f"{config_path.resolve()}:/home/agent/.mcp-config.json:ro,Z",
-            "-v",
-            f"{prompt_path.resolve()}:/home/agent/system-prompt.md:ro,Z",
+            *volume_flags,
             self._container_image,
         ]
 
@@ -480,12 +476,8 @@ class ContainerPool:
 
         # Verify container is running
         check_proc = await asyncio.create_subprocess_exec(
-            "podman",
-            "container",
-            "inspect",
-            container_name,
-            "--format",
-            "{{.State.Status}}",
+            "podman", "container", "inspect", container_name,
+            "--format", "{{.State.Status}}",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -496,28 +488,40 @@ class ContainerPool:
                 f"Container {container_name} is not running (status: {status}). Check: podman logs {container_name}"
             )
 
-        # Copy GCP credentials into container (avoids volume mount permission/SELinux issues)
-        if self._gcp_creds_path:
+        # Copy credentials into container (backend-specific)
+        # Claude: GCP credentials; Codex: auth.json
+        if self._gcp_creds_path and isinstance(backend, ClaudeBackend):
             creds_dest = f"{container_name}:/home/agent/.config/gcloud/application_default_credentials.json"
             cp_proc = await asyncio.create_subprocess_exec(
-                "podman",
-                "cp",
-                self._gcp_creds_path,
-                creds_dest,
+                "podman", "cp", self._gcp_creds_path, creds_dest,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
             await cp_proc.communicate()
-            # Fix ownership so the agent user can read it
             chown_proc = await asyncio.create_subprocess_exec(
-                "podman",
-                "exec",
-                "--user",
-                "root",
-                container_name,
-                "chown",
-                "agent:agent",
+                "podman", "exec", "--user", "root", container_name,
+                "chown", "agent:agent",
                 "/home/agent/.config/gcloud/application_default_credentials.json",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            await chown_proc.communicate()
+
+        for src_path, dest_path in backend.get_credential_sources():
+            staged = TMP_DIR / f"cred-{persona_key}-{Path(src_path).name}"
+            shutil.copy2(src_path, staged)
+            cp_proc = await asyncio.create_subprocess_exec(
+                "podman", "cp", str(staged), f"{container_name}:{dest_path}",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            await cp_proc.communicate()
+
+        # Fix ownership for codex home directory
+        if isinstance(backend, CodexBackend):
+            chown_proc = await asyncio.create_subprocess_exec(
+                "podman", "exec", "--user", "root", container_name,
+                "chown", "-R", "agent:agent", "/home/agent/.codex/",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
@@ -542,6 +546,7 @@ class ContainerPool:
         persona = self._personas[persona_key]
         display_name = persona["display_name"]
         container_name = self._active_containers.get(persona_key)
+        backend = self._backends[persona_key]
 
         if not container_name:
             return {
@@ -561,41 +566,30 @@ class ContainerPool:
 
         resuming = self._use_sessions and persona_key in self._session_started
 
+        # For Claude: pre-assign session UUID; for Codex: captured from output
         if self._use_sessions and persona_key not in self._session_ids:
-            self._session_ids[persona_key] = str(_uuid.uuid4())
+            if isinstance(backend, ClaudeBackend):
+                self._session_ids[persona_key] = str(_uuid.uuid4())
 
-        cmd = [
-            "podman",
-            "exec",
-            container_name,
-            "claude",
-        ]
+        # Resolve per-agent model
+        agent_type = "codex" if isinstance(backend, CodexBackend) else "claude"
+        effective_model = persona.get("model") or self._default_model
+        effective_model_id = get_model_id(effective_model, agent_type)
 
-        if resuming:
-            cmd += ["--resume", self._session_ids[persona_key]]
+        cmd = backend.build_exec_command(
+            container_name=container_name,
+            turn_prompt=turn_prompt,
+            resuming=resuming,
+            session_id=self._session_ids.get(persona_key),
+            model_id=effective_model_id,
+            max_turns=self._max_turns,
+            allowed_tools_str=self._allowed_tools_str,
+            use_sessions=self._use_sessions,
+        )
 
-        cmd += ["-p", turn_prompt]
-
-        if not resuming:
-            cmd += ["--system-prompt-file", "/home/agent/system-prompt.md"]
-            if self._use_sessions:
-                cmd += ["--session-id", self._session_ids[persona_key]]
-
-        cmd += [
-            "--mcp-config",
-            "/home/agent/.mcp-config.json",
-            "--allowedTools",
-            self._allowed_tools_str,
-            "--output-format",
-            "stream-json",
-            "--verbose",
-            "--model",
-            self._model_id,
-            "--max-turns",
-            str(self._max_turns),
-            "--permission-mode",
-            "dontAsk",
-        ]
+        # Log the actual command for debugging
+        with open(log_file, "a") as f:
+            f.write(f"CMD: {' '.join(cmd)}\n\n")
 
         start_time = _time.monotonic()
 
@@ -613,7 +607,6 @@ class ContainerPool:
                 )
             except asyncio.TimeoutError:
                 print(f"  {display_name}: exec timeout ({self._container_timeout}s), killing process...")
-                # Kill the exec'd process, not the container
                 try:
                     proc.kill()
                     await proc.communicate()
@@ -653,65 +646,21 @@ class ContainerPool:
             if success and self._use_sessions:
                 self._session_started.add(persona_key)
 
-            # Try to extract response and thinking from JSON output
-            response_text = ""
-            thinking_text = ""
-            if stdout_text.strip():
-                # Parse stream-json output: one JSON object per line
-                thinking_parts = []
-                for line in stdout_text.strip().split("\n"):
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        obj = json.loads(line)
-                    except (json.JSONDecodeError, ValueError):
-                        continue
-                    obj_type = obj.get("type", "")
-                    if obj_type == "result":
-                        response_text = obj.get("result", "")
-                    elif obj_type == "assistant":
-                        # Extract thinking blocks from assistant messages
-                        msg = obj.get("message", {})
-                        for block in msg.get("content", []):
-                            if isinstance(block, dict):
-                                if block.get("type") == "thinking" and block.get("thinking"):
-                                    thinking_parts.append(block["thinking"])
-                thinking_text = "\n\n".join(thinking_parts)
-                # Append turn summary from the result object
-                for line in stdout_text.strip().split("\n"):
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        obj = json.loads(line)
-                    except (json.JSONDecodeError, ValueError):
-                        continue
-                    if obj.get("type") == "result":
-                        num_turns = obj.get("num_turns", 0)
-                        cost = obj.get("total_cost_usd", 0)
-                        usage = obj.get("usage", {})
-                        out_tokens = usage.get("output_tokens", 0)
-                        summary_parts = []
-                        if num_turns:
-                            summary_parts.append(f"{num_turns} tool call(s)")
-                        if out_tokens:
-                            summary_parts.append(f"{out_tokens} output tokens")
-                        if cost:
-                            summary_parts.append(f"${cost:.4f}")
-                        if summary_parts:
-                            thinking_text = (
-                                (thinking_text + "\n\n---\n" + ", ".join(summary_parts))
-                                if thinking_text
-                                else ", ".join(summary_parts)
-                            )
-                        break
+            # Delegate output parsing to the backend
+            response_text, thinking_text, metadata = backend.parse_output(stdout_text)
+
+            # Codex: capture thread_id for session resume
+            if isinstance(backend, CodexBackend) and "thread_id" in metadata:
+                self._session_ids[persona_key] = metadata["thread_id"]
 
             if not success:
                 print(f"  {display_name}: exec exited with code {exit_code} ({format_duration(elapsed)})")
                 if stderr_text:
                     for line in stderr_text.strip().split("\n")[:3]:
                         print(f"    stderr: {line}")
+                # Clear stale session ID so next attempt gets a fresh one
+                self._session_ids.pop(persona_key, None)
+                self._session_started.discard(persona_key)
 
             return {
                 "name": display_name,
@@ -850,6 +799,8 @@ async def _process_single_command(client, pool, personas, scenario_name, cmd):
                     "display_name": npc_data["display_name"],
                     "team_description": npc_data.get("team_description", ""),
                     "character_file": npc_data.get("character_file", ""),
+                    "agent_type": npc_data.get("agent_type"),
+                    "model": npc_data.get("model"),
                 }
                 PERSONAS[agent_key] = persona
                 DEFAULT_MEMBERSHIPS[agent_key] = set(npc_data.get("channels", ["#general"]))
@@ -860,22 +811,21 @@ async def _process_single_command(client, pool, personas, scenario_name, cmd):
                     RESPONSE_TIERS[tier].append(agent_key)
                 pool._personas[agent_key] = persona
 
-                # Generate config files for the new agent
-                mcp_config = {
-                    "mcpServers": {
-                        "sim": {
-                            "type": "sse",
-                            "url": f"http://{pool._mcp_host}:{pool._mcp_port}/agents/{agent_key}/sse",
-                        }
-                    }
-                }
-                config_path = TMP_DIR / f"mcp-config-{agent_key}.json"
-                config_path.write_text(json.dumps(mcp_config, indent=2))
-                pool._config_files[agent_key] = config_path
+                # Resolve backend for new agent
+                from lib.scenario_loader import get_settings
+                agent_type = (
+                    persona.get("agent_type")
+                    or get_settings().get("default_agent_type")
+                    or pool._default_agent_type
+                )
+                backend = get_backend(agent_type)
+                pool._backends[agent_key] = backend
 
-                prompt_path = TMP_DIR / f"system-prompt-{agent_key}.md"
-                prompt_path.write_text(build_v3_system_prompt(agent_key))
-                pool._prompt_files[agent_key] = prompt_path
+                # Generate config files via backend
+                prompt_content = build_v3_system_prompt(agent_key)
+                pool._backend_configs[agent_key] = backend.generate_config_files(
+                    agent_key, prompt_content, pool._mcp_host, pool._mcp_port, TMP_DIR,
+                )
 
                 # Launch long-running container and create lock
                 await pool._launch_container(agent_key)
@@ -922,8 +872,8 @@ async def _process_single_command(client, pool, personas, scenario_name, cmd):
 
             pool._agent_locks.pop(agent_key, None)
             pool._personas.pop(agent_key, None)
-            pool._config_files.pop(agent_key, None)
-            pool._prompt_files.pop(agent_key, None)
+            pool._backends.pop(agent_key, None)
+            pool._backend_configs.pop(agent_key, None)
             PERSONAS.pop(agent_key, None)
             DEFAULT_MEMBERSHIPS.pop(agent_key, None)
             old_tier = PERSONA_TIER.pop(agent_key, None)
@@ -1229,6 +1179,7 @@ async def run_container_orchestrator(args) -> None:
     """
     client = ChatClient(base_url=args.server_url)
     model = getattr(args, "model", "sonnet")
+    default_agent_type = getattr(args, "default_agent_type", "claude")
     scenario_name = getattr(args, "scenario", None)
     max_waves = getattr(args, "max_rounds", 3)
     poll_interval = getattr(args, "poll_interval", 5.0)
@@ -1247,7 +1198,8 @@ async def run_container_orchestrator(args) -> None:
 
     print("Container orchestrator starting")
     print(f"  Server: {args.server_url}")
-    print(f"  Model: {model}")
+    print(f"  Default agent type: {default_agent_type}")
+    print(f"  Default model: {model}")
     print(f"  Max waves: {max_waves}")
     print(f"  Max autonomous rounds: {'unlimited' if max_auto_rounds == 0 else max_auto_rounds}")
     print(f"  Poll interval: {poll_interval}s")
@@ -1368,6 +1320,7 @@ async def run_container_orchestrator(args) -> None:
                 max_turns=max_turns,
                 done_timeout=done_timeout,
                 use_sessions=use_sessions,
+                default_agent_type=default_agent_type,
             )
 
             # Capture message baseline before startup so messages sent

@@ -55,8 +55,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--model",
         type=str,
         default="sonnet",
-        choices=["sonnet", "opus", "haiku"],
-        help="Claude model to use (default: sonnet)",
+        help="Default model shorthand — sonnet/opus/haiku for claude, "
+        "o3/o4-mini/gpt-4.1/gpt-5.5 for codex (default: sonnet)",
+    )
+    chat_parser.add_argument(
+        "--default-agent-type",
+        type=str,
+        default="claude",
+        choices=["claude", "codex"],
+        help="Default agent CLI backend when not specified per-character (default: claude)",
     )
     chat_parser.add_argument(
         "--max-rounds",

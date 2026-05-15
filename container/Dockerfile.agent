@@ -2,21 +2,22 @@ FROM python:3.13-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         curl nodejs npm git \
-    && npm install -g @anthropic-ai/claude-code \
+    && npm install -g @anthropic-ai/claude-code @openai/codex \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 RUN useradd -m -s /bin/bash agent
 
 COPY agent-hooks.json /home/agent/.claude/hooks.json
 
-# Credentials directory (file mounted at runtime, not baked into image)
-RUN mkdir -p /home/agent/.config/gcloud
+# Credentials directories (files mounted at runtime, not baked into image)
+RUN mkdir -p /home/agent/.config/gcloud /home/agent/.codex
 
-RUN chown -R agent:agent /home/agent/.claude /home/agent/.config
+RUN chown -R agent:agent /home/agent/.claude /home/agent/.config /home/agent/.codex
 
 ENV AGENT_PERSONA_KEY="" \
     MCP_SERVER_URL="" \
     HOME=/home/agent \
+    CODEX_HOME=/home/agent/.codex \
     GOOGLE_APPLICATION_CREDENTIALS=/home/agent/.config/gcloud/application_default_credentials.json \
     GCE_METADATA_HOST=127.0.0.1
 

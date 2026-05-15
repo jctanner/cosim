@@ -114,6 +114,8 @@ def _get_roster() -> dict:
             "repos": sorted(repos),
             "tier": PERSONA_TIER.get(key, 1),
             "verbosity": verbosity,
+            "agent_type": p.get("agent_type"),
+            "model": p.get("model"),
         }
     return roster
 
@@ -327,6 +329,8 @@ def load_session(instance_name: str) -> dict:
                     "display_name": data["display_name"],
                     "team_description": data.get("team_description", ""),
                     "character_file": data.get("character_file", ""),
+                    "agent_type": data.get("agent_type"),
+                    "model": data.get("model"),
                 }
                 DEFAULT_MEMBERSHIPS[key] = set(data.get("channels", ["#general"]))
                 tier = data.get("tier", 1)

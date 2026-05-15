@@ -9,6 +9,7 @@ Run via:  python main.py mcp-server --scenario tech-startup --port 5001
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import threading
@@ -1558,17 +1559,26 @@ async def _load_scenario_endpoint(request: Request) -> JSONResponse:
 
     # Remove any previously mounted agent routes
     request.app.routes[:] = [
-        r for r in request.app.routes if not (isinstance(r, Mount) and r.path.startswith("/agents/"))
+        r for r in request.app.routes
+        if not (isinstance(r, Mount) and (r.path.startswith("/agents/") or r.path.startswith("/agents-http/")))
     ]
 
-    # Mount new per-agent MCP sub-apps
+    # Mount new per-agent MCP sub-apps (SSE for Claude, streamable HTTP for Codex)
+    # SSE app serves /sse + /messages at /agents/{key}/
+    # HTTP app serves /mcp at /agents-http/{key}/ (separate prefix)
+    # Session managers are started via the parent app's AsyncExitStack
+    exit_stack = getattr(request.app.state, "http_exit_stack", None)
     agent_keys = []
     for agent_key in config.get("characters", {}):
         agent_mcp = create_agent_mcp(agent_key, flask_url, config)
         sse_app = agent_mcp.sse_app()
+        http_app = agent_mcp.streamable_http_app()
+        if exit_stack is not None:
+            await exit_stack.enter_async_context(agent_mcp._session_manager.run())
+        request.app.routes.insert(0, Mount(f"/agents-http/{agent_key}", app=http_app))
         request.app.routes.insert(0, Mount(f"/agents/{agent_key}", app=sse_app))
         agent_keys.append(agent_key)
-        logger.info(f"Mounted MCP endpoint: /agents/{agent_key}/sse")
+        logger.info(f"Mounted MCP endpoints: /agents/{agent_key}/sse + /agents-http/{agent_key}/mcp")
 
     request.app.state.scenario_name = scenario_name
     request.app.state.agent_keys = agent_keys
@@ -1597,6 +1607,10 @@ def build_app(scenario_name: str | None, flask_url: str) -> Starlette:
     Returns a Starlette app ready for uvicorn.
     """
 
+    # Collect streamable HTTP session managers so we can start them in the parent lifespan
+    # (sub-app lifespans don't run when mounted via Starlette Mount)
+    http_session_managers = []
+
     @asynccontextmanager
     async def lifespan(app: Starlette):
         global _http_client
@@ -1604,8 +1618,15 @@ def build_app(scenario_name: str | None, flask_url: str) -> Starlette:
         app.state.flask_url = flask_url
         app.state.scenario_name = scenario_name
         app.state.agent_keys = []
+        app.state.http_session_managers = http_session_managers
         logger.info(f"MCP server starting — scenario={scenario_name or '(none)'}, flask={flask_url}")
-        yield
+        # Start all streamable HTTP session managers; store the stack on app.state
+        # so _load_scenario_endpoint() can start new managers at runtime
+        async with contextlib.AsyncExitStack() as stack:
+            app.state.http_exit_stack = stack
+            for mgr in http_session_managers:
+                await stack.enter_async_context(mgr.run())
+            yield
         await _http_client.aclose()
         _http_client = None
         logger.info("MCP server shutting down")
@@ -1618,9 +1639,12 @@ def build_app(scenario_name: str | None, flask_url: str) -> Starlette:
         for agent_key in config.get("characters", {}):
             agent_mcp = create_agent_mcp(agent_key, flask_url, config)
             sse_app = agent_mcp.sse_app()
+            http_app = agent_mcp.streamable_http_app()
+            http_session_managers.append(agent_mcp._session_manager)
+            routes.append(Mount(f"/agents-http/{agent_key}", app=http_app))
             routes.append(Mount(f"/agents/{agent_key}", app=sse_app))
             agent_keys.append(agent_key)
-            logger.info(f"Mounted MCP endpoint: /agents/{agent_key}/sse")
+            logger.info(f"Mounted MCP endpoints: /agents/{agent_key}/sse + /agents-http/{agent_key}/mcp")
 
     # Add management endpoints
     routes.extend(
