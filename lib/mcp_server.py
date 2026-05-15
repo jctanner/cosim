@@ -127,6 +127,10 @@ def _register_communication_tools(
     # Auto-add director channel (created dynamically by Flask, not in scenario YAML)
     my_channels.add(f"#director-{agent_key}")
 
+    def _normalize_channel(channel: str) -> str:
+        """Ensure channel name starts with #. Some models drop the prefix."""
+        return channel if channel.startswith("#") else f"#{channel}"
+
     @server.tool(
         name="list_channels",
         description="List all available chat channels with their descriptions and member counts.",
@@ -142,6 +146,7 @@ def _register_communication_tools(
         description="Post a message to a chat channel you belong to.",
     )
     async def post_message(channel: str, content: str) -> str:
+        channel = _normalize_channel(channel)
         if channel not in my_channels:
             return f"Error: you are not a member of {channel}. Your channels: {sorted(my_channels)}"
         t0 = time.time()
@@ -165,6 +170,7 @@ def _register_communication_tools(
         description="Get recent messages from a channel you belong to. Use since_id to get only newer messages.",
     )
     async def get_messages(channel: str, since_id: int = 0, limit: int = 50) -> str:
+        channel = _normalize_channel(channel)
         if channel not in my_channels:
             return f"Error: you are not a member of {channel}. Your channels: {sorted(my_channels)}"
         t0 = time.time()
@@ -227,6 +233,7 @@ def _register_communication_tools(
         description="Join a chat channel. You will then be able to read and post messages there.",
     )
     async def join_channel(channel: str) -> str:
+        channel = _normalize_channel(channel)
         t0 = time.time()
         encoded = channel.lstrip("#")
         result = await _flask(
@@ -247,6 +254,7 @@ def _register_communication_tools(
         description="Get the list of members in a channel.",
     )
     async def get_channel_members(channel: str) -> str:
+        channel = _normalize_channel(channel)
         t0 = time.time()
         channels_list = await _flask("GET", "/api/channels", flask_url)
         for ch in channels_list:
