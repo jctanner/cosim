@@ -1358,6 +1358,93 @@ def _register_meta_tools(
         return json.dumps({"status": "acknowledged", "agent_key": agent_key})
 
 
+def _register_personnel_tools(
+    server: FastMCP,
+    agent_key: str,
+    display_name: str,
+    flask_url: str,
+    config: dict,
+):
+    """Register 3 personnel management tools (hire, fire, list team)."""
+
+    @server.tool(
+        name="list_team_members",
+        description="List all team members with their role, status, and persona key.",
+    )
+    async def list_team_members() -> str:
+        t0 = time.time()
+        result = await _flask("GET", "/api/npcs", flask_url)
+        summary = [
+            {
+                "key": npc.get("key"),
+                "display_name": npc.get("display_name"),
+                "team_description": npc.get("team_description"),
+                "online": npc.get("online", False),
+                "agent_type": npc.get("agent_type"),
+                "model": npc.get("model"),
+            }
+            for npc in result
+        ]
+        _record_audit(agent_key, "list_team_members", {}, f"{len(summary)} members", (time.time() - t0) * 1000)
+        return json.dumps(summary)
+
+    @server.tool(
+        name="hire_agent",
+        description=(
+            "Hire a new team member. Creates a new agent with the given persona and starts their container. "
+            "The key must be lowercase with no spaces. The prompt is the character instruction text."
+        ),
+    )
+    async def hire_agent(
+        display_name: str,
+        key: str,
+        team_description: str,
+        prompt: str,
+        tier: int = 1,
+        channels: list[str] | None = None,
+        folders: list[str] | None = None,
+        agent_type: str | None = None,
+        model: str | None = None,
+    ) -> str:
+        t0 = time.time()
+        payload: dict[str, Any] = {
+            "display_name": display_name,
+            "key": key,
+            "team_description": team_description,
+            "prompt": prompt,
+            "tier": tier,
+            "channels": channels or ["#general"],
+            "folders": folders or ["shared"],
+        }
+        if agent_type:
+            payload["agent_type"] = agent_type
+        if model:
+            payload["model"] = model
+        try:
+            result = await _flask("POST", "/api/npcs/hire", flask_url, json=payload)
+        except httpx.HTTPStatusError as e:
+            result = e.response.json()
+        _record_audit(
+            agent_key, "hire_agent", {"key": key, "display_name": display_name}, str(result), (time.time() - t0) * 1000
+        )
+        return json.dumps(result)
+
+    @server.tool(
+        name="fire_agent",
+        description="Fire a team member by their persona key. Removes them from the team and shuts down their agent.",
+    )
+    async def fire_agent(persona_key: str) -> str:
+        if persona_key == agent_key:
+            return json.dumps({"error": "You cannot fire yourself."})
+        t0 = time.time()
+        try:
+            result = await _flask("POST", f"/api/npcs/{persona_key}/fire", flask_url)
+        except httpx.HTTPStatusError as e:
+            result = e.response.json()
+        _record_audit(agent_key, "fire_agent", {"persona_key": persona_key}, str(result), (time.time() - t0) * 1000)
+        return json.dumps(result)
+
+
 # ---------------------------------------------------------------------------
 # Per-agent MCP instance factory
 # ---------------------------------------------------------------------------
@@ -1387,6 +1474,7 @@ def create_agent_mcp(
     _register_blog_tools(*reg_args)
     _register_email_tools(*reg_args)
     _register_jobs_tools(*reg_args)
+    _register_personnel_tools(*reg_args)
     _register_meta_tools(*reg_args)
 
     return server

@@ -234,13 +234,21 @@ def hire_npc():
     char_file = char_dir / f"{key}.md"
     char_file.write_text(prompt_content or f"# {display_name}\\n\\nYou are {display_name}.")
 
+    agent_type = data.get("agent_type")
+    model = data.get("model")
+
     # Add to PERSONAS
-    PERSONAS[key] = {
+    persona_entry = {
         "name": key,
         "display_name": display_name,
         "team_description": team_description,
         "character_file": str(char_file),
     }
+    if agent_type:
+        persona_entry["agent_type"] = agent_type
+    if model:
+        persona_entry["model"] = model
+    PERSONAS[key] = persona_entry
 
     # Add to memberships
     DEFAULT_MEMBERSHIPS[key] = set(channels)

@@ -226,6 +226,10 @@ MCP_TOOL_NAMES = [
     "run_from_repo",
     "get_run",
     "list_runs",
+    # Personnel (3)
+    "list_team_members",
+    "hire_agent",
+    "fire_agent",
     # Meta (6)
     "whoami",
     "who_is",
