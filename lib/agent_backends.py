@@ -75,13 +75,19 @@ class ClaudeBackend:
                 cmd += ["--session-id", session_id]
 
         cmd += [
-            "--mcp-config", "/home/agent/.mcp-config.json",
-            "--allowedTools", allowed_tools_str,
-            "--output-format", "stream-json",
+            "--mcp-config",
+            "/home/agent/.mcp-config.json",
+            "--allowedTools",
+            allowed_tools_str,
+            "--output-format",
+            "stream-json",
             "--verbose",
-            "--model", model_id,
-            "--max-turns", str(max_turns),
-            "--permission-mode", "dontAsk",
+            "--model",
+            model_id,
+            "--max-turns",
+            str(max_turns),
+            "--permission-mode",
+            "dontAsk",
         ]
         return cmd
 
@@ -127,9 +133,7 @@ class ClaudeBackend:
             summary_parts.append(f"${cost:.4f}")
         if summary_parts:
             thinking_text = (
-                (thinking_text + "\n\n---\n" + ", ".join(summary_parts))
-                if thinking_text
-                else ", ".join(summary_parts)
+                (thinking_text + "\n\n---\n" + ", ".join(summary_parts)) if thinking_text else ", ".join(summary_parts)
             )
 
         return response_text, thinking_text, metadata
@@ -200,7 +204,8 @@ class CodexBackend:
             "--json",
             "--skip-git-repo-check",
             "--dangerously-bypass-approvals-and-sandbox",
-            "-m", model_id,
+            "-m",
+            model_id,
         ]
 
         if not use_sessions:
@@ -261,7 +266,7 @@ class CodexBackend:
         mcp_port: int,
         tmp_dir: Path,
     ) -> dict[str, Path]:
-        escaped = system_prompt.replace('\\', '\\\\').replace('"', '\\"')
+        escaped = system_prompt.replace("\\", "\\\\").replace('"', '\\"')
         lines = [
             f'instructions = """\n{escaped}\n"""',
             "",
@@ -306,14 +311,23 @@ class ModelscorpBackend:
         persona_key = container_name.removeprefix("agent-")
         mcp_url = self._mcp_urls.get(persona_key, "")
         return [
-            "podman", "exec", container_name,
-            "python", "/home/agent/modelscorp_agent.py",
-            "--prompt", turn_prompt,
-            "--system-prompt-file", "/home/agent/system-prompt.md",
-            "--mcp-url", mcp_url,
-            "--model", model_id,
-            "--max-turns", str(max_turns),
-            "--config", "/home/agent/.modelscorp.json",
+            "podman",
+            "exec",
+            container_name,
+            "python",
+            "/home/agent/modelscorp_agent.py",
+            "--prompt",
+            turn_prompt,
+            "--system-prompt-file",
+            "/home/agent/system-prompt.md",
+            "--mcp-url",
+            mcp_url,
+            "--model",
+            model_id,
+            "--max-turns",
+            str(max_turns),
+            "--config",
+            "/home/agent/.modelscorp.json",
         ]
 
     def parse_output(self, stdout: str) -> tuple[str, str, dict]:

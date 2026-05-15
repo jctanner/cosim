@@ -364,11 +364,7 @@ class ContainerPool:
         settings = get_settings()
         self._backends: dict[str, ClaudeBackend | CodexBackend] = {}
         for key, persona in self._personas.items():
-            agent_type = (
-                persona.get("agent_type")
-                or settings.get("default_agent_type")
-                or default_agent_type
-            )
+            agent_type = persona.get("agent_type") or settings.get("default_agent_type") or default_agent_type
             self._backends[key] = get_backend(agent_type)
 
     async def start(self, build_system_prompt_fn, on_progress=None) -> None:
@@ -407,7 +403,11 @@ class ContainerPool:
             backend = self._backends[key]
             prompt_content = build_system_prompt_fn(key)
             self._backend_configs[key] = backend.generate_config_files(
-                key, prompt_content, self._mcp_host, self._mcp_port, TMP_DIR,
+                key,
+                prompt_content,
+                self._mcp_host,
+                self._mcp_port,
+                TMP_DIR,
             )
 
             # Initialize log file
@@ -447,7 +447,10 @@ class ContainerPool:
 
         # Cleanup leftover container from previous session
         rm_proc = await asyncio.create_subprocess_exec(
-            "podman", "rm", "-f", container_name,
+            "podman",
+            "rm",
+            "-f",
+            container_name,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -458,11 +461,17 @@ class ContainerPool:
 
         # Launch long-running container (CMD from Dockerfile: sleep infinity)
         cmd = [
-            "podman", "run", "-d",
-            "--name", container_name,
-            "-e", f"AGENT_PERSONA_KEY={persona_key}",
-            "-e", f"MCP_SERVER_URL={self._mcp_host}:{self._mcp_port}",
-            "-e", "GCE_METADATA_HOST=127.0.0.1",
+            "podman",
+            "run",
+            "-d",
+            "--name",
+            container_name,
+            "-e",
+            f"AGENT_PERSONA_KEY={persona_key}",
+            "-e",
+            f"MCP_SERVER_URL={self._mcp_host}:{self._mcp_port}",
+            "-e",
+            "GCE_METADATA_HOST=127.0.0.1",
             *self._env_flags,
             *volume_flags,
             self._container_image,
@@ -479,8 +488,12 @@ class ContainerPool:
 
         # Verify container is running
         check_proc = await asyncio.create_subprocess_exec(
-            "podman", "container", "inspect", container_name,
-            "--format", "{{.State.Status}}",
+            "podman",
+            "container",
+            "inspect",
+            container_name,
+            "--format",
+            "{{.State.Status}}",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -496,14 +509,22 @@ class ContainerPool:
         if self._gcp_creds_path and isinstance(backend, ClaudeBackend):
             creds_dest = f"{container_name}:/home/agent/.config/gcloud/application_default_credentials.json"
             cp_proc = await asyncio.create_subprocess_exec(
-                "podman", "cp", self._gcp_creds_path, creds_dest,
+                "podman",
+                "cp",
+                self._gcp_creds_path,
+                creds_dest,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
             await cp_proc.communicate()
             chown_proc = await asyncio.create_subprocess_exec(
-                "podman", "exec", "--user", "root", container_name,
-                "chown", "agent:agent",
+                "podman",
+                "exec",
+                "--user",
+                "root",
+                container_name,
+                "chown",
+                "agent:agent",
                 "/home/agent/.config/gcloud/application_default_credentials.json",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
@@ -514,7 +535,10 @@ class ContainerPool:
             staged = TMP_DIR / f"cred-{persona_key}-{Path(src_path).name}"
             shutil.copy2(src_path, staged)
             cp_proc = await asyncio.create_subprocess_exec(
-                "podman", "cp", str(staged), f"{container_name}:{dest_path}",
+                "podman",
+                "cp",
+                str(staged),
+                f"{container_name}:{dest_path}",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
@@ -523,8 +547,15 @@ class ContainerPool:
         # Fix ownership for codex home directory
         if isinstance(backend, CodexBackend):
             chown_proc = await asyncio.create_subprocess_exec(
-                "podman", "exec", "--user", "root", container_name,
-                "chown", "-R", "agent:agent", "/home/agent/.codex/",
+                "podman",
+                "exec",
+                "--user",
+                "root",
+                container_name,
+                "chown",
+                "-R",
+                "agent:agent",
+                "/home/agent/.codex/",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
@@ -821,10 +852,9 @@ async def _process_single_command(client, pool, personas, scenario_name, cmd):
 
                 # Resolve backend for new agent
                 from lib.scenario_loader import get_settings
+
                 agent_type = (
-                    persona.get("agent_type")
-                    or get_settings().get("default_agent_type")
-                    or pool._default_agent_type
+                    persona.get("agent_type") or get_settings().get("default_agent_type") or pool._default_agent_type
                 )
                 backend = get_backend(agent_type)
                 pool._backends[agent_key] = backend
@@ -832,7 +862,11 @@ async def _process_single_command(client, pool, personas, scenario_name, cmd):
                 # Generate config files via backend
                 prompt_content = build_v3_system_prompt(agent_key)
                 pool._backend_configs[agent_key] = backend.generate_config_files(
-                    agent_key, prompt_content, pool._mcp_host, pool._mcp_port, TMP_DIR,
+                    agent_key,
+                    prompt_content,
+                    pool._mcp_host,
+                    pool._mcp_port,
+                    TMP_DIR,
                 )
 
                 # Register MCP endpoints for the new agent on the MCP server
@@ -1555,8 +1589,7 @@ async def run_container_orchestrator(args) -> None:
                 try:
                     blog_posts = client.get_blog_posts()
                     new_blog_replies = [
-                        p for p in blog_posts
-                        if p.get("last_reply_at") and p["last_reply_at"] > last_blog_check_ts
+                        p for p in blog_posts if p.get("last_reply_at") and p["last_reply_at"] > last_blog_check_ts
                     ]
                     if new_blog_replies:
                         last_blog_check_ts = max(p["last_reply_at"] for p in new_blog_replies)
@@ -1572,25 +1605,19 @@ async def run_container_orchestrator(args) -> None:
                 try:
                     tickets = client.list_tickets()
                     new_ticket_activity = [
-                        t for t in tickets
-                        if t.get("updated_at") and t["updated_at"] > last_ticket_check_ts
+                        t for t in tickets if t.get("updated_at") and t["updated_at"] > last_ticket_check_ts
                     ]
                     if new_ticket_activity:
                         last_ticket_check_ts = max(t["updated_at"] for t in new_ticket_activity)
                         print(f"\nTicket activity detected on {len(new_ticket_activity)} ticket(s)")
-                        hints.append(
-                            "Tickets have been updated. Use get_my_tickets() or list_tickets() to check."
-                        )
+                        hints.append("Tickets have been updated. Use get_my_tickets() or list_tickets() to check.")
                 except Exception as e:
                     print(f"Ticket activity check failed: {e}")
 
                 # Document creates/updates
                 try:
                     docs = client.list_docs()
-                    new_doc_activity = [
-                        d for d in docs
-                        if d.get("updated_at") and d["updated_at"] > last_doc_check_ts
-                    ]
+                    new_doc_activity = [d for d in docs if d.get("updated_at") and d["updated_at"] > last_doc_check_ts]
                     if new_doc_activity:
                         last_doc_check_ts = max(d["updated_at"] for d in new_doc_activity)
                         print(f"\nDocument activity detected on {len(new_doc_activity)} doc(s)")
@@ -1604,15 +1631,12 @@ async def run_container_orchestrator(args) -> None:
                 try:
                     emails = client.get_emails()
                     new_email_activity = [
-                        e for e in emails
-                        if e.get("timestamp") and e["timestamp"] > last_email_check_ts
+                        e for e in emails if e.get("timestamp") and e["timestamp"] > last_email_check_ts
                     ]
                     if new_email_activity:
                         last_email_check_ts = max(e["timestamp"] for e in new_email_activity)
                         print(f"\nNew email(s) detected: {len(new_email_activity)}")
-                        hints.append(
-                            "New company emails have arrived. Use get_emails() to read them."
-                        )
+                        hints.append("New company emails have arrived. Use get_emails() to read them.")
                 except Exception as e:
                     print(f"Email activity check failed: {e}")
 
@@ -1620,15 +1644,12 @@ async def run_container_orchestrator(args) -> None:
                 try:
                     memo_threads = client.get_memo_threads()
                     new_memo_activity = [
-                        t for t in memo_threads
-                        if t.get("last_post_at") and t["last_post_at"] > last_memo_check_ts
+                        t for t in memo_threads if t.get("last_post_at") and t["last_post_at"] > last_memo_check_ts
                     ]
                     if new_memo_activity:
                         last_memo_check_ts = max(t["last_post_at"] for t in new_memo_activity)
                         print(f"\nMemo activity detected on {len(new_memo_activity)} thread(s)")
-                        hints.append(
-                            "There are new memo replies. Use list_memos() and get_memo_thread() to check."
-                        )
+                        hints.append("There are new memo replies. Use list_memos() and get_memo_thread() to check.")
                 except Exception as e:
                     print(f"Memo activity check failed: {e}")
 
