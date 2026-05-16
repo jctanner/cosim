@@ -437,6 +437,11 @@ class ContainerPool:
             # Create per-agent lock
             self._agent_locks[key] = asyncio.Lock()
 
+            # Pre-assign session IDs for backends that support conversation memory
+            if self._use_sessions and key not in self._session_ids:
+                if isinstance(backend, (ClaudeBackend, ModelscorpBackend)):
+                    self._session_ids[key] = str(_uuid.uuid4())
+
             print(f" ready ({i}/{total})")
 
             if on_progress:
@@ -607,11 +612,6 @@ class ContainerPool:
             f.write(f"TURN PROMPT:\n{turn_prompt}\n\n{'-' * 40}\n\n")
 
         resuming = self._use_sessions and persona_key in self._session_started
-
-        # For Claude: pre-assign session UUID; for Codex: captured from output
-        if self._use_sessions and persona_key not in self._session_ids:
-            if isinstance(backend, ClaudeBackend):
-                self._session_ids[persona_key] = str(_uuid.uuid4())
 
         # Resolve per-agent model
         if isinstance(backend, CodexBackend):

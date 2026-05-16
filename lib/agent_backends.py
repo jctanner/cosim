@@ -336,6 +336,15 @@ class ModelscorpBackend:
         agent_tools = self._allowed_tools.get(persona_key)
         if agent_tools:
             cmd += ["--allowed-tools", ",".join(agent_tools)]
+        if use_sessions and session_id:
+            cmd += [
+                "--memory-strategy",
+                "fifo",
+                "--session-file",
+                f"/home/agent/sessions/{session_id}.jsonl",
+                "--memory-max-messages",
+                "50",
+            ]
         return cmd
 
     def parse_output(self, stdout: str) -> tuple[str, str, dict]:

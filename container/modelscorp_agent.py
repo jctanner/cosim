@@ -11,12 +11,14 @@ Logs: stderr.
 
 import argparse
 import json
+import os
 import re
 import sys
 import time
 import uuid
 
 import httpx
+from conversation_memory import create_memory
 from openai import DefaultHttpxClient, OpenAI
 
 
@@ -195,6 +197,9 @@ def run_agent(
     max_turns: int,
     config: dict,
     allowed_tools: list[str] | None = None,
+    memory_strategy: str = "none",
+    session_file: str = "",
+    memory_max_messages: int = 50,
 ) -> None:
     base_url = build_base_url(config, model)
     api_key = get_api_key(config, model)
@@ -224,15 +229,19 @@ def run_agent(
         openai_tools = mcp_tools_to_openai(mcp_tools)
         log(f"Discovered {len(openai_tools)} tools")
 
-        messages: list[dict] = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": prompt},
-        ]
+        memory = create_memory(
+            memory_strategy, session_file, system_prompt,
+            max_messages=memory_max_messages,
+        )
+        memory.load()
+        log(f"Memory strategy: {memory_strategy}")
+        messages = memory.get_messages(prompt)
 
         total_input_tokens = 0
         total_output_tokens = 0
         last_text = ""
         turns = 0
+        turn_start_idx = len(messages)
 
         while turns < max_turns:
             turns += 1
@@ -366,6 +375,11 @@ def run_agent(
                 log("Model finished (no more tool calls)")
                 break
 
+        new_messages = messages[turn_start_idx:]
+        if new_messages:
+            memory.add_messages(new_messages)
+            memory.save()
+
         emit(
             {
                 "type": "result",
@@ -392,6 +406,9 @@ def main() -> None:
     parser.add_argument("--max-turns", type=int, default=50, help="Max agentic turns")
     parser.add_argument("--config", required=True, help="Path to .modelscorp.json config")
     parser.add_argument("--allowed-tools", default="", help="Comma-separated list of allowed tool names (empty=all)")
+    parser.add_argument("--memory-strategy", default="none", choices=["none", "fifo"], help="Conversation memory strategy")
+    parser.add_argument("--session-file", default="", help="Path to JSONL session history file")
+    parser.add_argument("--memory-max-messages", type=int, default=50, help="Max messages in FIFO window")
     args = parser.parse_args()
 
     with open(args.system_prompt_file) as f:
@@ -399,6 +416,9 @@ def main() -> None:
 
     config = load_config(args.config)
     allowed_tools = [t.strip() for t in args.allowed_tools.split(",") if t.strip()] or None
+
+    if args.session_file:
+        os.makedirs(os.path.dirname(args.session_file), exist_ok=True)
 
     try:
         run_agent(
@@ -409,6 +429,9 @@ def main() -> None:
             max_turns=args.max_turns,
             config=config,
             allowed_tools=allowed_tools,
+            memory_strategy=args.memory_strategy,
+            session_file=args.session_file,
+            memory_max_messages=args.memory_max_messages,
         )
     except Exception as e:
         log(f"FATAL: {e}")

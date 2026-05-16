@@ -10,6 +10,7 @@ RUN useradd -m -s /bin/bash agent
 
 COPY agent-hooks.json /home/agent/.claude/hooks.json
 COPY modelscorp_agent.py /home/agent/modelscorp_agent.py
+COPY conversation_memory.py /home/agent/conversation_memory.py
 
 # Credentials directories (files mounted at runtime, not baked into image)
 RUN mkdir -p /home/agent/.config/gcloud /home/agent/.codex
