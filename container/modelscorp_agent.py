@@ -375,6 +375,10 @@ def run_agent(
                 log("Model finished (no more tool calls)")
                 break
 
+            if "signal_done" in tool_call_names:
+                log("Agent signaled done — stopping loop")
+                break
+
         new_messages = messages[turn_start_idx:]
         if new_messages:
             memory.add_messages(new_messages)

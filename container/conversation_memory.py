@@ -90,7 +90,17 @@ class FIFOMemory(ConversationMemory):
         ]
 
     def add_messages(self, messages: list[dict]) -> None:
-        self._history.extend(messages)
+        # Only keep user/assistant text messages — skip tool_calls and tool
+        # responses to avoid model-specific ordering constraints (e.g. Gemini
+        # requires tool responses immediately after tool_calls).
+        for msg in messages:
+            role = msg.get("role", "")
+            if role == "tool":
+                continue
+            if role == "assistant" and "tool_calls" in msg and not msg.get("content"):
+                continue
+            clean = {"role": role, "content": msg.get("content", "")}
+            self._history.append(clean)
 
     def save(self) -> None:
         if not self._session_file:
