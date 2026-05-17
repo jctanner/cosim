@@ -623,6 +623,13 @@ class ContainerPool:
         effective_model = persona.get("model") or self._default_model
         effective_model_id = get_model_id(effective_model, agent_type)
 
+        fallback_ch = ""
+        if persona.get("fallback_channel"):
+            import re as _re
+
+            m = _re.search(r"new activity in (#\S+)", turn_prompt)
+            fallback_ch = m.group(1).rstrip(".,") if m else persona["fallback_channel"]
+
         cmd = backend.build_exec_command(
             container_name=container_name,
             turn_prompt=turn_prompt,
@@ -632,6 +639,7 @@ class ContainerPool:
             max_turns=self._max_turns,
             allowed_tools_str=self._allowed_tools_str,
             use_sessions=self._use_sessions,
+            fallback_channel=fallback_ch,
         )
 
         # Log the actual command for debugging

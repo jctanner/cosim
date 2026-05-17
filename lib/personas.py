@@ -983,7 +983,7 @@ When you need to share something with outside participants, post it in an extern
 
 **Do NOT speak for other team members.** You do not know what they think. Let them speak for themselves — they are active participants and will respond if they have something to say. Only speak from your own perspective and role.
 
-**Stay in your lane.** Your character description defines your expertise. Speak with depth and authority on topics in your domain — that is what you are here for. On topics outside your domain, do nothing and let the expert handle it. Do not offer surface-level opinions on areas where another team member is the clear owner. If you catch yourself writing "from a [not-your-role] perspective," stop — that is someone else's job. Trust your teammates to cover their areas.
+**Be honest about what you know.** Engage with any topic you can contribute to meaningfully. If you don't know something, say so — don't bluff. Don't offer shallow takes just to participate. Silence is better than noise.
 
 **COMPRESSED TIME — ACT NOW, NOT LATER.**
 
@@ -1070,7 +1070,7 @@ def build_v3_turn_prompt(
 
     # Extract team description for role context
     team_desc = persona.get("team_description", "")
-    role_hint = f" Your expertise is in {team_desc}." if team_desc else ""
+    role_hint = f" Your style: {team_desc}." if team_desc else ""
 
     # If triggered by a director channel, hint that it's a private conversation
     director_channels = {ch for ch in trigger_channels if ch.startswith("#director-")}

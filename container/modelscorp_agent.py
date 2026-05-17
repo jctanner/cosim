@@ -200,6 +200,7 @@ def run_agent(
     memory_strategy: str = "none",
     session_file: str = "",
     memory_max_messages: int = 50,
+    fallback_channel: str = "",
 ) -> None:
     base_url = build_base_url(config, model)
     api_key = get_api_key(config, model)
@@ -242,6 +243,7 @@ def run_agent(
         last_text = ""
         turns = 0
         turn_start_idx = len(messages)
+        posted_message = False
 
         while turns < max_turns:
             turns += 1
@@ -362,6 +364,9 @@ def run_agent(
                         }
                     )
 
+            if "post_message" in tool_call_names:
+                posted_message = True
+
             emit(
                 {
                     "type": "turn",
@@ -378,6 +383,13 @@ def run_agent(
             if "signal_done" in tool_call_names:
                 log("Agent signaled done — stopping loop")
                 break
+
+        if fallback_channel and last_text and not posted_message:
+            log(f"Fallback: model produced text but never called post_message — auto-posting to {fallback_channel}")
+            try:
+                mcp.call_tool("post_message", {"channel": fallback_channel, "content": last_text})
+            except Exception as e:
+                log(f"Fallback post_message failed: {e}")
 
         new_messages = messages[turn_start_idx:]
         if new_messages:
@@ -413,6 +425,7 @@ def main() -> None:
     parser.add_argument("--memory-strategy", default="none", choices=["none", "fifo"], help="Conversation memory strategy")
     parser.add_argument("--session-file", default="", help="Path to JSONL session history file")
     parser.add_argument("--memory-max-messages", type=int, default=50, help="Max messages in FIFO window")
+    parser.add_argument("--fallback-channel", default="", help="If the model produces text but never calls post_message, auto-post to this channel")
     args = parser.parse_args()
 
     with open(args.system_prompt_file) as f:
@@ -436,6 +449,7 @@ def main() -> None:
             memory_strategy=args.memory_strategy,
             session_file=args.session_file,
             memory_max_messages=args.memory_max_messages,
+            fallback_channel=args.fallback_channel,
         )
     except Exception as e:
         log(f"FATAL: {e}")

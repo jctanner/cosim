@@ -142,10 +142,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     chat_parser.add_argument(
         "--use-sessions",
-        action="store_true",
-        default=False,
-        help="Persist Claude Code sessions across agent turns (agents resume "
-        "prior context instead of rebuilding full prompts)",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Persist agent sessions across turns (Claude resumes, Codex "
+        "resumes threads, Models.Corp uses FIFO memory). Disable with --no-use-sessions.",
     )
 
     # ── job-runner subcommand ──────────────────────────────────────────

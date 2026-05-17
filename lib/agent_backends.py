@@ -21,6 +21,7 @@ class AgentBackend(Protocol):
         max_turns: int,
         allowed_tools_str: str,
         use_sessions: bool = False,
+        fallback_channel: str = "",
     ) -> list[str]: ...
 
     def parse_output(self, stdout: str) -> tuple[str, str, dict]:
@@ -61,6 +62,7 @@ class ClaudeBackend:
         max_turns: int,
         allowed_tools_str: str,
         use_sessions: bool = False,
+        fallback_channel: str = "",
     ) -> list[str]:
         cmd = ["podman", "exec", container_name, "claude"]
 
@@ -194,6 +196,7 @@ class CodexBackend:
         max_turns: int,
         allowed_tools_str: str,
         use_sessions: bool = False,
+        fallback_channel: str = "",
     ) -> list[str]:
         cmd = ["podman", "exec", container_name, "codex", "exec"]
 
@@ -311,6 +314,7 @@ class ModelscorpBackend:
         max_turns: int,
         allowed_tools_str: str,
         use_sessions: bool = False,
+        fallback_channel: str = "",
     ) -> list[str]:
         persona_key = container_name.removeprefix("agent-")
         mcp_url = self._mcp_urls.get(persona_key, "")
@@ -345,6 +349,8 @@ class ModelscorpBackend:
                 "--memory-max-messages",
                 "50",
             ]
+        if fallback_channel:
+            cmd += ["--fallback-channel", fallback_channel]
         return cmd
 
     def parse_output(self, stdout: str) -> tuple[str, str, dict]:

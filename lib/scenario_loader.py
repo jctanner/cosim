@@ -71,6 +71,7 @@ def load_scenario(scenario_name: str) -> None:
             "agent_type": char_info.get("agent_type"),
             "model": char_info.get("model"),
             "allowed_tools": char_info.get("allowed_tools"),
+            "fallback_channel": char_info.get("fallback_channel", ""),
         }
 
     # --- Populate personas.DEFAULT_CHANNELS ---
