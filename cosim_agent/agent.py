@@ -12,14 +12,13 @@ Logs: stderr.
 import argparse
 import json
 import os
-import re
 import sys
 import time
-import uuid
 
-import httpx
-from conversation_memory import create_memory
 from openai import DefaultHttpxClient, OpenAI
+
+from cosim_agent.mcp_client import MCPClient, mcp_tools_to_openai, parse_text_tool_calls
+from cosim_agent.memory import create_memory
 
 
 def log(msg: str) -> None:
@@ -28,131 +27,6 @@ def log(msg: str) -> None:
 
 def emit(obj: dict) -> None:
     print(json.dumps(obj), flush=True)
-
-
-# ── MCP client (raw JSON-RPC over Streamable HTTP) ─────────────────────
-
-
-class MCPClient:
-    """Minimal MCP client using JSON-RPC over HTTP POST."""
-
-    def __init__(self, url: str, timeout: float = 30.0):
-        self._url = url
-        self._timeout = timeout
-        self._session_id: str | None = None
-        self._req_id = 0
-        self._client = httpx.Client(timeout=timeout, verify=False)
-
-    def _next_id(self) -> int:
-        self._req_id += 1
-        return self._req_id
-
-    def _post(self, method: str, params: dict | None = None) -> dict:
-        body: dict = {
-            "jsonrpc": "2.0",
-            "method": method,
-            "id": self._next_id(),
-        }
-        if params:
-            body["params"] = params
-
-        headers: dict[str, str] = {
-            "Content-Type": "application/json",
-            "Accept": "application/json, text/event-stream",
-        }
-        if self._session_id:
-            headers["mcp-session-id"] = self._session_id
-
-        resp = self._client.post(self._url, json=body, headers=headers)
-        resp.raise_for_status()
-
-        if not self._session_id:
-            sid = resp.headers.get("mcp-session-id")
-            if sid:
-                self._session_id = sid
-
-        return resp.json()
-
-    def initialize(self) -> dict:
-        result = self._post(
-            "initialize",
-            {
-                "protocolVersion": "2025-03-26",
-                "capabilities": {},
-                "clientInfo": {"name": "modelscorp-agent", "version": "1.0"},
-            },
-        )
-        self._post("notifications/initialized")
-        return result
-
-    def list_tools(self) -> list[dict]:
-        result = self._post("tools/list")
-        return result.get("result", {}).get("tools", [])
-
-    def call_tool(self, name: str, arguments: dict) -> str:
-        result = self._post("tools/call", {"name": name, "arguments": arguments})
-        tool_result = result.get("result", {})
-        content = tool_result.get("content", [])
-        parts = []
-        for item in content:
-            if isinstance(item, dict) and item.get("type") == "text":
-                parts.append(item.get("text", ""))
-            elif isinstance(item, str):
-                parts.append(item)
-        return "\n".join(parts) if parts else json.dumps(tool_result)
-
-    def close(self):
-        self._client.close()
-
-
-# ── Tool format conversion ──────────────────────────────────────────────
-
-
-def mcp_tools_to_openai(mcp_tools: list[dict]) -> list[dict]:
-    """Convert MCP tool definitions to OpenAI function-calling format."""
-    openai_tools = []
-    for tool in mcp_tools:
-        schema = tool.get("inputSchema", {"type": "object", "properties": {}})
-        openai_tools.append(
-            {
-                "type": "function",
-                "function": {
-                    "name": tool["name"],
-                    "description": tool.get("description", ""),
-                    "parameters": schema,
-                },
-            }
-        )
-    return openai_tools
-
-
-# ── Text-based tool call parsing (for models like Granite) ──────────────
-
-_TOOL_CALL_RE = re.compile(
-    r"<tool_call>\s*(\{.*?\})\s*</tool_call>",
-    re.DOTALL,
-)
-
-
-def parse_text_tool_calls(text: str) -> list[dict]:
-    """Extract tool calls from <tool_call> tags in model text output."""
-    calls = []
-    for match in _TOOL_CALL_RE.finditer(text):
-        try:
-            parsed = json.loads(match.group(1))
-            raw_args = parsed.get("arguments", {})
-            if isinstance(raw_args, str):
-                raw_args = json.loads(raw_args)
-            calls.append(
-                {
-                    "id": f"call_{uuid.uuid4().hex[:12]}",
-                    "name": parsed.get("name", ""),
-                    "arguments": json.dumps(raw_args),
-                }
-            )
-        except (json.JSONDecodeError, KeyError):
-            continue
-    return calls
 
 
 # ── Config loading ──────────────────────────────────────────────────────
@@ -197,9 +71,7 @@ def run_agent(
     max_turns: int,
     config: dict,
     allowed_tools: list[str] | None = None,
-    memory_strategy: str = "none",
-    session_file: str = "",
-    memory_max_messages: int = 50,
+    memory_config: dict | None = None,
     fallback_channel: str = "",
 ) -> None:
     base_url = build_base_url(config, model)
@@ -230,19 +102,17 @@ def run_agent(
         openai_tools = mcp_tools_to_openai(mcp_tools)
         log(f"Discovered {len(openai_tools)} tools")
 
-        memory = create_memory(
-            memory_strategy, session_file, system_prompt,
-            max_messages=memory_max_messages,
-        )
+        mem_cfg = memory_config or {"strategy": "none"}
+        memory = create_memory(mem_cfg, system_prompt, llm_client=client, llm_model=model_id)
         memory.load()
-        log(f"Memory strategy: {memory_strategy}")
+        log(f"Memory config: {mem_cfg}")
         messages = memory.get_messages(prompt)
 
         total_input_tokens = 0
         total_output_tokens = 0
         last_text = ""
         turns = 0
-        turn_start_idx = len(messages)
+        turn_start_idx = len(messages) - 1  # include the user prompt in saved messages
         posted_message = False
 
         while turns < max_turns:
@@ -295,7 +165,6 @@ def run_agent(
 
             messages.append(assistant_msg)
 
-            # Collect tool calls — native or parsed from text
             native_calls = message.tool_calls or []
             text_calls = []
             if not native_calls and message.content:
@@ -422,10 +291,19 @@ def main() -> None:
     parser.add_argument("--max-turns", type=int, default=50, help="Max agentic turns")
     parser.add_argument("--config", required=True, help="Path to .modelscorp.json config")
     parser.add_argument("--allowed-tools", default="", help="Comma-separated list of allowed tool names (empty=all)")
-    parser.add_argument("--memory-strategy", default="none", choices=["none", "fifo"], help="Conversation memory strategy")
-    parser.add_argument("--session-file", default="", help="Path to JSONL session history file")
-    parser.add_argument("--memory-max-messages", type=int, default=50, help="Max messages in FIFO window")
-    parser.add_argument("--fallback-channel", default="", help="If the model produces text but never calls post_message, auto-post to this channel")
+    parser.add_argument(
+        "--memory-config",
+        default="",
+        help="JSON blob of memory config (strategy, session_file, max_messages, etc.)",
+    )
+    parser.add_argument("--memory-strategy", default="none", help="(legacy) Conversation memory strategy")
+    parser.add_argument("--session-file", default="", help="(legacy) Path to JSONL session history file")
+    parser.add_argument("--memory-max-messages", type=int, default=50, help="(legacy) Max messages in FIFO window")
+    parser.add_argument(
+        "--fallback-channel",
+        default="",
+        help="If the model produces text but never calls post_message, auto-post to this channel",
+    )
     args = parser.parse_args()
 
     with open(args.system_prompt_file) as f:
@@ -434,8 +312,18 @@ def main() -> None:
     config = load_config(args.config)
     allowed_tools = [t.strip() for t in args.allowed_tools.split(",") if t.strip()] or None
 
-    if args.session_file:
-        os.makedirs(os.path.dirname(args.session_file), exist_ok=True)
+    if args.memory_config:
+        mem_cfg = json.loads(args.memory_config)
+    else:
+        mem_cfg = {
+            "strategy": args.memory_strategy,
+            "session_file": args.session_file,
+            "max_messages": args.memory_max_messages,
+        }
+
+    session_file = mem_cfg.get("session_file", "")
+    if session_file:
+        os.makedirs(os.path.dirname(session_file), exist_ok=True)
 
     try:
         run_agent(
@@ -446,9 +334,7 @@ def main() -> None:
             max_turns=args.max_turns,
             config=config,
             allowed_tools=allowed_tools,
-            memory_strategy=args.memory_strategy,
-            session_file=args.session_file,
-            memory_max_messages=args.memory_max_messages,
+            memory_config=mem_cfg,
             fallback_channel=args.fallback_channel,
         )
     except Exception as e:

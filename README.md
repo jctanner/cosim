@@ -49,7 +49,7 @@ The agent image contains Claude Code CLI and telemetry hooks. GCP credentials ar
 ./scripts/build-agent-image.sh
 ```
 
-This runs `podman build -f container/Dockerfile.agent -t agent-image:latest container/` after verifying prerequisites.
+This runs `podman build -f container/Dockerfile.agent -t agent-image:latest .` after verifying prerequisites.
 
 **What goes into the image:**
 - Python 3.13-slim base

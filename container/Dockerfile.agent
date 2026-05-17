@@ -3,14 +3,15 @@ FROM python:3.13-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
         curl nodejs npm git \
     && npm install -g @anthropic-ai/claude-code @openai/codex \
-    && pip install --no-cache-dir openai \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+COPY cosim_agent/ /tmp/cosim-agent/cosim_agent/
+COPY cosim_agent/pyproject.toml /tmp/cosim-agent/pyproject.toml
+RUN pip install --no-cache-dir /tmp/cosim-agent && rm -rf /tmp/cosim-agent
 
 RUN useradd -m -s /bin/bash agent
 
-COPY agent-hooks.json /home/agent/.claude/hooks.json
-COPY modelscorp_agent.py /home/agent/modelscorp_agent.py
-COPY conversation_memory.py /home/agent/conversation_memory.py
+COPY container/agent-hooks.json /home/agent/.claude/hooks.json
 
 # Credentials directories (files mounted at runtime, not baked into image)
 RUN mkdir -p /home/agent/.config/gcloud /home/agent/.codex
@@ -31,7 +32,7 @@ WORKDIR /home/agent/scratch
 CMD ["sleep", "infinity"]
 
 # Usage (podman — Flask+MCP run on host):
-#   podman build -f container/Dockerfile.agent -t agent-image:latest container/
+#   podman build -f container/Dockerfile.agent -t agent-image:latest .
 #   podman run -d --name agent-pm \
 #     -e AGENT_PERSONA_KEY=pm \
 #     -e MCP_SERVER_URL=host.containers.internal:5001 \

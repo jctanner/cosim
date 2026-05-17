@@ -19,18 +19,18 @@ test: install ## Run tests
 	$(PYTEST) -v
 
 lint: install ## Check code style
-	$(RUFF) check lib/ tests/ main.py
-	$(RUFF) format --check lib/ tests/ main.py
+	$(RUFF) check lib/ tests/ main.py cosim_agent/
+	$(RUFF) format --check lib/ tests/ main.py cosim_agent/
 
 lint-fix: install ## Auto-fix lint issues
-	$(RUFF) check --fix lib/ tests/ main.py
-	$(RUFF) format lib/ tests/ main.py
+	$(RUFF) check --fix lib/ tests/ main.py cosim_agent/
+	$(RUFF) format lib/ tests/ main.py cosim_agent/
 
 start: install ## Start the full stack via honcho
 	$(UV) run honcho start
 
 build-agent: ## Build the agent container image
-	podman build -f container/Dockerfile.agent -t agent-image:latest container/
+	podman build -f container/Dockerfile.agent -t agent-image:latest .
 
 build-sandbox: ## Build the sandbox container image
 	podman build -f container/Dockerfile.sandbox -t cosim-sandbox:latest container/

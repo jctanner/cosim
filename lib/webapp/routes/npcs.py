@@ -84,6 +84,11 @@ def list_npcs():
                     "team_description": p.get("team_description", ""),
                     "character_file": p.get("character_file", ""),
                     "avatar": p.get("avatar"),
+                    "agent_type": p.get("agent_type"),
+                    "model": p.get("model"),
+                    "allowed_tools": p.get("allowed_tools"),
+                    "fallback_channel": p.get("fallback_channel", ""),
+                    "memory": p.get("memory"),
                     "tier": PERSONA_TIER.get(key, 0),
                     "channels": channels,
                     "folders": folders,
@@ -243,11 +248,12 @@ def hire_npc():
         "display_name": display_name,
         "team_description": team_description,
         "character_file": str(char_file),
+        "agent_type": agent_type,
+        "model": model,
+        "allowed_tools": data.get("allowed_tools"),
+        "fallback_channel": data.get("fallback_channel", ""),
+        "memory": data.get("memory"),
     }
-    if agent_type:
-        persona_entry["agent_type"] = agent_type
-    if model:
-        persona_entry["model"] = model
     PERSONAS[key] = persona_entry
 
     # Add to memberships

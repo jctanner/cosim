@@ -299,9 +299,13 @@ class ModelscorpBackend:
     def __init__(self) -> None:
         self._mcp_urls: dict[str, str] = {}
         self._allowed_tools: dict[str, list[str]] = {}
+        self._memory_configs: dict[str, dict] = {}
 
     def set_allowed_tools(self, persona_key: str, tools: list[str]) -> None:
         self._allowed_tools[persona_key] = tools
+
+    def set_memory_config(self, persona_key: str, config: dict) -> None:
+        self._memory_configs[persona_key] = config
 
     def build_exec_command(
         self,
@@ -322,8 +326,7 @@ class ModelscorpBackend:
             "podman",
             "exec",
             container_name,
-            "python",
-            "/home/agent/modelscorp_agent.py",
+            "cosim-agent",
             "--prompt",
             turn_prompt,
             "--system-prompt-file",
@@ -341,14 +344,9 @@ class ModelscorpBackend:
         if agent_tools:
             cmd += ["--allowed-tools", ",".join(agent_tools)]
         if use_sessions and session_id:
-            cmd += [
-                "--memory-strategy",
-                "fifo",
-                "--session-file",
-                f"/home/agent/sessions/{session_id}.jsonl",
-                "--memory-max-messages",
-                "50",
-            ]
+            mem_cfg = self._memory_configs.get(persona_key) or {"strategy": "fifo", "max_messages": 50}
+            mem_cfg_with_session = {**mem_cfg, "session_file": f"/home/agent/sessions/{session_id}.jsonl"}
+            cmd += ["--memory-config", json.dumps(mem_cfg_with_session)]
         if fallback_channel:
             cmd += ["--fallback-channel", fallback_channel]
         return cmd

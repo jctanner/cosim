@@ -308,7 +308,7 @@ async def _preflight_checks(container_image: str) -> None:
         raise RuntimeError(
             f"Container image '{container_image}' not found.\n"
             f"  Build it first:  ./scripts/build-agent-image.sh\n"
-            f"  Or manually:     podman build -t {container_image} -f container/Dockerfile.agent container/"
+            f"  Or manually:     podman build -t {container_image} -f container/Dockerfile.agent ."
         )
     print(f"  image: {container_image}")
 
@@ -366,8 +366,11 @@ class ContainerPool:
         for key, persona in self._personas.items():
             agent_type = persona.get("agent_type") or settings.get("default_agent_type") or default_agent_type
             backend = get_backend(agent_type)
-            if isinstance(backend, ModelscorpBackend) and persona.get("allowed_tools"):
-                backend.set_allowed_tools(key, persona["allowed_tools"])
+            if isinstance(backend, ModelscorpBackend):
+                if persona.get("allowed_tools"):
+                    backend.set_allowed_tools(key, persona["allowed_tools"])
+                if persona.get("memory"):
+                    backend.set_memory_config(key, persona["memory"])
             self._backends[key] = backend
 
     async def start(self, build_system_prompt_fn, on_progress=None) -> None:
@@ -856,6 +859,9 @@ async def _process_single_command(client, pool, personas, scenario_name, cmd):
                     "character_file": npc_data.get("character_file", ""),
                     "agent_type": npc_data.get("agent_type"),
                     "model": npc_data.get("model"),
+                    "allowed_tools": npc_data.get("allowed_tools"),
+                    "fallback_channel": npc_data.get("fallback_channel", ""),
+                    "memory": npc_data.get("memory"),
                 }
                 PERSONAS[agent_key] = persona
                 DEFAULT_MEMBERSHIPS[agent_key] = set(npc_data.get("channels", ["#general"]))
@@ -873,8 +879,11 @@ async def _process_single_command(client, pool, personas, scenario_name, cmd):
                     persona.get("agent_type") or get_settings().get("default_agent_type") or pool._default_agent_type
                 )
                 backend = get_backend(agent_type)
-                if isinstance(backend, ModelscorpBackend) and persona.get("allowed_tools"):
-                    backend.set_allowed_tools(agent_key, persona["allowed_tools"])
+                if isinstance(backend, ModelscorpBackend):
+                    if persona.get("allowed_tools"):
+                        backend.set_allowed_tools(agent_key, persona["allowed_tools"])
+                    if persona.get("memory"):
+                        backend.set_memory_config(agent_key, persona["memory"])
                 pool._backends[agent_key] = backend
 
                 # Generate config files via backend

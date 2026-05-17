@@ -72,6 +72,7 @@ def load_scenario(scenario_name: str) -> None:
             "model": char_info.get("model"),
             "allowed_tools": char_info.get("allowed_tools"),
             "fallback_channel": char_info.get("fallback_channel", ""),
+            "memory": char_info.get("memory"),
         }
 
     # --- Populate personas.DEFAULT_CHANNELS ---
