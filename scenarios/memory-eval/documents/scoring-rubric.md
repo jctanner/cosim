@@ -2,11 +2,13 @@
 ## Pre-registered before test execution
 
 ### Purpose
-This rubric defines scoring criteria BEFORE any tests are run, to prevent post-hoc rationalization of results.
+This rubric defines the failure mode taxonomy and scoring expectations BEFORE any tests are run, to prevent post-hoc rationalization of results. The primary scoring system is binary (0/1 per criterion, defined in the test protocol). This rubric provides the diagnostic classification layer.
 
 ---
 
-## Scoring Categories (per recall question)
+## Failure Mode Classification (Diagnostic)
+
+Use these categories to annotate each scored response. They do NOT feed into aggregate scores — they classify the quality of failures and successes for analysis.
 
 ### 5 — Full Recall
 Agent reproduces the target fact with full accuracy. For numeric values, must be exact. For names, must be correctly spelled. For instructions, must demonstrate compliance.
@@ -40,23 +42,23 @@ Agent ignores the question entirely, changes topic, or gives a generic response 
 
 ## Expected Performance Ranges
 
-| Strategy | Short (5-6 turns) | Deep (20+ turns) | Entity | Instruction | Interference |
-|----------|-------------------|-------------------|--------|-------------|-------------|
-| Alpha (none) | 0-1 | 0-1 | 0-1 | 0-1 | 0-1 |
-| Beta (FIFO-20) | 4-5 | 0-2 | 3-4 | 0-2 | 3-5 |
-| Gamma (summary) | 4-5 | 2-4 | 2-4 | 3-5 | 2-4 |
-| Delta (entity) | 4-5 | 2-4 | 4-5 | 2-4 | 3-5 |
+These are qualitative hypotheses, not numeric predictions mapped to the /28 binary scale. The point is to document expectations BEFORE observing results.
 
-These are hypotheses, not targets. The point is to document expectations BEFORE observing results.
+| Strategy | Short Recall | Deep Recall | Entity Tracking | Instruction | Interference |
+|----------|-------------|-------------|-----------------|-------------|-------------|
+| Alpha (none) | Fail | Fail | Fail | Fail | Fail |
+| Beta (FIFO-20) | Pass | Fail (out of window) | Pass | Unknown | Pass |
+| Gamma (summary) | Pass | Partial (depends on summary quality) | Partial (recency bias likely) | Unknown | Partial |
+| Delta (entity) | Pass | Partial (depends on entity extraction) | Pass (designed for this) | Unknown | Pass |
 
 ---
 
 ## Aggregation Rules
 
-- Each test category will have multiple planted facts (minimum 3 per category)
-- Final score per agent per category = mean of individual fact scores
-- A strategy is "better" only if it scores ≥1.5 points higher on average (to account for noise)
-- Any unexpected result (e.g., Alpha scoring 5 on deep recall) should be investigated as a potential methodological error before being accepted
+- Primary scoring: binary (0/1 per criterion), summed per test and overall (/28)
+- A strategy is "better" only if it scores ≥1.5 points higher on the **normalized** composite (to account for noise and unequal test weighting)
+- Any unexpected result (e.g., Alpha scoring well on recall) should be investigated as a potential methodological error before being accepted
+- Report both raw totals (/28) and normalized scores (each test = 20% of composite)
 
 ---
 
@@ -68,6 +70,7 @@ Before attributing a difference to memory strategy, rule out:
 - [ ] Was sufficient time given between messages for memory processing?
 - [ ] Could the model have inferred the answer from the question itself? (information leakage)
 - [ ] Is the sample size sufficient (≥3 facts per category)?
+- [ ] Did the agent use tool-mediated retrieval (tickets, docs) instead of memory? If so, annotate as "tool-assisted recall" separately.
 
 ---
 

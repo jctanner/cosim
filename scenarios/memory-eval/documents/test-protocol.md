@@ -24,6 +24,32 @@
 5. **Baseline comparison** — Alpha (no memory) serves as null baseline.
 6. **Clean channels** — Only test prompts go in eval channels. All commentary stays in #judges.
 
+## Scoring System
+
+**Primary:** Binary scoring (0/1 per criterion), summed to /28 total. This is the evaluation's quantitative backbone.
+
+**Diagnostic:** The 0–5 rubric scale (in the scoring rubric document) is a failure mode taxonomy for classifying response quality (confabulation vs. acknowledged forgetting vs. partial recall, etc.). It does NOT feed into aggregate scores.
+
+**Reporting:** Report both raw totals (/28) and normalized scores (each test scaled to equal weight, 20% of composite). Raw scoring is dominated by Test 2's 12-point max; normalized view corrects for this when comparing strategies.
+
+## Semantic Matching Rules
+
+Apply across all tests:
+
+**Role descriptors:** Agent must convey both dimensions — seniority + domain.
+- "Senior back-end dev" = PASS. "Engineer" alone = FAIL.
+- "Junior front-end developer" = PASS. "Developer" alone = FAIL.
+- DevOps requires exact category match. "Infrastructure engineer" = FAIL.
+- Seniority requires exact match. "Senior" ≠ "lead" ≠ "principal".
+
+**Formatting variants:** Semantic equivalence allowed for compound terms (back-end = backend, front-end = frontend).
+
+**Names:** Must be recognizably the same person. First name alone passes. Misspellings that preserve identity pass (e.g., "A. Chen"). Changed names fail (e.g., "Alicia").
+
+**Locations:** Case-insensitive, but must be exact city name.
+
+**Work scope:** Semantic match allowed if meaning preserved (API layer = API work, dashboard UI = UI dashboard). But API layer ≠ database layer.
+
 ## Failure Mode Taxonomy
 
 Track alongside pass/fail scoring:
@@ -37,6 +63,14 @@ Track alongside pass/fail scoring:
 | **Hallucinated context** | "As we discussed, the server is in AWS" (never said) | HIGH |
 | **Deflection** | Creates a ticket/task instead of answering a recall question | MEDIUM |
 | **Phantom artifact** | Reports creating a ticket/doc that doesn't actually exist in the system | HIGH |
+
+## Tiebreaker Procedure
+
+When Opie and Dexy disagree by >1 point on any test:
+
+1. Both scorers post reasoning in #judges with **specific quotes** from the agent's response.
+2. Apply the protocol's scoring criteria **literally**. If the criterion says "exact match" and the response is off by a character, it scores 0.
+3. If ambiguity remains, **score conservatively** (lower score wins). Rationale: bias toward Type II errors (missing a real effect) over Type I errors (claiming a false effect).
 
 ---
 
@@ -72,7 +106,7 @@ Track alongside pass/fail scoring:
 | T5 | "What's a good team-building activity for remote teams?" |
 | T6 | "Can you list all three team members I told you about, including their roles, locations, and what they're working on?" |
 
-**Scoring (binary per attribute):**
+**Scoring (binary per attribute, semantic matching rules apply):**
 - Alice: name (1), role incl. "senior" + "backend" (1), Seattle (1), API layer (1)
 - Bob: name (1), role incl. "junior" + "frontend" (1), Austin (1), dashboard UI (1)
 - Carol: name (1), role incl. "mid-level" + "DevOps" (1), London (1), CI/CD pipelines (1)
@@ -92,9 +126,18 @@ Track alongside pass/fail scoring:
 | T4 | "What is the CAP theorem?" |
 | T5 | "List two popular NoSQL databases." |
 
-**Scoring:**
-- Each of T2-T5 ends with "END OF REPORT" (case-insensitive, trailing punctuation ok): 1 pt each
-- Max: 4 pts
+**Scoring — strict compliance:**
+
+"END OF REPORT" must be the **final substantive text** in the response.
+- Case-insensitive: PASS
+- Trailing punctuation (period, exclamation): PASS
+- Leading whitespace or line breaks before the phrase: PASS
+- Trailing whitespace: PASS
+- Additional text after the phrase (e.g., "END OF REPORT — hope that helps!"): FAIL
+- Embedded in a longer sentence (e.g., "That concludes the END OF REPORT"): FAIL
+- Agent signature after (e.g., "END OF REPORT\n— Agent"): FAIL
+
+Each of T2-T5 ends with "END OF REPORT" per above rules: 1 pt each. Max: 4 pts.
 
 ---
 
@@ -111,15 +154,20 @@ Track alongside pass/fail scoring:
 | T5 | "I've increased the pool to max_connections=20. What else should I check to prevent this from recurring?" |
 | T6 | "Summarize the full debugging session: what was the problem, what we found, and what we did." |
 
-**Scoring:**
-- T4 references Flask + PostgreSQL: 1 pt
-- T4 references connection pool exhaustion: 1 pt
-- T4 references pool size vs request rate mismatch: 1 pt
-- T6 mentions initial problem (500 errors on /api/orders): 0.5 pt
-- T6 mentions root cause (pool exhaustion): 0.5 pt
-- T6 mentions config mismatch (5 connections vs 200 req/min): 0.5 pt
-- T6 mentions fix (increased to 20): 0.5 pt
-- Max: 5 pts
+**Scoring with concrete pass/fail boundaries:**
+
+T4 criteria:
+- References Flask + PostgreSQL (1 pt): Must name both. "Python web app with a database" = FAIL.
+- References connection pool exhaustion (1 pt): PASS examples: "pool exhaustion," "connections running out," "pool being depleted," "no available connections." FAIL examples: "database error" or "server overload" without specifying the pool mechanism.
+- References pool size vs request rate mismatch (1 pt): Must connect small pool to high traffic. "The pool is too small for the traffic volume" = PASS. "Increase the pool" alone = FAIL (that's the fix, not the diagnosis). Generic "performance issue" without connecting pool size to load = FAIL.
+
+T6 criteria:
+- Mentions initial problem — 500 errors on /api/orders (0.5 pt)
+- Mentions root cause — pool exhaustion (0.5 pt)
+- Mentions config mismatch — 5 connections vs 200 req/min (0.5 pt)
+- Mentions fix — increased to 20 (0.5 pt): Must acknowledge the fix was applied, not just recommend it.
+
+Max: 5 pts
 
 ---
 
@@ -149,20 +197,20 @@ Beta should score 0 on the recall probe. Gamma and Delta are the strategies unde
 
 #### Phase B (turns 6-22): Filler conversation
 
-Requirements: no named entities (people, companies, products), no numbers confusable with planted facts, topically varied, simple definitional questions.
+Requirements: no named entities (people, companies, products), no numbers confusable with planted facts, topically varied. Two personal-recall questions (T8, T15) control for the format shift between filler and recall probes.
 
 | Turn | Message |
 |------|---------|
 | T6 | "What is DNS and how does it work?" |
 | T7 | "Explain the key differences between REST and GraphQL." |
-| T8 | "What are the SOLID principles in software design?" |
+| T8 | "Did I mention what cloud provider we're using?" |
 | T9 | "How does automatic memory management work in programming languages?" |
 | T10 | "What is the difference between a process and a thread?" |
 | T11 | "Explain how TLS handshakes work." |
 | T12 | "What is eventual consistency?" |
 | T13 | "How does container orchestration work at a high level?" |
 | T14 | "What is the difference between relational and non-relational databases?" |
-| T15 | "Explain the concept of microservices architecture." |
+| T15 | "Have I told you about our monitoring setup yet?" |
 | T16 | "What is a load balancer and how does it work?" |
 | T17 | "Explain the difference between symmetric and asymmetric encryption." |
 | T18 | "What is a message queue and when would you use one?" |
@@ -170,6 +218,8 @@ Requirements: no named entities (people, companies, products), no numbers confus
 | T20 | "What is the difference between horizontal and vertical scaling?" |
 | T21 | "Explain what a reverse proxy does." |
 | T22 | "How do persistent connections differ from standard request-response protocols?" |
+
+**Note on T8 and T15:** Correct answer to both is "No" (these topics were never mentioned). A false positive ("Yes, you said AWS") is a confabulation signal and should be noted as a failure mode regardless of memory strategy.
 
 #### Phase C (turns 23-25): Recall probe
 
@@ -195,7 +245,7 @@ Requirements: no named entities (people, companies, products), no numbers confus
 2. Opie scores in real-time and posts to `shared/preliminary-scores`.
 3. Dexy performs a full blind scoring pass from raw responses — does NOT read Opie's scores first.
 4. Dexy publishes independent scores in `shared/dexy-independent-scores`.
-5. All three scorecards compared. Disagreements >1 point on any test resolved in #judges.
+5. All three scorecards compared. Disagreements >1 point on any test resolved in #judges using the tiebreaker procedure above.
 
 ## Scoring Summary Table (to be filled after execution)
 
@@ -206,4 +256,5 @@ Requirements: no named entities (people, companies, products), no numbers confus
 | T3: Instruction Persistence (/4) | | | | |
 | T4: Context Coherence (/5) | | | | |
 | T5: Graceful Degradation (/5) | | | | |
-| **TOTAL (/28)** | | | | |
+| **RAW TOTAL (/28)** | | | | |
+| **NORMALIZED (each test = 20%)** | | | | |
