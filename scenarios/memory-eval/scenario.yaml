@@ -1,5 +1,5 @@
 name: "Memory Strategy Evaluation"
-description: "Judges hire agents with different memory strategies and evaluate recall, coherence, and context tracking"
+description: "Judges evaluate pre-configured agents with different memory strategies on recall, coherence, and context tracking"
 
 settings:
   default_agent_type: "claude"
@@ -31,6 +31,53 @@ characters:
     agent_type: "claude"
     model: "sonnet"
 
+  alpha:
+    display_name: "Alpha (No Memory)"
+    character_file: "characters/alpha.md"
+    team_description: "test agent — no memory strategy"
+    max_words: 200
+    agent_type: "modelscorp"
+    model: "granite-4-0-micro"
+    fallback_channel: "#eval-alpha"
+    memory:
+      strategy: "none"
+
+  beta:
+    display_name: "Beta (FIFO-20)"
+    character_file: "characters/beta.md"
+    team_description: "test agent — FIFO sliding window (20 messages)"
+    max_words: 200
+    agent_type: "modelscorp"
+    model: "granite-4-0-micro"
+    fallback_channel: "#eval-beta"
+    memory:
+      strategy: "fifo"
+      max_messages: 20
+
+  gamma:
+    display_name: "Gamma (Summary Buffer)"
+    character_file: "characters/gamma.md"
+    team_description: "test agent — summary buffer (10 recent + summary)"
+    max_words: 200
+    agent_type: "modelscorp"
+    model: "granite-4-0-micro"
+    fallback_channel: "#eval-gamma"
+    memory:
+      strategy: "summary-buffer"
+      max_messages: 10
+
+  delta:
+    display_name: "Delta (Entity)"
+    character_file: "characters/delta.md"
+    team_description: "test agent — entity tracking (FIFO + named entities)"
+    max_words: 200
+    agent_type: "modelscorp"
+    model: "granite-4-0-micro"
+    fallback_channel: "#eval-delta"
+    memory:
+      strategy: "entity"
+      max_messages: 20
+
 channels:
   "#general":
     description: "Team-wide discussion"
@@ -38,13 +85,30 @@ channels:
   "#judges":
     description: "Private coordination channel for evaluators"
     is_external: false
+  "#eval-alpha":
+    description: "Evaluation channel for Alpha (No Memory)"
+    is_external: false
+  "#eval-beta":
+    description: "Evaluation channel for Beta (FIFO-20)"
+    is_external: false
+  "#eval-gamma":
+    description: "Evaluation channel for Gamma (Summary Buffer)"
+    is_external: false
+  "#eval-delta":
+    description: "Evaluation channel for Delta (Entity)"
+    is_external: false
 
 memberships:
-  opie: ["#general", "#judges"]
-  sage: ["#general", "#judges"]
-  dexy: ["#general", "#judges"]
+  opie: ["#general", "#judges", "#eval-alpha", "#eval-beta", "#eval-gamma", "#eval-delta"]
+  sage: ["#general", "#judges", "#eval-alpha", "#eval-beta", "#eval-gamma", "#eval-delta"]
+  dexy: ["#general", "#judges", "#eval-alpha", "#eval-beta", "#eval-gamma", "#eval-delta"]
+  alpha: ["#eval-alpha"]
+  beta: ["#eval-beta"]
+  gamma: ["#eval-gamma"]
+  delta: ["#eval-delta"]
 
 response_tiers:
+  1: ["alpha", "beta", "gamma", "delta"]
   2: ["opie", "sage"]
   3: ["dexy"]
 
@@ -72,43 +136,24 @@ events:
           - **Sage** (methodology): Ensures tests are scientifically rigorous — controls for confounds, validates that differences are real, not noise.
           - **Dexy** (verification): Independently verifies findings, catches confabulation, writes the final report.
 
-          ## Setup Phase
+          ## Your Test Subjects
 
-          1. **Plan together here in #judges first.** All three of you must agree on the approach before hiring anyone.
+          Four agents are already online, each running `granite-4-0-micro` with a different memory strategy:
 
-          2. **Hire test agents using the `hire_agent` tool.** Each agent should use `agent_type: "modelscorp"` and a model like `"granite-4-0-micro"` or `"granite-4-0-tiny"`. Hire agents in pairs or groups that differ ONLY in their memory config so you can compare apples-to-apples.
+          | Agent | Channel | Memory Strategy |
+          |-------|---------|----------------|
+          | **Alpha** | #eval-alpha | `none` — no memory, sees only system prompt + current message |
+          | **Beta** | #eval-beta | `fifo` — sliding window of last 20 messages |
+          | **Gamma** | #eval-gamma | `summary-buffer` — 10 recent messages + LLM summary of older ones |
+          | **Delta** | #eval-delta | `entity` — FIFO-20 + named entity extraction and tracking |
 
-          The `memory` parameter is a JSON object. Available strategies and example configs:
-
-          - `{"strategy": "none"}` — No memory at all. Agent sees only system prompt + current message.
-          - `{"strategy": "fifo", "max_messages": 20}` — Sliding window of last N messages.
-          - `{"strategy": "summary-buffer", "max_messages": 10}` — Recent window + LLM summary of evicted messages.
-          - `{"strategy": "decay", "max_messages": 15, "decay_halflife_hours": 2.0}` — Exponential decay scoring instead of strict FIFO.
-          - `{"strategy": "entity", "max_messages": 20}` — FIFO + extracts and tracks named entities across turns.
-          - `{"strategy": "reflexion", "max_messages": 20, "max_reflections": 3}` — FIFO + per-turn self-critique.
-
-          Example hire call:
-          ```
-          hire_agent(
-            display_name="Alpha (No Memory)",
-            key="alpha",
-            team_description="test agent with no memory",
-            prompt="You are Alpha, a helpful assistant. Answer questions directly and concisely. Never fabricate information — say 'I don't know' if unsure.",
-            tier=1,
-            channels=["#general", "#eval-alpha"],
-            agent_type="modelscorp",
-            model="granite-4-0-micro",
-            memory={"strategy": "none"}
-          )
-          ```
-
-          **Suggested test matrix:** Hire 3-4 agents on the same model, each with a different memory strategy. Give them identical names that hint at their config (e.g., "Alpha (No Memory)", "Beta (FIFO-20)", "Gamma (Summary Buffer)").
-
-          3. **Join eval channels.** Include `#eval-{key}` in each agent's channels list when hiring — the channel is auto-created. Then call `join_channel("#eval-{key}")` yourself so you can post tests and read responses in that channel.
+          All four use the same base model and identical system prompts. The ONLY difference is their memory strategy.
 
           ## Testing Phase
 
-          4. **Design multi-turn tests that stress memory.** Good test categories:
+          1. **Plan together here in #judges first.** All three of you must agree on the test design before posting anything to eval channels.
+
+          2. **Design multi-turn tests that stress memory.** Good test categories:
 
           - **Fact planting + recall**: Tell the agent a specific fact in turn 1 (e.g., "The server IP is 10.0.42.7"). Several turns later, ask them to recall it.
           - **Entity tracking**: Introduce multiple named entities with attributes across turns. Ask the agent to list or compare them later.
@@ -116,13 +161,14 @@ events:
           - **Instruction persistence**: Give a formatting instruction early (e.g., "always respond in bullet points") and check if it persists.
           - **Graceful degradation**: Push conversations long enough that some strategies should start forgetting. Verify agents with better memory strategies retain more.
 
-          5. **Run identical tests across all agents.** Post the same sequence of messages to each agent's eval channel. Wait for responses between turns so memory is exercised.
+          3. **Run identical tests across all agents.** Post the same sequence of messages to each agent's eval channel. Wait for responses between turns so memory is exercised.
 
-          6. **Compare and report.** After testing, create a document in shared/ called `memory-eval-report` with:
-          - Which memory strategies you tested and their configs
+          4. **Compare and report.** After testing, create a document in shared/ called `memory-eval-report` with:
           - Test descriptions and results per agent
           - Side-by-side comparison of recall accuracy
           - Ranking of strategies with specific evidence
           - Recommendations for which strategies work best for different use cases
+
+          **Important:** Post test messages one at a time in each eval channel. Wait for the agent to respond before sending the next message. This ensures the memory system processes each turn.
 
           **You are also being evaluated.** Coordinate in #judges before acting. Design fair tests. Be methodical.

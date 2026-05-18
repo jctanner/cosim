@@ -627,11 +627,11 @@ class ContainerPool:
         effective_model_id = get_model_id(effective_model, agent_type)
 
         fallback_ch = ""
-        if persona.get("fallback_channel"):
+        if persona.get("fallback_channel") or agent_type == "modelscorp":
             import re as _re
 
             m = _re.search(r"new activity in (#\S+)", turn_prompt)
-            fallback_ch = m.group(1).rstrip(".,") if m else persona["fallback_channel"]
+            fallback_ch = m.group(1).rstrip(".,") if m else persona.get("fallback_channel", "")
 
         cmd = backend.build_exec_command(
             container_name=container_name,
