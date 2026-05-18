@@ -21,6 +21,7 @@ def _parse_frontmatter(text: str) -> dict:
 
 
 SCENARIO_SETTINGS: dict = {}
+SEED_DOCUMENTS: list[dict] = []
 
 
 def get_settings() -> dict:
@@ -119,6 +120,14 @@ def load_scenario(scenario_name: str) -> None:
     # --- Populate SCENARIO_SETTINGS ---
     SCENARIO_SETTINGS.clear()
     SCENARIO_SETTINGS.update(config.get("settings", {}))
+
+    # --- Populate SEED_DOCUMENTS (optional) ---
+    SEED_DOCUMENTS.clear()
+    for doc in config.get("documents", []):
+        source = doc.get("file", "")
+        if source:
+            doc["_source_path"] = str(scenario_dir / source)
+        SEED_DOCUMENTS.append(doc)
 
     print(f"Scenario loaded: {config.get('name', scenario_name)}")
     print(f"  Characters: {len(personas_mod.PERSONAS)}")
