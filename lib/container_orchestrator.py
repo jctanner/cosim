@@ -914,8 +914,22 @@ async def _process_single_command(client, pool, personas, scenario_name, cmd):
                     print(f"  Warning: failed to register MCP endpoints for {agent_key}: {e}")
 
                 # Launch long-running container and create lock
-                await pool._launch_container(agent_key)
+                try:
+                    await pool._launch_container(agent_key)
+                except Exception as e:
+                    print(f"  Failed to launch container for {agent_key}: {e}")
+                    pool._personas.pop(agent_key, None)
+                    pool._backends.pop(agent_key, None)
+                    pool._backend_configs.pop(agent_key, None)
+                    PERSONAS.pop(agent_key, None)
+                    DEFAULT_MEMBERSHIPS.pop(agent_key, None)
+                    return list(pool._personas.values()), False
                 pool._agent_locks[agent_key] = asyncio.Lock()
+
+                # Assign session ID (mirrors pool.start() logic)
+                if pool._use_sessions and agent_key not in pool._session_ids:
+                    if isinstance(backend, (ClaudeBackend, ModelscorpBackend)):
+                        pool._session_ids[agent_key] = str(_uuid.uuid4())
 
                 personas = list(pool._personas.values())
                 client.post_message("System", f"{persona['display_name']} has joined the team!", channel="#system")
@@ -1232,9 +1246,29 @@ async def _run_loop(
 
             # Reset agent statuses after tier
             agents_status = _build_agent_status(personas, pool)
-            client.send_heartbeat(
-                "responding", scenario_name, agents_status, "Processing messages...", check_commands=False
-            )
+
+            # Process add_agent commands between tiers so newly hired
+            # agents are in the pool before the next wave starts.
+            while True:
+                cmd_resp = client.send_heartbeat("responding", scenario_name, agents_status, "Processing messages...")
+                cmd_action = cmd_resp.get("action")
+                if cmd_action == "add_agent":
+                    print(f"  Inter-tier add_agent: {cmd_resp.get('key')}")
+                    personas, _ = await _process_single_command(client, pool, personas, scenario_name, cmd_resp)
+                    persona_map = {p["name"]: p for p in personas}
+                    agents_status = _build_agent_status(personas, pool)
+                else:
+                    if cmd_action and cmd_action not in ("add_agent",):
+                        # Re-queue non-add commands for later
+                        try:
+                            sync_requests.post(
+                                f"{client.base_url}/api/orchestrator/command",
+                                json=cmd_resp,
+                                timeout=5,
+                            )
+                        except Exception:
+                            pass
+                    break
 
             # Update per-agent last_seen to current high-water mark
             all_latest = client.get_messages()
@@ -1568,6 +1602,34 @@ async def run_container_orchestrator(args) -> None:
                 personas, restart = await _process_pending_commands(client, pool, personas, scenario_name)
                 if restart:
                     continue
+
+                # Catch-up: newly added agents may have unread messages in
+                # their channels (posted by judges during a prior cycle).
+                # Trigger a response loop so they actually respond.
+                catch_up_channels = set()
+                memberships = _get_channel_memberships(client)
+                all_messages = client.get_messages()
+                msg_channels = {m.get("channel") for m in all_messages}
+                for pk in pool._personas:
+                    if agent_last_seen.get(pk, 0) == 0:
+                        for ch, members in memberships.items():
+                            if pk in members and ch in msg_channels:
+                                catch_up_channels.add(ch)
+                if catch_up_channels:
+                    print(f"\n  Catch-up: triggering newly added agents in {sorted(catch_up_channels)}")
+                    active_channels = await _run_loop(
+                        client,
+                        pool,
+                        personas,
+                        catch_up_channels,
+                        max_waves,
+                        scenario_name,
+                        max_concurrent,
+                        agent_last_seen,
+                    )
+                    latest = client.get_messages()
+                    if latest:
+                        last_seen_id = latest[-1]["id"]
                 continue
 
             new_messages = client.get_messages(since=last_seen_id)
