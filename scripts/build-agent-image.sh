@@ -18,5 +18,5 @@ if [ ! -f container/agent-hooks.json ]; then
 fi
 
 echo "Prerequisites OK. Building image..."
-podman build -f container/Dockerfile.agent -t "$IMAGE" container/
+podman build -f container/Dockerfile.agent -t "$IMAGE" .
 echo "Done: $IMAGE"

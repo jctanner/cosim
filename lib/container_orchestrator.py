@@ -18,7 +18,7 @@ from pathlib import Path
 
 import requests as sync_requests
 
-from lib.agent_backends import ClaudeBackend, CodexBackend, get_backend
+from lib.agent_backends import ClaudeBackend, CodexBackend, ModelscorpBackend, get_backend
 from lib.agent_runner import format_duration, get_model_id
 from lib.chat_client import ChatClient
 from lib.personas import (
@@ -308,7 +308,7 @@ async def _preflight_checks(container_image: str) -> None:
         raise RuntimeError(
             f"Container image '{container_image}' not found.\n"
             f"  Build it first:  ./scripts/build-agent-image.sh\n"
-            f"  Or manually:     podman build -t {container_image} -f container/Dockerfile.agent container/"
+            f"  Or manually:     podman build -t {container_image} -f container/Dockerfile.agent ."
         )
     print(f"  image: {container_image}")
 
@@ -362,14 +362,16 @@ class ContainerPool:
 
         # Resolve per-agent backend
         settings = get_settings()
-        self._backends: dict[str, ClaudeBackend | CodexBackend] = {}
+        self._backends: dict[str, ClaudeBackend | CodexBackend | ModelscorpBackend] = {}
         for key, persona in self._personas.items():
-            agent_type = (
-                persona.get("agent_type")
-                or settings.get("default_agent_type")
-                or default_agent_type
-            )
-            self._backends[key] = get_backend(agent_type)
+            agent_type = persona.get("agent_type") or settings.get("default_agent_type") or default_agent_type
+            backend = get_backend(agent_type)
+            if isinstance(backend, ModelscorpBackend):
+                if persona.get("allowed_tools"):
+                    backend.set_allowed_tools(key, persona["allowed_tools"])
+                if persona.get("memory"):
+                    backend.set_memory_config(key, persona["memory"])
+            self._backends[key] = backend
 
     async def start(self, build_system_prompt_fn, on_progress=None) -> None:
         """Validate prerequisites, generate configs, and launch long-running containers.
@@ -407,11 +409,20 @@ class ContainerPool:
             backend = self._backends[key]
             prompt_content = build_system_prompt_fn(key)
             self._backend_configs[key] = backend.generate_config_files(
-                key, prompt_content, self._mcp_host, self._mcp_port, TMP_DIR,
+                key,
+                prompt_content,
+                self._mcp_host,
+                self._mcp_port,
+                TMP_DIR,
             )
 
             # Initialize log file
-            agent_type = "codex" if isinstance(backend, CodexBackend) else "claude"
+            if isinstance(backend, CodexBackend):
+                agent_type = "codex"
+            elif isinstance(backend, ModelscorpBackend):
+                agent_type = "modelscorp"
+            else:
+                agent_type = "claude"
             effective_model = persona.get("model") or self._default_model
             effective_model_id = get_model_id(effective_model, agent_type)
             log_file = self._log_dir / f"{display_name.replace('/', '_').replace(' ', '_')}.log"
@@ -428,6 +439,11 @@ class ContainerPool:
 
             # Create per-agent lock
             self._agent_locks[key] = asyncio.Lock()
+
+            # Pre-assign session IDs for backends that support conversation memory
+            if self._use_sessions and key not in self._session_ids:
+                if isinstance(backend, (ClaudeBackend, ModelscorpBackend)):
+                    self._session_ids[key] = str(_uuid.uuid4())
 
             print(f" ready ({i}/{total})")
 
@@ -447,7 +463,10 @@ class ContainerPool:
 
         # Cleanup leftover container from previous session
         rm_proc = await asyncio.create_subprocess_exec(
-            "podman", "rm", "-f", container_name,
+            "podman",
+            "rm",
+            "-f",
+            container_name,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -458,11 +477,17 @@ class ContainerPool:
 
         # Launch long-running container (CMD from Dockerfile: sleep infinity)
         cmd = [
-            "podman", "run", "-d",
-            "--name", container_name,
-            "-e", f"AGENT_PERSONA_KEY={persona_key}",
-            "-e", f"MCP_SERVER_URL={self._mcp_host}:{self._mcp_port}",
-            "-e", "GCE_METADATA_HOST=127.0.0.1",
+            "podman",
+            "run",
+            "-d",
+            "--name",
+            container_name,
+            "-e",
+            f"AGENT_PERSONA_KEY={persona_key}",
+            "-e",
+            f"MCP_SERVER_URL={self._mcp_host}:{self._mcp_port}",
+            "-e",
+            "GCE_METADATA_HOST=127.0.0.1",
             *self._env_flags,
             *volume_flags,
             self._container_image,
@@ -479,8 +504,12 @@ class ContainerPool:
 
         # Verify container is running
         check_proc = await asyncio.create_subprocess_exec(
-            "podman", "container", "inspect", container_name,
-            "--format", "{{.State.Status}}",
+            "podman",
+            "container",
+            "inspect",
+            container_name,
+            "--format",
+            "{{.State.Status}}",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -496,14 +525,22 @@ class ContainerPool:
         if self._gcp_creds_path and isinstance(backend, ClaudeBackend):
             creds_dest = f"{container_name}:/home/agent/.config/gcloud/application_default_credentials.json"
             cp_proc = await asyncio.create_subprocess_exec(
-                "podman", "cp", self._gcp_creds_path, creds_dest,
+                "podman",
+                "cp",
+                self._gcp_creds_path,
+                creds_dest,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
             await cp_proc.communicate()
             chown_proc = await asyncio.create_subprocess_exec(
-                "podman", "exec", "--user", "root", container_name,
-                "chown", "agent:agent",
+                "podman",
+                "exec",
+                "--user",
+                "root",
+                container_name,
+                "chown",
+                "agent:agent",
                 "/home/agent/.config/gcloud/application_default_credentials.json",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
@@ -514,7 +551,10 @@ class ContainerPool:
             staged = TMP_DIR / f"cred-{persona_key}-{Path(src_path).name}"
             shutil.copy2(src_path, staged)
             cp_proc = await asyncio.create_subprocess_exec(
-                "podman", "cp", str(staged), f"{container_name}:{dest_path}",
+                "podman",
+                "cp",
+                str(staged),
+                f"{container_name}:{dest_path}",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
@@ -523,8 +563,15 @@ class ContainerPool:
         # Fix ownership for codex home directory
         if isinstance(backend, CodexBackend):
             chown_proc = await asyncio.create_subprocess_exec(
-                "podman", "exec", "--user", "root", container_name,
-                "chown", "-R", "agent:agent", "/home/agent/.codex/",
+                "podman",
+                "exec",
+                "--user",
+                "root",
+                container_name,
+                "chown",
+                "-R",
+                "agent:agent",
+                "/home/agent/.codex/",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
@@ -569,15 +616,22 @@ class ContainerPool:
 
         resuming = self._use_sessions and persona_key in self._session_started
 
-        # For Claude: pre-assign session UUID; for Codex: captured from output
-        if self._use_sessions and persona_key not in self._session_ids:
-            if isinstance(backend, ClaudeBackend):
-                self._session_ids[persona_key] = str(_uuid.uuid4())
-
         # Resolve per-agent model
-        agent_type = "codex" if isinstance(backend, CodexBackend) else "claude"
+        if isinstance(backend, CodexBackend):
+            agent_type = "codex"
+        elif isinstance(backend, ModelscorpBackend):
+            agent_type = "modelscorp"
+        else:
+            agent_type = "claude"
         effective_model = persona.get("model") or self._default_model
         effective_model_id = get_model_id(effective_model, agent_type)
+
+        fallback_ch = ""
+        if persona.get("fallback_channel") or agent_type == "modelscorp":
+            import re as _re
+
+            m = _re.search(r"new activity in (#\S+)", turn_prompt)
+            fallback_ch = m.group(1).rstrip(".,") if m else persona.get("fallback_channel", "")
 
         cmd = backend.build_exec_command(
             container_name=container_name,
@@ -588,6 +642,7 @@ class ContainerPool:
             max_turns=self._max_turns,
             allowed_tools_str=self._allowed_tools_str,
             use_sessions=self._use_sessions,
+            fallback_channel=fallback_ch,
         )
 
         # Log the actual command for debugging
@@ -804,6 +859,9 @@ async def _process_single_command(client, pool, personas, scenario_name, cmd):
                     "character_file": npc_data.get("character_file", ""),
                     "agent_type": npc_data.get("agent_type"),
                     "model": npc_data.get("model"),
+                    "allowed_tools": npc_data.get("allowed_tools"),
+                    "fallback_channel": npc_data.get("fallback_channel", ""),
+                    "memory": npc_data.get("memory"),
                 }
                 PERSONAS[agent_key] = persona
                 DEFAULT_MEMBERSHIPS[agent_key] = set(npc_data.get("channels", ["#general"]))
@@ -816,18 +874,26 @@ async def _process_single_command(client, pool, personas, scenario_name, cmd):
 
                 # Resolve backend for new agent
                 from lib.scenario_loader import get_settings
+
                 agent_type = (
-                    persona.get("agent_type")
-                    or get_settings().get("default_agent_type")
-                    or pool._default_agent_type
+                    persona.get("agent_type") or get_settings().get("default_agent_type") or pool._default_agent_type
                 )
                 backend = get_backend(agent_type)
+                if isinstance(backend, ModelscorpBackend):
+                    if persona.get("allowed_tools"):
+                        backend.set_allowed_tools(agent_key, persona["allowed_tools"])
+                    if persona.get("memory"):
+                        backend.set_memory_config(agent_key, persona["memory"])
                 pool._backends[agent_key] = backend
 
                 # Generate config files via backend
                 prompt_content = build_v3_system_prompt(agent_key)
                 pool._backend_configs[agent_key] = backend.generate_config_files(
-                    agent_key, prompt_content, pool._mcp_host, pool._mcp_port, TMP_DIR,
+                    agent_key,
+                    prompt_content,
+                    pool._mcp_host,
+                    pool._mcp_port,
+                    TMP_DIR,
                 )
 
                 # Register MCP endpoints for the new agent on the MCP server
@@ -848,8 +914,22 @@ async def _process_single_command(client, pool, personas, scenario_name, cmd):
                     print(f"  Warning: failed to register MCP endpoints for {agent_key}: {e}")
 
                 # Launch long-running container and create lock
-                await pool._launch_container(agent_key)
+                try:
+                    await pool._launch_container(agent_key)
+                except Exception as e:
+                    print(f"  Failed to launch container for {agent_key}: {e}")
+                    pool._personas.pop(agent_key, None)
+                    pool._backends.pop(agent_key, None)
+                    pool._backend_configs.pop(agent_key, None)
+                    PERSONAS.pop(agent_key, None)
+                    DEFAULT_MEMBERSHIPS.pop(agent_key, None)
+                    return list(pool._personas.values()), False
                 pool._agent_locks[agent_key] = asyncio.Lock()
+
+                # Assign session ID (mirrors pool.start() logic)
+                if pool._use_sessions and agent_key not in pool._session_ids:
+                    if isinstance(backend, (ClaudeBackend, ModelscorpBackend)):
+                        pool._session_ids[agent_key] = str(_uuid.uuid4())
 
                 personas = list(pool._personas.values())
                 client.post_message("System", f"{persona['display_name']} has joined the team!", channel="#system")
@@ -1166,9 +1246,29 @@ async def _run_loop(
 
             # Reset agent statuses after tier
             agents_status = _build_agent_status(personas, pool)
-            client.send_heartbeat(
-                "responding", scenario_name, agents_status, "Processing messages...", check_commands=False
-            )
+
+            # Process add_agent commands between tiers so newly hired
+            # agents are in the pool before the next wave starts.
+            while True:
+                cmd_resp = client.send_heartbeat("responding", scenario_name, agents_status, "Processing messages...")
+                cmd_action = cmd_resp.get("action")
+                if cmd_action == "add_agent":
+                    print(f"  Inter-tier add_agent: {cmd_resp.get('key')}")
+                    personas, _ = await _process_single_command(client, pool, personas, scenario_name, cmd_resp)
+                    persona_map = {p["name"]: p for p in personas}
+                    agents_status = _build_agent_status(personas, pool)
+                else:
+                    if cmd_action and cmd_action not in ("add_agent",):
+                        # Re-queue non-add commands for later
+                        try:
+                            sync_requests.post(
+                                f"{client.base_url}/api/orchestrator/command",
+                                json=cmd_resp,
+                                timeout=5,
+                            )
+                        except Exception:
+                            pass
+                    break
 
             # Update per-agent last_seen to current high-water mark
             all_latest = client.get_messages()
@@ -1502,6 +1602,34 @@ async def run_container_orchestrator(args) -> None:
                 personas, restart = await _process_pending_commands(client, pool, personas, scenario_name)
                 if restart:
                     continue
+
+                # Catch-up: newly added agents may have unread messages in
+                # their channels (posted by judges during a prior cycle).
+                # Trigger a response loop so they actually respond.
+                catch_up_channels = set()
+                memberships = _get_channel_memberships(client)
+                all_messages = client.get_messages()
+                msg_channels = {m.get("channel") for m in all_messages}
+                for pk in pool._personas:
+                    if agent_last_seen.get(pk, 0) == 0:
+                        for ch, members in memberships.items():
+                            if pk in members and ch in msg_channels:
+                                catch_up_channels.add(ch)
+                if catch_up_channels:
+                    print(f"\n  Catch-up: triggering newly added agents in {sorted(catch_up_channels)}")
+                    active_channels = await _run_loop(
+                        client,
+                        pool,
+                        personas,
+                        catch_up_channels,
+                        max_waves,
+                        scenario_name,
+                        max_concurrent,
+                        agent_last_seen,
+                    )
+                    latest = client.get_messages()
+                    if latest:
+                        last_seen_id = latest[-1]["id"]
                 continue
 
             new_messages = client.get_messages(since=last_seen_id)
@@ -1550,8 +1678,7 @@ async def run_container_orchestrator(args) -> None:
                 try:
                     blog_posts = client.get_blog_posts()
                     new_blog_replies = [
-                        p for p in blog_posts
-                        if p.get("last_reply_at") and p["last_reply_at"] > last_blog_check_ts
+                        p for p in blog_posts if p.get("last_reply_at") and p["last_reply_at"] > last_blog_check_ts
                     ]
                     if new_blog_replies:
                         last_blog_check_ts = max(p["last_reply_at"] for p in new_blog_replies)
@@ -1567,25 +1694,19 @@ async def run_container_orchestrator(args) -> None:
                 try:
                     tickets = client.list_tickets()
                     new_ticket_activity = [
-                        t for t in tickets
-                        if t.get("updated_at") and t["updated_at"] > last_ticket_check_ts
+                        t for t in tickets if t.get("updated_at") and t["updated_at"] > last_ticket_check_ts
                     ]
                     if new_ticket_activity:
                         last_ticket_check_ts = max(t["updated_at"] for t in new_ticket_activity)
                         print(f"\nTicket activity detected on {len(new_ticket_activity)} ticket(s)")
-                        hints.append(
-                            "Tickets have been updated. Use get_my_tickets() or list_tickets() to check."
-                        )
+                        hints.append("Tickets have been updated. Use get_my_tickets() or list_tickets() to check.")
                 except Exception as e:
                     print(f"Ticket activity check failed: {e}")
 
                 # Document creates/updates
                 try:
                     docs = client.list_docs()
-                    new_doc_activity = [
-                        d for d in docs
-                        if d.get("updated_at") and d["updated_at"] > last_doc_check_ts
-                    ]
+                    new_doc_activity = [d for d in docs if d.get("updated_at") and d["updated_at"] > last_doc_check_ts]
                     if new_doc_activity:
                         last_doc_check_ts = max(d["updated_at"] for d in new_doc_activity)
                         print(f"\nDocument activity detected on {len(new_doc_activity)} doc(s)")
@@ -1599,15 +1720,12 @@ async def run_container_orchestrator(args) -> None:
                 try:
                     emails = client.get_emails()
                     new_email_activity = [
-                        e for e in emails
-                        if e.get("timestamp") and e["timestamp"] > last_email_check_ts
+                        e for e in emails if e.get("timestamp") and e["timestamp"] > last_email_check_ts
                     ]
                     if new_email_activity:
                         last_email_check_ts = max(e["timestamp"] for e in new_email_activity)
                         print(f"\nNew email(s) detected: {len(new_email_activity)}")
-                        hints.append(
-                            "New company emails have arrived. Use get_emails() to read them."
-                        )
+                        hints.append("New company emails have arrived. Use get_emails() to read them.")
                 except Exception as e:
                     print(f"Email activity check failed: {e}")
 
@@ -1615,15 +1733,12 @@ async def run_container_orchestrator(args) -> None:
                 try:
                     memo_threads = client.get_memo_threads()
                     new_memo_activity = [
-                        t for t in memo_threads
-                        if t.get("last_post_at") and t["last_post_at"] > last_memo_check_ts
+                        t for t in memo_threads if t.get("last_post_at") and t["last_post_at"] > last_memo_check_ts
                     ]
                     if new_memo_activity:
                         last_memo_check_ts = max(t["last_post_at"] for t in new_memo_activity)
                         print(f"\nMemo activity detected on {len(new_memo_activity)} thread(s)")
-                        hints.append(
-                            "There are new memo replies. Use list_memos() and get_memo_thread() to check."
-                        )
+                        hints.append("There are new memo replies. Use list_memos() and get_memo_thread() to check.")
                 except Exception as e:
                     print(f"Memo activity check failed: {e}")
 

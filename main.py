@@ -2,12 +2,29 @@
 """Multi-agent organization chat system — AI personas collaborating via shared chat."""
 
 import asyncio
+import logging
 import sys
 from pathlib import Path
 
 from dotenv import load_dotenv
 
 from lib.cli import parse_args
+
+SERVER_LOG_DIR = Path(__file__).parent / "var"
+
+
+def _setup_file_logging(name: str, filename: str) -> None:
+    """Add a file handler to the named logger.
+
+    Writes to var/ (not var/logs/) because var/logs/ is wiped on session reset.
+    """
+    SERVER_LOG_DIR.mkdir(parents=True, exist_ok=True)
+    handler = logging.FileHandler(SERVER_LOG_DIR / filename, mode="w")
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+    logger = logging.getLogger(name)
+    logger.addHandler(handler)
+    logger.setLevel(logging.DEBUG)
+
 
 # Load environment variables from .env file
 env_path = Path(__file__).parent / ".env"
@@ -35,6 +52,8 @@ if __name__ == "__main__":
 
     try:
         if args.command == "server":
+            _setup_file_logging("werkzeug", "flask_server.log")
+            _setup_file_logging("webapp", "flask_server.log")
             from lib.webapp import create_app
 
             if args.scenario:
@@ -87,6 +106,9 @@ if __name__ == "__main__":
 
             asyncio.run(run_job_runner(args))
         elif args.command == "mcp-server":
+            _setup_file_logging("mcp_server", "mcp_server.log")
+            _setup_file_logging("uvicorn", "mcp_server.log")
+            _setup_file_logging("uvicorn.access", "mcp_server.log")
             import uvicorn
 
             from lib.mcp_server import build_app

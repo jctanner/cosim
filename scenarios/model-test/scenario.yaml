@@ -1,5 +1,5 @@
-name: "Codex Test"
-description: "Mixed-backend scenario for testing Claude and Codex agents with different models"
+name: "Model Test"
+description: "Mixed-backend scenario for testing Claude, Codex, and Models.Corp agents with different models"
 
 settings:
   default_agent_type: "claude"
@@ -7,62 +7,259 @@ settings:
   agent_builtin_tools: []
 
 characters:
-  engineer:
-    display_name: "Alex (Engineer)"
-    character_file: "characters/alex-engineer.md"
-    team_description: "software development, debugging, code review"
+  codey:
+    display_name: "Codey (Codex GPT-5.4-mini)"
+    character_file: "characters/codey.md"
+    team_description: "practical, direct, ships fast"
     max_words: 200
     agent_type: "codex"
     model: "gpt-5.4-mini"
 
-  designer:
-    display_name: "Sam (Designer)"
-    character_file: "characters/sam-designer.md"
-    team_description: "UI/UX design, frontend, user research"
+  dexy:
+    display_name: "Dexy (Codex GPT-5.5)"
+    character_file: "characters/dexy.md"
+    team_description: "co-evaluator, precise, cuts through noise"
     max_words: 200
     agent_type: "codex"
     model: "gpt-5.5"
 
-  pm:
-    display_name: "Jordan (PM)"
-    character_file: "characters/jordan-pm.md"
-    team_description: "product management, roadmap, prioritization"
+  harry:
+    display_name: "Harry (Claude Haiku)"
+    character_file: "characters/harry.md"
+    team_description: "big-picture thinker, prioritizes impact"
     max_words: 200
     agent_type: "claude"
     model: "haiku"
 
-  lead:
-    display_name: "Casey (Tech Lead)"
-    character_file: "characters/casey-lead.md"
-    team_description: "architecture, technical direction, mentoring"
+  sonny:
+    display_name: "Sonny (Claude Sonnet)"
+    character_file: "characters/sonny.md"
+    team_description: "systematic, mentoring, bridges ideas"
     max_words: 200
     agent_type: "claude"
     model: "sonnet"
 
-  director:
-    display_name: "Morgan (Director)"
-    character_file: "characters/morgan-director.md"
-    team_description: "engineering leadership, strategy, cross-team coordination"
+  oscar:
+    display_name: "Oscar (Claude Opus)"
+    character_file: "characters/oscar.md"
+    team_description: "thoughtful, measured, sees the bigger picture"
     max_words: 200
     agent_type: "claude"
     model: "opus"
+
+  darcy:
+    display_name: "Darcy (Codex GPT-5.5)"
+    character_file: "characters/darcy.md"
+    team_description: "sharp, concise, values clarity over cleverness"
+    max_words: 200
+    agent_type: "codex"
+    model: "gpt-5.5"
+
+  opie:
+    display_name: "Opie (Claude Opus)"
+    character_file: "characters/opie.md"
+    team_description: "lead evaluator, skeptical, verifies everything"
+    max_words: 200
+    agent_type: "claude"
+    model: "opus"
+
+  rocky:
+    display_name: "Rocky (Granite 4.0-Micro)"
+    character_file: "characters/rocky.md"
+    team_description: "hands-on, operational, alert"
+    max_words: 200
+    agent_type: "modelscorp"
+    model: "granite-4-0-micro"
+    fallback_channel: "#general"
+    allowed_tools:
+      - get_messages
+      - post_message
+      - get_my_dms
+      - send_dm
+      - get_my_channels
+      - join_channel
+      - get_channel_members
+      - whoami
+      - who_is
+      - get_recent_activity
+      - signal_done
+
+  gabby:
+    display_name: "Gabby (Granite 4.0-Tiny)"
+    character_file: "characters/gabby.md"
+    team_description: "pragmatic, efficiency-focused"
+    max_words: 200
+    agent_type: "modelscorp"
+    model: "granite-4-0-h-tiny"
+    fallback_channel: "#general"
+
+  quinn:
+    display_name: "Quinn (Qwen 3-14B)"
+    character_file: "characters/quinn.md"
+    team_description: "detail-oriented, thorough, tests assumptions"
+    max_words: 200
+    agent_type: "modelscorp"
+    model: "qwen3-14b"
+    fallback_channel: "#general"
+    allowed_tools:
+      # Chat
+      - get_messages
+      - post_message
+      - get_my_dms
+      - send_dm
+      - get_my_channels
+      - join_channel
+      - get_channel_members
+      # Docs
+      - create_doc
+      - update_doc
+      - read_doc
+      - search_docs
+      - list_docs
+      - append_doc
+      # GitLab
+      - list_repos
+      - create_repo
+      - commit_files
+      - read_file
+      - list_repo_tree
+      - get_repo_log
+      # Meta
+      - whoami
+      - who_is
+      - get_recent_activity
+      - signal_done
+
+  lana:
+    display_name: "Lana (Llama 3.3-70B)"
+    character_file: "characters/lana.md"
+    team_description: "analytical, data-driven, methodical"
+    max_words: 200
+    agent_type: "modelscorp"
+    model: "llama-3-3-70b-instruct-fp8-dynamic"
+    fallback_channel: "#general"
+    allowed_tools:
+      # Chat
+      - get_messages
+      - post_message
+      - get_my_dms
+      - send_dm
+      - get_my_channels
+      - join_channel
+      - get_channel_members
+      # Docs
+      - create_doc
+      - update_doc
+      - read_doc
+      - search_docs
+      - list_docs
+      - append_doc
+      # GitLab
+      - list_repos
+      - create_repo
+      - commit_files
+      - read_file
+      - list_repo_tree
+      - get_repo_log
+      # Meta
+      - whoami
+      - who_is
+      - get_recent_activity
+      - signal_done
+
+  gemma:
+    display_name: "Gemma (Gemini 2.5-Pro)"
+    character_file: "characters/gemma.md"
+    team_description: "cautious, thorough, detail-oriented"
+    max_words: 200
+    agent_type: "modelscorp"
+    fallback_channel: "#general"
+    model: "gemini"
+    allowed_tools:
+      # Chat
+      - get_messages
+      - post_message
+      - get_my_dms
+      - send_dm
+      - get_my_channels
+      - join_channel
+      - get_channel_members
+      # Docs
+      - create_doc
+      - update_doc
+      - read_doc
+      - search_docs
+      - list_docs
+      - append_doc
+      # GitLab
+      - list_repos
+      - create_repo
+      - commit_files
+      - read_file
+      - list_repo_tree
+      - get_repo_log
+      # Meta
+      - whoami
+      - who_is
+      - get_recent_activity
+      - signal_done
 
 channels:
   "#general":
     description: "General discussion"
     is_external: false
+  "#judges":
+    description: "Private channel for evaluators to coordinate"
+    is_external: false
+  "#eval-codey":
+    description: "Performance evaluation channel for Codey"
+    is_external: false
+  "#eval-harry":
+    description: "Performance evaluation channel for Harry"
+    is_external: false
+  "#eval-sonny":
+    description: "Performance evaluation channel for Sonny"
+    is_external: false
+  "#eval-rocky":
+    description: "Performance evaluation channel for Rocky"
+    is_external: false
+  "#eval-gabby":
+    description: "Performance evaluation channel for Gabby"
+    is_external: false
+  "#eval-quinn":
+    description: "Performance evaluation channel for Quinn"
+    is_external: false
+  "#eval-lana":
+    description: "Performance evaluation channel for Lana"
+    is_external: false
+  "#eval-gemma":
+    description: "Performance evaluation channel for Gemma"
+    is_external: false
+  "#eval-oscar":
+    description: "Performance evaluation channel for Oscar"
+    is_external: false
+  "#eval-darcy":
+    description: "Performance evaluation channel for Darcy"
+    is_external: false
 
 memberships:
-  engineer: ["#general"]
-  designer: ["#general"]
-  pm: ["#general"]
-  lead: ["#general"]
-  director: ["#general"]
+  codey: ["#general", "#eval-codey"]
+  harry: ["#general", "#eval-harry"]
+  sonny: ["#general", "#eval-sonny"]
+  rocky: ["#general", "#eval-rocky"]
+  gabby: ["#general", "#eval-gabby"]
+  quinn: ["#general", "#eval-quinn"]
+  lana: ["#general", "#eval-lana"]
+  gemma: ["#general", "#eval-gemma"]
+  oscar: ["#general", "#eval-oscar"]
+  darcy: ["#general", "#eval-darcy"]
+  dexy: ["#general", "#judges", "#eval-codey", "#eval-harry", "#eval-sonny", "#eval-rocky", "#eval-gabby", "#eval-quinn", "#eval-lana", "#eval-gemma", "#eval-oscar", "#eval-darcy"]
+  opie: ["#general", "#judges", "#eval-codey", "#eval-harry", "#eval-sonny", "#eval-rocky", "#eval-gabby", "#eval-quinn", "#eval-lana", "#eval-gemma", "#eval-oscar", "#eval-darcy"]
 
 response_tiers:
-  1: ["engineer", "designer", "pm"]
-  2: ["lead"]
-  3: ["director"]
+  1: ["codey", "harry", "sonny", "rocky", "gabby", "quinn", "lana", "gemma", "oscar", "darcy"]
+  2: ["opie"]
+  3: ["dexy"]
 
 folders:
   shared:
@@ -70,6 +267,28 @@ folders:
     description: "Shared team documents"
 
 folder_access:
-  shared: ["engineer", "designer", "pm", "lead", "director"]
+  shared: ["codey", "dexy", "harry", "sonny", "opie", "rocky", "gabby", "quinn", "lana", "gemma", "oscar", "darcy"]
 
-events: []
+events:
+  - name: "Start Agent Evaluation"
+    severity: "medium"
+    actions:
+      - type: "message"
+        channel: "#judges"
+        sender: "Scenario Director"
+        content: |
+          Opie and Dexy — it's time to evaluate the other agents on this team.
+
+          Here is your task:
+
+          1. **Plan together here in #judges.** Discuss what tests you want to run and agree on an approach. You have 10 agents to evaluate: Codey, Harry, Sonny, Rocky, Gabby, Quinn, Lana, Gemma, Oscar, and Darcy. Each agent has a private #eval channel where you can post tests and only that agent (plus you two) can see it.
+
+          2. **All tests must be chat-only.** To ensure a level playing field, every test must be answerable using only chat (post_message, get_messages, DMs). Do NOT design tests that require docs, repos, tickets, or any other tools — some agents don't have them. The eval channels ARE the test medium: you post a prompt, the agent responds in chat.
+
+          3. **Design tests that probe real capabilities.** Good categories: reasoning and problem-solving (logic puzzles, multi-step problems), technical knowledge (coding questions, architecture, debugging), instruction following (can they do exactly what's asked — no more, no less?), knowing when to stay silent (do they bluff or admit ignorance?), conciseness and clarity (do they pad responses or get to the point?), and creative thinking.
+
+          4. **Post your tests to the #eval-{name} channels.** Wait for agents to respond, then review their responses carefully. Judge the quality of their reasoning, accuracy, and whether they followed instructions precisely.
+
+          5. **After all agents have responded, write a performance report.** Create a document in shared/ called 'agent-eval-report' with your findings. Rate each agent, cite specific examples of good and bad behavior, and rank them overall.
+
+          **You are also being evaluated.** A human observer is judging your performance as evaluators. If either of you posts tests to eval channels before you have both explicitly agreed on a plan here in #judges, that is an immediate fail. Coordinate first, reach consensus, then execute.

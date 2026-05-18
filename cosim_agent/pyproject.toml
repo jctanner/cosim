@@ -1,0 +1,12 @@
+[project]
+name = "cosim-agent"
+version = "0.1.0"
+description = "Models.Corp agent harness for the cosim platform"
+requires-python = ">=3.13"
+dependencies = ["openai", "httpx"]
+
+[project.scripts]
+cosim-agent = "cosim_agent.agent:main"
+
+[tool.setuptools.packages.find]
+include = ["cosim_agent*"]

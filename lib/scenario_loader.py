@@ -21,6 +21,7 @@ def _parse_frontmatter(text: str) -> dict:
 
 
 SCENARIO_SETTINGS: dict = {}
+SEED_DOCUMENTS: list[dict] = []
 
 
 def get_settings() -> dict:
@@ -48,6 +49,8 @@ def load_scenario(scenario_name: str) -> None:
     # --- Populate personas.PERSONAS ---
     personas_mod.PERSONAS.clear()
     for key, char_info in config["characters"].items():
+        if char_info.get("enabled") is False:
+            continue
         char_file = char_info.get("character_file")
         if not char_file:
             # Default: try .CS.md first, fall back to .md
@@ -68,6 +71,9 @@ def load_scenario(scenario_name: str) -> None:
             "avatar": char_info.get("avatar"),
             "agent_type": char_info.get("agent_type"),
             "model": char_info.get("model"),
+            "allowed_tools": char_info.get("allowed_tools"),
+            "fallback_channel": char_info.get("fallback_channel", ""),
+            "memory": char_info.get("memory"),
         }
 
     # --- Populate personas.DEFAULT_CHANNELS ---
@@ -114,6 +120,14 @@ def load_scenario(scenario_name: str) -> None:
     # --- Populate SCENARIO_SETTINGS ---
     SCENARIO_SETTINGS.clear()
     SCENARIO_SETTINGS.update(config.get("settings", {}))
+
+    # --- Populate SEED_DOCUMENTS (optional) ---
+    SEED_DOCUMENTS.clear()
+    for doc in config.get("documents", []):
+        source = doc.get("file", "")
+        if source:
+            doc["_source_path"] = str(scenario_dir / source)
+        SEED_DOCUMENTS.append(doc)
 
     print(f"Scenario loaded: {config.get('name', scenario_name)}")
     print(f"  Characters: {len(personas_mod.PERSONAS)}")

@@ -116,6 +116,9 @@ def _get_roster() -> dict:
             "verbosity": verbosity,
             "agent_type": p.get("agent_type"),
             "model": p.get("model"),
+            "allowed_tools": p.get("allowed_tools"),
+            "fallback_channel": p.get("fallback_channel", ""),
+            "memory": p.get("memory"),
         }
     return roster
 
@@ -331,6 +334,9 @@ def load_session(instance_name: str) -> dict:
                     "character_file": data.get("character_file", ""),
                     "agent_type": data.get("agent_type"),
                     "model": data.get("model"),
+                    "allowed_tools": data.get("allowed_tools"),
+                    "fallback_channel": data.get("fallback_channel", ""),
+                    "memory": data.get("memory"),
                 }
                 DEFAULT_MEMBERSHIPS[key] = set(data.get("channels", ["#general"]))
                 tier = data.get("tier", 1)

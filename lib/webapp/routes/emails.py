@@ -29,6 +29,7 @@ def create_email():
         return jsonify({"error": "subject required"}), 400
     entry = send_email(sender, subject, body)
     from lib.webapp.helpers import _broadcast_email_event
+
     _broadcast_email_event("sent", entry)
     # Also post to #announcements
     with _lock:

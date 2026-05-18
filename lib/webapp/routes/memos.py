@@ -25,6 +25,7 @@ def create_memo_thread_endpoint():
     description = data.get("description", "").strip()
     entry = create_thread(title, creator, description)
     from lib.webapp.helpers import _broadcast_memo_event
+
     _broadcast_memo_event("created", entry)
     return jsonify(entry), 201
 
@@ -61,6 +62,7 @@ def post_memo_endpoint(thread_id):
     except ValueError as e:
         return jsonify({"error": str(e)}), 404
     from lib.webapp.helpers import _broadcast_memo_event
+
     _broadcast_memo_event("replied", entry)
     return jsonify(entry), 201
 

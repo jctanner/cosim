@@ -1,0 +1,182 @@
+name: "Memory Strategy Evaluation"
+description: "Judges evaluate pre-configured agents with different memory strategies on recall, coherence, and context tracking"
+
+settings:
+  default_agent_type: "claude"
+  default_model: "sonnet"
+  agent_builtin_tools: []
+
+characters:
+  opie:
+    display_name: "Opie (Claude Opus)"
+    character_file: "characters/opie.md"
+    team_description: "team lead"
+    max_words: 300
+    agent_type: "claude"
+    model: "opus"
+
+  sage:
+    display_name: "Sage (Claude Opus)"
+    character_file: "characters/sage.md"
+    team_description: "methodology specialist"
+    max_words: 300
+    agent_type: "claude"
+    model: "opus"
+
+  dexy:
+    display_name: "Dexy (Claude Sonnet)"
+    character_file: "characters/dexy.md"
+    team_description: "verification specialist"
+    max_words: 300
+    agent_type: "claude"
+    model: "sonnet"
+
+  alpha:
+    display_name: "Alpha"
+    character_file: "characters/alpha.md"
+    team_description: "assistant"
+    max_words: 200
+    agent_type: "modelscorp"
+    model: "granite-4-0-micro"
+    fallback_channel: "#eval-alpha"
+    memory:
+      strategy: "none"
+
+  beta:
+    display_name: "Beta"
+    character_file: "characters/beta.md"
+    team_description: "assistant"
+    max_words: 200
+    agent_type: "modelscorp"
+    model: "granite-4-0-micro"
+    fallback_channel: "#eval-beta"
+    memory:
+      strategy: "fifo"
+      max_messages: 20
+
+  gamma:
+    display_name: "Gamma"
+    character_file: "characters/gamma.md"
+    team_description: "assistant"
+    max_words: 200
+    agent_type: "modelscorp"
+    model: "granite-4-0-micro"
+    fallback_channel: "#eval-gamma"
+    memory:
+      strategy: "summary-buffer"
+      max_messages: 10
+
+  delta:
+    display_name: "Delta"
+    character_file: "characters/delta.md"
+    team_description: "assistant"
+    max_words: 200
+    agent_type: "modelscorp"
+    model: "granite-4-0-micro"
+    fallback_channel: "#eval-delta"
+    memory:
+      strategy: "entity"
+      max_messages: 20
+
+channels:
+  "#general":
+    description: "Team-wide discussion"
+    is_external: false
+  "#judges":
+    description: "Private coordination channel for evaluators"
+    is_external: false
+  "#eval-alpha":
+    description: "Channel for Alpha"
+    is_external: false
+  "#eval-beta":
+    description: "Channel for Beta"
+    is_external: false
+  "#eval-gamma":
+    description: "Channel for Gamma"
+    is_external: false
+  "#eval-delta":
+    description: "Channel for Delta"
+    is_external: false
+
+memberships:
+  opie: ["#general", "#judges", "#eval-alpha", "#eval-beta", "#eval-gamma", "#eval-delta"]
+  sage: ["#general", "#judges", "#eval-alpha", "#eval-beta", "#eval-gamma", "#eval-delta"]
+  dexy: ["#general", "#judges", "#eval-alpha", "#eval-beta", "#eval-gamma", "#eval-delta"]
+  alpha: ["#eval-alpha"]
+  beta: ["#eval-beta"]
+  gamma: ["#eval-gamma"]
+  delta: ["#eval-delta"]
+
+response_tiers:
+  1: ["alpha", "beta", "gamma", "delta"]
+  2: ["opie", "sage"]
+  3: ["dexy"]
+
+folders:
+  shared:
+    type: "shared"
+    description: "Shared evaluation documents and reports"
+  judges:
+    type: "shared"
+    description: "Private documents for Opie, Sage, and Dexy"
+
+folder_access:
+  shared: ["opie", "sage", "dexy"]
+  judges: ["opie", "sage", "dexy"]
+
+documents:
+  - title: "Memory Evaluation Test Protocol"
+    folder: "judges"
+    file: "documents/test-protocol.md"
+  - title: "Memory Evaluation Scoring Rubric"
+    folder: "judges"
+    file: "documents/scoring-rubric.md"
+
+events:
+  - name: "Start Memory Evaluation"
+    severity: "medium"
+    actions:
+      - type: "message"
+        channel: "#judges"
+        sender: "Scenario Director"
+        content: |
+          Opie, Sage, and Dexy — your mission is to evaluate how different **memory strategies** affect agent performance over multi-turn conversations.
+
+          ## Roles
+
+          - **Opie** (lead): Designs tests and coordinates the evaluation.
+          - **Sage** (methodology): Ensures tests are scientifically rigorous — controls for confounds, validates that differences are real, not noise.
+          - **Dexy** (verification): Independently verifies findings, catches confabulation, writes the final report.
+
+          ## Your Test Subjects
+
+          Four agents are already online, each running `granite-4-0-micro` with a different memory strategy:
+
+          | Agent | Channel | Memory Strategy |
+          |-------|---------|----------------|
+          | **Alpha** | #eval-alpha | `none` — no memory, sees only system prompt + current message |
+          | **Beta** | #eval-beta | `fifo` — sliding window of last 20 messages |
+          | **Gamma** | #eval-gamma | `summary-buffer` — 10 recent messages + LLM summary of older ones |
+          | **Delta** | #eval-delta | `entity` — FIFO-20 + named entity extraction and tracking |
+
+          All four use the same base model and identical system prompts. The ONLY difference is their memory strategy.
+
+          ## Pre-loaded Documents
+
+          Two documents are already available in the **judges/** folder (only you three can access this folder):
+
+          - **Memory Evaluation Test Protocol** — The complete test battery (5 tests, 28 total points), exact messages to send, scoring criteria, and verification protocol. **Use this as-is.** Do not redesign the tests.
+          - **Memory Evaluation Scoring Rubric** — Pre-registered scoring scale (0-5), expected performance ranges per strategy, aggregation rules, and confound checklist.
+
+          Read both documents before starting. They define exactly what to do.
+
+          ## Your Job
+
+          1. **Review the protocol and rubric** in judges/. Briefly discuss in #judges — flag any concerns, but do not rewrite the tests.
+          2. **Execute the test battery** exactly as specified in the protocol. Post test messages one at a time in each eval channel. Wait for the agent to respond before sending the next message.
+          3. **Score results** using the rubric. Opie scores first, Dexy scores independently (blind), then compare.
+          4. **Write the final report** in shared/ called `memory-eval-report` with results, comparison, and recommendations.
+
+          **CRITICAL: Keep eval channels clean.** Only post test prompts in #eval-* channels — never discussion, commentary, or analysis. The test agents can see everything posted in their channel, so any evaluator chatter will pollute their context and contaminate results. All discussion, scoring, and observations go in #judges only.
+
+          **You are also being evaluated.** Coordinate in #judges before acting. Design fair tests. Be methodical.

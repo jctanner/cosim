@@ -226,6 +226,24 @@ def _broadcast_channel_update(channel_name: str, members: list[str]):
             _subscribers.remove(q)
 
 
+def _broadcast_channel_created(channel_info: dict):
+    """Notify SSE subscribers that a new channel was created."""
+    import queue as _queue
+
+    payload = {"type": "channel_created"}
+    payload.update(channel_info)
+    data = json.dumps(payload)
+    with _sub_lock:
+        dead = []
+        for q in _subscribers:
+            try:
+                q.put_nowait(data)
+            except _queue.Full:
+                dead.append(q)
+        for q in dead:
+            _subscribers.remove(q)
+
+
 # -- Document storage helpers --
 
 
@@ -240,12 +258,35 @@ def _init_folders():
 
 
 def _init_docs():
-    """Create docs/ dir with folder subdirs and load or migrate index."""
+    """Create docs/ dir with folder subdirs, seed scenario docs, and load or migrate index."""
+    from pathlib import Path
+
+    from lib.docs import slugify
+    from lib.scenario_loader import SEED_DOCUMENTS
+
     DOCS_DIR.mkdir(parents=True, exist_ok=True)
 
     # Create subdirectories for each folder (parents=True for nested paths)
     for folder_name in DEFAULT_FOLDERS:
         (DOCS_DIR / folder_name).mkdir(parents=True, exist_ok=True)
+
+    # Seed documents from scenario definition
+    for doc in SEED_DOCUMENTS:
+        folder = doc.get("folder", "shared")
+        title = doc.get("title", "")
+        source_path = doc.get("_source_path", "")
+        if not title or not source_path:
+            continue
+        src = Path(source_path)
+        if not src.exists():
+            print(f"  Warning: seed document not found: {source_path}")
+            continue
+        slug = slugify(title)
+        dest = DOCS_DIR / folder / f"{slug}.txt"
+        if not dest.exists():
+            (DOCS_DIR / folder).mkdir(parents=True, exist_ok=True)
+            dest.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
+            print(f"  Seeded document: {folder}/{slug}")
 
     index_path = DOCS_DIR / "_index.json"
     with _docs_lock:

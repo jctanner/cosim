@@ -21,6 +21,7 @@ class AgentBackend(Protocol):
         max_turns: int,
         allowed_tools_str: str,
         use_sessions: bool = False,
+        fallback_channel: str = "",
     ) -> list[str]: ...
 
     def parse_output(self, stdout: str) -> tuple[str, str, dict]:
@@ -61,6 +62,7 @@ class ClaudeBackend:
         max_turns: int,
         allowed_tools_str: str,
         use_sessions: bool = False,
+        fallback_channel: str = "",
     ) -> list[str]:
         cmd = ["podman", "exec", container_name, "claude"]
 
@@ -75,13 +77,19 @@ class ClaudeBackend:
                 cmd += ["--session-id", session_id]
 
         cmd += [
-            "--mcp-config", "/home/agent/.mcp-config.json",
-            "--allowedTools", allowed_tools_str,
-            "--output-format", "stream-json",
+            "--mcp-config",
+            "/home/agent/.mcp-config.json",
+            "--allowedTools",
+            allowed_tools_str,
+            "--output-format",
+            "stream-json",
             "--verbose",
-            "--model", model_id,
-            "--max-turns", str(max_turns),
-            "--permission-mode", "dontAsk",
+            "--model",
+            model_id,
+            "--max-turns",
+            str(max_turns),
+            "--permission-mode",
+            "dontAsk",
         ]
         return cmd
 
@@ -127,9 +135,7 @@ class ClaudeBackend:
             summary_parts.append(f"${cost:.4f}")
         if summary_parts:
             thinking_text = (
-                (thinking_text + "\n\n---\n" + ", ".join(summary_parts))
-                if thinking_text
-                else ", ".join(summary_parts)
+                (thinking_text + "\n\n---\n" + ", ".join(summary_parts)) if thinking_text else ", ".join(summary_parts)
             )
 
         return response_text, thinking_text, metadata
@@ -190,6 +196,7 @@ class CodexBackend:
         max_turns: int,
         allowed_tools_str: str,
         use_sessions: bool = False,
+        fallback_channel: str = "",
     ) -> list[str]:
         cmd = ["podman", "exec", container_name, "codex", "exec"]
 
@@ -200,7 +207,8 @@ class CodexBackend:
             "--json",
             "--skip-git-repo-check",
             "--dangerously-bypass-approvals-and-sandbox",
-            "-m", model_id,
+            "-m",
+            model_id,
         ]
 
         if not use_sessions:
@@ -261,7 +269,7 @@ class CodexBackend:
         mcp_port: int,
         tmp_dir: Path,
     ) -> dict[str, Path]:
-        escaped = system_prompt.replace('\\', '\\\\').replace('"', '\\"')
+        escaped = system_prompt.replace("\\", "\\\\").replace('"', '\\"')
         lines = [
             f'instructions = """\n{escaped}\n"""',
             "",
@@ -285,8 +293,142 @@ class CodexBackend:
         return []
 
 
+class ModelscorpBackend:
+    """Models.Corp backend — custom Python agent harness with OpenAI-compatible API."""
+
+    def __init__(self) -> None:
+        self._mcp_urls: dict[str, str] = {}
+        self._allowed_tools: dict[str, list[str]] = {}
+        self._memory_configs: dict[str, dict] = {}
+
+    def set_allowed_tools(self, persona_key: str, tools: list[str]) -> None:
+        self._allowed_tools[persona_key] = tools
+
+    def set_memory_config(self, persona_key: str, config: dict) -> None:
+        self._memory_configs[persona_key] = config
+
+    def build_exec_command(
+        self,
+        container_name: str,
+        turn_prompt: str,
+        *,
+        resuming: bool = False,
+        session_id: str | None = None,
+        model_id: str,
+        max_turns: int,
+        allowed_tools_str: str,
+        use_sessions: bool = False,
+        fallback_channel: str = "",
+    ) -> list[str]:
+        persona_key = container_name.removeprefix("agent-")
+        mcp_url = self._mcp_urls.get(persona_key, "")
+        cmd = [
+            "podman",
+            "exec",
+            container_name,
+            "cosim-agent",
+            "--prompt",
+            turn_prompt,
+            "--system-prompt-file",
+            "/home/agent/system-prompt.md",
+            "--mcp-url",
+            mcp_url,
+            "--model",
+            model_id,
+            "--max-turns",
+            str(max_turns),
+            "--config",
+            "/home/agent/.modelscorp.json",
+        ]
+        agent_tools = self._allowed_tools.get(persona_key)
+        if agent_tools:
+            cmd += ["--allowed-tools", ",".join(agent_tools)]
+        if use_sessions and session_id:
+            mem_cfg = self._memory_configs.get(persona_key) or {"strategy": "fifo", "max_messages": 50}
+            mem_cfg_with_session = {**mem_cfg, "session_file": f"/home/agent/sessions/{session_id}.jsonl"}
+            cmd += ["--memory-config", json.dumps(mem_cfg_with_session)]
+        if fallback_channel:
+            cmd += ["--fallback-channel", fallback_channel]
+        return cmd
+
+    def parse_output(self, stdout: str) -> tuple[str, str, dict]:
+        response_text = ""
+        metadata: dict = {}
+
+        if not stdout.strip():
+            return response_text, "", metadata
+
+        for line in stdout.strip().split("\n"):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+            except (json.JSONDecodeError, ValueError):
+                continue
+            if obj.get("type") == "result":
+                response_text = obj.get("response_text", "")
+                metadata["num_turns"] = obj.get("turns", 0)
+                metadata["usage"] = {
+                    "input_tokens": obj.get("input_tokens", 0),
+                    "output_tokens": obj.get("output_tokens", 0),
+                }
+                if obj.get("error"):
+                    metadata["error"] = obj["error"]
+
+        summary_parts = []
+        if metadata.get("num_turns"):
+            summary_parts.append(f"{metadata['num_turns']} turn(s)")
+        out_tokens = metadata.get("usage", {}).get("output_tokens", 0)
+        if out_tokens:
+            summary_parts.append(f"{out_tokens} output tokens")
+        thinking_text = ", ".join(summary_parts) if summary_parts else ""
+
+        return response_text, thinking_text, metadata
+
+    def generate_config_files(
+        self,
+        persona_key: str,
+        system_prompt: str,
+        mcp_host: str,
+        mcp_port: int,
+        tmp_dir: Path,
+    ) -> dict[str, Path]:
+        prompt_path = tmp_dir / f"system-prompt-{persona_key}.md"
+        prompt_path.write_text(system_prompt)
+
+        project_config = Path(__file__).parent.parent / ".modelscorp.json"
+        if project_config.is_file():
+            staged = tmp_dir / f"modelscorp-config-{persona_key}.json"
+            staged.write_text(project_config.read_text())
+        else:
+            staged = tmp_dir / f"modelscorp-config-{persona_key}.json"
+            staged.write_text("{}")
+
+        mcp_url = f"http://{mcp_host}:{mcp_port}/agents-http/{persona_key}/mcp"
+        self._mcp_urls[persona_key] = mcp_url
+
+        return {
+            "system_prompt": prompt_path,
+            "modelscorp_config": staged,
+        }
+
+    def get_volume_mounts(self, config_files: dict[str, Path]) -> list[str]:
+        mounts: list[str] = []
+        if "system_prompt" in config_files:
+            mounts += ["-v", f"{config_files['system_prompt'].resolve()}:/home/agent/system-prompt.md:ro,Z"]
+        if "modelscorp_config" in config_files:
+            mounts += ["-v", f"{config_files['modelscorp_config'].resolve()}:/home/agent/.modelscorp.json:ro,Z"]
+        return mounts
+
+    def get_credential_sources(self) -> list[tuple[str, str]]:
+        return []
+
+
 def get_backend(agent_type: str) -> AgentBackend:
     """Factory for agent backends."""
     if agent_type == "codex":
         return CodexBackend()
+    if agent_type == "modelscorp":
+        return ModelscorpBackend()
     return ClaudeBackend()

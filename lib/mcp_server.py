@@ -127,6 +127,10 @@ def _register_communication_tools(
     # Auto-add director channel (created dynamically by Flask, not in scenario YAML)
     my_channels.add(f"#director-{agent_key}")
 
+    def _normalize_channel(channel: str) -> str:
+        """Ensure channel name starts with #. Some models drop the prefix."""
+        return channel if channel.startswith("#") else f"#{channel}"
+
     @server.tool(
         name="list_channels",
         description="List all available chat channels with their descriptions and member counts.",
@@ -142,6 +146,7 @@ def _register_communication_tools(
         description="Post a message to a chat channel you belong to.",
     )
     async def post_message(channel: str, content: str) -> str:
+        channel = _normalize_channel(channel)
         if channel not in my_channels:
             return f"Error: you are not a member of {channel}. Your channels: {sorted(my_channels)}"
         t0 = time.time()
@@ -165,6 +170,7 @@ def _register_communication_tools(
         description="Get recent messages from a channel you belong to. Use since_id to get only newer messages.",
     )
     async def get_messages(channel: str, since_id: int = 0, limit: int = 50) -> str:
+        channel = _normalize_channel(channel)
         if channel not in my_channels:
             return f"Error: you are not a member of {channel}. Your channels: {sorted(my_channels)}"
         t0 = time.time()
@@ -227,6 +233,7 @@ def _register_communication_tools(
         description="Join a chat channel. You will then be able to read and post messages there.",
     )
     async def join_channel(channel: str) -> str:
+        channel = _normalize_channel(channel)
         t0 = time.time()
         encoded = channel.lstrip("#")
         result = await _flask(
@@ -247,6 +254,7 @@ def _register_communication_tools(
         description="Get the list of members in a channel.",
     )
     async def get_channel_members(channel: str) -> str:
+        channel = _normalize_channel(channel)
         t0 = time.time()
         channels_list = await _flask("GET", "/api/channels", flask_url)
         for ch in channels_list:
@@ -1259,21 +1267,20 @@ def _register_meta_tools(
         # Fetch recent memos
         all_memos = await _flask("GET", "/api/memos/threads", flask_url, params={"include_posts": "1"})
         recent_memos = [
-            t for t in all_memos
+            t
+            for t in all_memos
             if t.get("created_at", 0) > cutoff or t.get("last_post_at", 0) and t["last_post_at"] > cutoff
         ]
 
         # Fetch recent emails
         all_emails = await _flask("GET", "/api/emails", flask_url)
-        recent_emails = [
-            e for e in all_emails
-            if e.get("timestamp", 0) > cutoff
-        ]
+        recent_emails = [e for e in all_emails if e.get("timestamp", 0) > cutoff]
 
         # Fetch recent blog posts with replies
         all_blog_posts = await _flask("GET", "/api/blog/posts", flask_url, params={"include_replies": "1"})
         recent_blog = [
-            p for p in all_blog_posts
+            p
+            for p in all_blog_posts
             if p.get("created_at", 0) > cutoff or p.get("last_reply_at", 0) and p["last_reply_at"] > cutoff
         ]
 
@@ -1392,7 +1399,8 @@ def _register_personnel_tools(
         name="hire_agent",
         description=(
             "Hire a new team member. Creates a new agent with the given persona and starts their container. "
-            "The key must be lowercase with no spaces. The prompt is the character instruction text."
+            "The key must be lowercase with no spaces. The prompt is the character instruction text. "
+            'Use memory to configure conversation memory strategy (e.g. {"strategy": "fifo", "max_messages": 20}).'
         ),
     )
     async def hire_agent(
@@ -1405,6 +1413,8 @@ def _register_personnel_tools(
         folders: list[str] | None = None,
         agent_type: str | None = None,
         model: str | None = None,
+        memory: dict | None = None,
+        allowed_tools: list[str] | None = None,
     ) -> str:
         t0 = time.time()
         payload: dict[str, Any] = {
@@ -1420,6 +1430,11 @@ def _register_personnel_tools(
             payload["agent_type"] = agent_type
         if model:
             payload["model"] = model
+        if memory:
+            payload["memory"] = memory
+        if allowed_tools:
+            payload["allowed_tools"] = allowed_tools
+        payload["hired_by"] = agent_key
         try:
             result = await _flask("POST", "/api/npcs/hire", flask_url, json=payload)
         except httpx.HTTPStatusError as e:
@@ -1463,6 +1478,9 @@ def create_agent_mcp(
         # Disable DNS rebinding protection — containers connect via gateway IP
         # or host.containers.internal, not 127.0.0.1
         transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
+        # Return plain JSON instead of SSE streams for Streamable HTTP POST
+        # responses — the Models.Corp agent harness uses simple httpx POST calls.
+        json_response=True,
     )
 
     reg_args = (server, agent_key, display_name, flask_url, config)
@@ -1677,11 +1695,9 @@ async def _remove_agent_endpoint(request: Request) -> JSONResponse:
         return JSONResponse({"error": "missing 'key'"}, status_code=400)
 
     request.app.routes[:] = [
-        r for r in request.app.routes
-        if not (
-            isinstance(r, Mount)
-            and (r.path == f"/agents/{agent_key}" or r.path == f"/agents-http/{agent_key}")
-        )
+        r
+        for r in request.app.routes
+        if not (isinstance(r, Mount) and (r.path == f"/agents/{agent_key}" or r.path == f"/agents-http/{agent_key}"))
     ]
 
     agent_keys = getattr(request.app.state, "agent_keys", [])
@@ -1717,7 +1733,8 @@ async def _load_scenario_endpoint(request: Request) -> JSONResponse:
 
     # Remove any previously mounted agent routes
     request.app.routes[:] = [
-        r for r in request.app.routes
+        r
+        for r in request.app.routes
         if not (isinstance(r, Mount) and (r.path.startswith("/agents/") or r.path.startswith("/agents-http/")))
     ]
 
