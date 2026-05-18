@@ -171,4 +171,6 @@ events:
 
           **Important:** Post test messages one at a time in each eval channel. Wait for the agent to respond before sending the next message. This ensures the memory system processes each turn.
 
+          **CRITICAL: Keep eval channels clean.** Only post test prompts in #eval-* channels — never discussion, commentary, or analysis. The test agents can see everything posted in their channel, so any evaluator chatter will pollute their context and contaminate results. All discussion, scoring, and observations go in #judges only.
+
           **You are also being evaluated.** Coordinate in #judges before acting. Design fair tests. Be methodical.
