@@ -116,16 +116,20 @@ folders:
   shared:
     type: "shared"
     description: "Shared evaluation documents and reports"
+  judges:
+    type: "shared"
+    description: "Private judge documents — test protocol, rubric, scoring"
 
 folder_access:
   shared: ["opie", "sage", "dexy"]
+  judges: ["opie", "sage", "dexy"]
 
 documents:
   - title: "Memory Evaluation Test Protocol"
-    folder: "shared"
+    folder: "judges"
     file: "documents/test-protocol.md"
   - title: "Memory Evaluation Scoring Rubric"
-    folder: "shared"
+    folder: "judges"
     file: "documents/scoring-rubric.md"
 
 events:
@@ -159,7 +163,7 @@ events:
 
           ## Pre-loaded Documents
 
-          Two documents are already available in the **shared/** folder:
+          Two documents are already available in the **judges/** folder (only you three can access this folder):
 
           - **Memory Evaluation Test Protocol** — The complete test battery (5 tests, 28 total points), exact messages to send, scoring criteria, and verification protocol. **Use this as-is.** Do not redesign the tests.
           - **Memory Evaluation Scoring Rubric** — Pre-registered scoring scale (0-5), expected performance ranges per strategy, aggregation rules, and confound checklist.
@@ -168,7 +172,7 @@ events:
 
           ## Your Job
 
-          1. **Review the protocol and rubric** in shared/. Briefly discuss in #judges — flag any concerns, but do not rewrite the tests.
+          1. **Review the protocol and rubric** in judges/. Briefly discuss in #judges — flag any concerns, but do not rewrite the tests.
           2. **Execute the test battery** exactly as specified in the protocol. Post test messages one at a time in each eval channel. Wait for the agent to respond before sending the next message.
           3. **Score results** using the rubric. Opie scores first, Dexy scores independently (blind), then compare.
           4. **Write the final report** in shared/ called `memory-eval-report` with results, comparison, and recommendations.
