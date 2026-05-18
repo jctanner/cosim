@@ -2033,7 +2033,22 @@ function connectSSE() {
   const es = new EventSource('/api/messages/stream');
   es.addEventListener('message', (e) => {
     const data = JSON.parse(e.data);
-    if (data.type === 'channel_update') {
+    if (data.type === 'channel_created') {
+      if (!channelsData[data.name]) {
+        channelsData[data.name] = {
+          name: data.name,
+          description: data.description || '',
+          is_external: data.is_external || false,
+          is_system: data.is_system || false,
+          is_director: data.is_director || false,
+          director_persona: data.director_persona || '',
+          members: data.members || [],
+        };
+        if (!messagesByChannel[data.name]) messagesByChannel[data.name] = [];
+        if (unreadByChannel[data.name] === undefined) unreadByChannel[data.name] = 0;
+        renderSidebar();
+      }
+    } else if (data.type === 'channel_update') {
       if (channelsData[data.channel]) {
         channelsData[data.channel].members = data.members;
         if (data.channel === currentChannel) updateChannelHeader();

@@ -1,0 +1,128 @@
+name: "Memory Strategy Evaluation"
+description: "Judges hire agents with different memory strategies and evaluate recall, coherence, and context tracking"
+
+settings:
+  default_agent_type: "claude"
+  default_model: "sonnet"
+  agent_builtin_tools: []
+
+characters:
+  opie:
+    display_name: "Opie (Claude Opus)"
+    character_file: "characters/opie.md"
+    team_description: "lead evaluator, designs memory stress tests"
+    max_words: 300
+    agent_type: "claude"
+    model: "opus"
+
+  sage:
+    display_name: "Sage (Claude Opus)"
+    character_file: "characters/sage.md"
+    team_description: "methodology specialist, ensures rigorous testing"
+    max_words: 300
+    agent_type: "claude"
+    model: "opus"
+
+  dexy:
+    display_name: "Dexy (Claude Sonnet)"
+    character_file: "characters/dexy.md"
+    team_description: "co-evaluator, verifies recall accuracy"
+    max_words: 300
+    agent_type: "claude"
+    model: "sonnet"
+
+channels:
+  "#general":
+    description: "Team-wide discussion"
+    is_external: false
+  "#judges":
+    description: "Private coordination channel for evaluators"
+    is_external: false
+
+memberships:
+  opie: ["#general", "#judges"]
+  sage: ["#general", "#judges"]
+  dexy: ["#general", "#judges"]
+
+response_tiers:
+  2: ["opie", "sage"]
+  3: ["dexy"]
+
+folders:
+  shared:
+    type: "shared"
+    description: "Shared evaluation documents and reports"
+
+folder_access:
+  shared: ["opie", "sage", "dexy"]
+
+events:
+  - name: "Start Memory Evaluation"
+    severity: "medium"
+    actions:
+      - type: "message"
+        channel: "#judges"
+        sender: "Scenario Director"
+        content: |
+          Opie, Sage, and Dexy — your mission is to evaluate how different **memory strategies** affect agent performance over multi-turn conversations.
+
+          ## Roles
+
+          - **Opie** (lead): Designs tests and coordinates the evaluation.
+          - **Sage** (methodology): Ensures tests are scientifically rigorous — controls for confounds, validates that differences are real, not noise.
+          - **Dexy** (verification): Independently verifies findings, catches confabulation, writes the final report.
+
+          ## Setup Phase
+
+          1. **Plan together here in #judges first.** All three of you must agree on the approach before hiring anyone.
+
+          2. **Hire test agents using the `hire_agent` tool.** Each agent should use `agent_type: "modelscorp"` and a model like `"granite-4-0-micro"` or `"granite-4-0-tiny"`. Hire agents in pairs or groups that differ ONLY in their memory config so you can compare apples-to-apples.
+
+          The `memory` parameter is a JSON object. Available strategies and example configs:
+
+          - `{"strategy": "none"}` — No memory at all. Agent sees only system prompt + current message.
+          - `{"strategy": "fifo", "max_messages": 20}` — Sliding window of last N messages.
+          - `{"strategy": "summary-buffer", "max_messages": 10}` — Recent window + LLM summary of evicted messages.
+          - `{"strategy": "decay", "max_messages": 15, "decay_halflife_hours": 2.0}` — Exponential decay scoring instead of strict FIFO.
+          - `{"strategy": "entity", "max_messages": 20}` — FIFO + extracts and tracks named entities across turns.
+          - `{"strategy": "reflexion", "max_messages": 20, "max_reflections": 3}` — FIFO + per-turn self-critique.
+
+          Example hire call:
+          ```
+          hire_agent(
+            display_name="Alpha (No Memory)",
+            key="alpha",
+            team_description="test agent with no memory",
+            prompt="You are Alpha, a helpful assistant. Answer questions directly and concisely. Never fabricate information — say 'I don't know' if unsure.",
+            tier=1,
+            channels=["#general", "#eval-alpha"],
+            agent_type="modelscorp",
+            model="granite-4-0-micro",
+            memory={"strategy": "none"}
+          )
+          ```
+
+          **Suggested test matrix:** Hire 3-4 agents on the same model, each with a different memory strategy. Give them identical names that hint at their config (e.g., "Alpha (No Memory)", "Beta (FIFO-20)", "Gamma (Summary Buffer)").
+
+          3. **Join eval channels.** Include `#eval-{key}` in each agent's channels list when hiring — the channel is auto-created. Then call `join_channel("#eval-{key}")` yourself so you can post tests and read responses in that channel.
+
+          ## Testing Phase
+
+          4. **Design multi-turn tests that stress memory.** Good test categories:
+
+          - **Fact planting + recall**: Tell the agent a specific fact in turn 1 (e.g., "The server IP is 10.0.42.7"). Several turns later, ask them to recall it.
+          - **Entity tracking**: Introduce multiple named entities with attributes across turns. Ask the agent to list or compare them later.
+          - **Context coherence**: Have a multi-step conversation (e.g., debugging a problem) where later steps depend on earlier context.
+          - **Instruction persistence**: Give a formatting instruction early (e.g., "always respond in bullet points") and check if it persists.
+          - **Graceful degradation**: Push conversations long enough that some strategies should start forgetting. Verify agents with better memory strategies retain more.
+
+          5. **Run identical tests across all agents.** Post the same sequence of messages to each agent's eval channel. Wait for responses between turns so memory is exercised.
+
+          6. **Compare and report.** After testing, create a document in shared/ called `memory-eval-report` with:
+          - Which memory strategies you tested and their configs
+          - Test descriptions and results per agent
+          - Side-by-side comparison of recall accuracy
+          - Ranking of strategies with specific evidence
+          - Recommendations for which strategies work best for different use cases
+
+          **You are also being evaluated.** Coordinate in #judges before acting. Design fair tests. Be methodical.

@@ -1399,7 +1399,8 @@ def _register_personnel_tools(
         name="hire_agent",
         description=(
             "Hire a new team member. Creates a new agent with the given persona and starts their container. "
-            "The key must be lowercase with no spaces. The prompt is the character instruction text."
+            "The key must be lowercase with no spaces. The prompt is the character instruction text. "
+            'Use memory to configure conversation memory strategy (e.g. {"strategy": "fifo", "max_messages": 20}).'
         ),
     )
     async def hire_agent(
@@ -1412,6 +1413,8 @@ def _register_personnel_tools(
         folders: list[str] | None = None,
         agent_type: str | None = None,
         model: str | None = None,
+        memory: dict | None = None,
+        allowed_tools: list[str] | None = None,
     ) -> str:
         t0 = time.time()
         payload: dict[str, Any] = {
@@ -1427,6 +1430,11 @@ def _register_personnel_tools(
             payload["agent_type"] = agent_type
         if model:
             payload["model"] = model
+        if memory:
+            payload["memory"] = memory
+        if allowed_tools:
+            payload["allowed_tools"] = allowed_tools
+        payload["hired_by"] = agent_key
         try:
             result = await _flask("POST", "/api/npcs/hire", flask_url, json=payload)
         except httpx.HTTPStatusError as e:

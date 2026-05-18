@@ -226,6 +226,24 @@ def _broadcast_channel_update(channel_name: str, members: list[str]):
             _subscribers.remove(q)
 
 
+def _broadcast_channel_created(channel_info: dict):
+    """Notify SSE subscribers that a new channel was created."""
+    import queue as _queue
+
+    payload = {"type": "channel_created"}
+    payload.update(channel_info)
+    data = json.dumps(payload)
+    with _sub_lock:
+        dead = []
+        for q in _subscribers:
+            try:
+                q.put_nowait(data)
+            except _queue.Full:
+                dead.append(q)
+        for q in dead:
+            _subscribers.remove(q)
+
+
 # -- Document storage helpers --
 
 

@@ -6,7 +6,7 @@ from pathlib import Path
 
 from flask import Blueprint, jsonify, request
 
-from lib.webapp.helpers import _broadcast, _persist_message
+from lib.webapp.helpers import _broadcast, _broadcast_channel_created, _persist_message
 from lib.webapp.state import (
     _agent_firing,
     _agent_last_activity,
@@ -256,12 +256,26 @@ def hire_npc():
     }
     PERSONAS[key] = persona_entry
 
-    # Add to memberships
+    # Add to memberships — auto-create channels that don't exist
+    hired_by = data.get("hired_by", "")
     DEFAULT_MEMBERSHIPS[key] = set(channels)
+    created_channels: list[dict] = []
     with _channel_lock:
         for ch in channels:
-            if ch in _channel_members:
-                _channel_members[ch].add(key)
+            if ch not in _channels:
+                _channels[ch] = {
+                    "description": f"Channel {ch}",
+                    "is_external": False,
+                    "created_at": time.time(),
+                }
+                _channel_members[ch] = set()
+                created_channels.append({"name": ch, "description": f"Channel {ch}", "is_external": False})
+            _channel_members[ch].add(key)
+            if hired_by:
+                _channel_members[ch].add(hired_by)
+                DEFAULT_MEMBERSHIPS.setdefault(hired_by, set()).add(ch)
+    for ch_info in created_channels:
+        _broadcast_channel_created(ch_info)
 
     # Add to tier
     RESPONSE_TIERS.setdefault(tier, [])
@@ -300,6 +314,15 @@ def hire_npc():
             "created_at": time.time(),
         }
         _channel_members[ch_name] = {key}
+    _broadcast_channel_created(
+        {
+            "name": ch_name,
+            "description": f"Private channel with {display_name}",
+            "is_external": False,
+            "is_director": True,
+            "director_persona": key,
+        }
+    )
 
     # Signal orchestrator to add this agent's session
     with _command_lock:
