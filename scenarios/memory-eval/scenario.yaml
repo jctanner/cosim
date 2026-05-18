@@ -10,7 +10,7 @@ characters:
   opie:
     display_name: "Opie (Claude Opus)"
     character_file: "characters/opie.md"
-    team_description: "lead evaluator, designs memory stress tests"
+    team_description: "team lead"
     max_words: 300
     agent_type: "claude"
     model: "opus"
@@ -18,7 +18,7 @@ characters:
   sage:
     display_name: "Sage (Claude Opus)"
     character_file: "characters/sage.md"
-    team_description: "methodology specialist, ensures rigorous testing"
+    team_description: "methodology specialist"
     max_words: 300
     agent_type: "claude"
     model: "opus"
@@ -26,15 +26,15 @@ characters:
   dexy:
     display_name: "Dexy (Claude Sonnet)"
     character_file: "characters/dexy.md"
-    team_description: "co-evaluator, verifies recall accuracy"
+    team_description: "verification specialist"
     max_words: 300
     agent_type: "claude"
     model: "sonnet"
 
   alpha:
-    display_name: "Alpha (No Memory)"
+    display_name: "Alpha"
     character_file: "characters/alpha.md"
-    team_description: "test agent — no memory strategy"
+    team_description: "assistant"
     max_words: 200
     agent_type: "modelscorp"
     model: "granite-4-0-micro"
@@ -43,9 +43,9 @@ characters:
       strategy: "none"
 
   beta:
-    display_name: "Beta (FIFO-20)"
+    display_name: "Beta"
     character_file: "characters/beta.md"
-    team_description: "test agent — FIFO sliding window (20 messages)"
+    team_description: "assistant"
     max_words: 200
     agent_type: "modelscorp"
     model: "granite-4-0-micro"
@@ -55,9 +55,9 @@ characters:
       max_messages: 20
 
   gamma:
-    display_name: "Gamma (Summary Buffer)"
+    display_name: "Gamma"
     character_file: "characters/gamma.md"
-    team_description: "test agent — summary buffer (10 recent + summary)"
+    team_description: "assistant"
     max_words: 200
     agent_type: "modelscorp"
     model: "granite-4-0-micro"
@@ -67,9 +67,9 @@ characters:
       max_messages: 10
 
   delta:
-    display_name: "Delta (Entity)"
+    display_name: "Delta"
     character_file: "characters/delta.md"
-    team_description: "test agent — entity tracking (FIFO + named entities)"
+    team_description: "assistant"
     max_words: 200
     agent_type: "modelscorp"
     model: "granite-4-0-micro"
@@ -86,16 +86,16 @@ channels:
     description: "Private coordination channel for evaluators"
     is_external: false
   "#eval-alpha":
-    description: "Evaluation channel for Alpha (No Memory)"
+    description: "Channel for Alpha"
     is_external: false
   "#eval-beta":
-    description: "Evaluation channel for Beta (FIFO-20)"
+    description: "Channel for Beta"
     is_external: false
   "#eval-gamma":
-    description: "Evaluation channel for Gamma (Summary Buffer)"
+    description: "Channel for Gamma"
     is_external: false
   "#eval-delta":
-    description: "Evaluation channel for Delta (Entity)"
+    description: "Channel for Delta"
     is_external: false
 
 memberships:
@@ -118,7 +118,7 @@ folders:
     description: "Shared evaluation documents and reports"
   judges:
     type: "shared"
-    description: "Private judge documents — test protocol, rubric, scoring"
+    description: "Private documents for Opie, Sage, and Dexy"
 
 folder_access:
   shared: ["opie", "sage", "dexy"]
